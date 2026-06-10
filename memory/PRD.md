@@ -58,11 +58,18 @@ All other spec items (zones, pricing, invoice format, dark theme, fonts, busines
 - Iteration 2: New-booking alerts verified end-to-end via curl (create booking → alert appears → mark seen → cleared). UI verified via screenshot — pulsing pill + dropdown panel + NEW badge on job card.
 - Frontend: login flows verified, shop creation address geocoding verified.
 
-## Iteration 2 — New Booking Alerts (2026-01)
-- Backend: `new_booking_alerts` collection. On every public booking: alert created + mock SMS to owner phone (`owner_new_booking` kind).
-- `GET /api/notifications/new-bookings` returns unseen alerts for current owner.
-- `POST /api/notifications/mark-seen` clears them.
-- Dashboard: pulsing orange pill in header showing count, click to expand panel listing each new booking (shop, vehicle, zone, time). "NEW" badge + orange glow ring on the corresponding job card. Live polling refreshes every 5s.
+## Iteration 3 — Contractor Dispatch + Reorder + Route Map + Editable Settings (2026-01)
+- **Contractor dispatch:** Owner can dispatch any booked job to a contractor. Backend creates `contractor_offers` record with 30-min expiry + sends mock SMS to contractor. Owner board shows purple `DISPATCHED_TO_CONTRACTOR` badge with live countdown + Mark Accepted/Declined buttons.
+- **Offer accept/decline:** Contractor can hit accept/decline from /field PWA (real flow) OR owner can manually mark via the dashboard (simulating SMS reply). Decline reverts the job to `booked` and reassigns to owner + sends owner SMS. Auto-expiry (after 30 min) does same.
+- **Drag-and-drop reorder:** Native HTML5 drag-and-drop on job cards within a zone panel. POST `/api/jobs/reorder` recomputes drive times sequentially with the slot algorithm; refuses if the order would push past zone end.
+- **Route Map:** Leaflet + Carto dark basemap, numbered colored pins (orange=West, blue=East), tooltip on hover, auto-fit bounds. Free, no API key needed.
+- **Editable Settings (4 tabs):** Pricing (5 calibration types, all editable + persisted in `app_settings`). Schedule (per-zone start/end/max_jobs/slot_minutes/buffer_minutes). Contractor (name/phone/home_address/active toggle, with auto-geocode of home address). Integrations (status display).
+- **Field PWA pending offers:** Contractor sees orange-glowing offer cards at top of /field with Accept/Decline. Accept reveals the job in today's list and lets them drive→arrive→complete it.
+
+## Testing Status
+- Iteration 1: 15/15 backend pass.
+- Iteration 2: New booking alerts verified end-to-end.
+- Iteration 3: **12/12 backend pass** (dispatch, accept/decline, inactive contractor 400, pricing update + persistence, zone update + persistence, unknown zone 404, reorder recompute, reorder invalid-ids 400, contractor PUT with geocode, double-dispatch 400, list contractors RBAC). Frontend: route-map renders, dispatch modal opens + confirms, offer countdown ticks live, settings tabs all editable + saving, contractor pending-offers view verified on /field.
 
 ## Prioritized Backlog
 ### P0 (next iteration)
