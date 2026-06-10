@@ -1,5 +1,6 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { getStoredAuth, setStoredAuth } from "../lib/api";
+import Brand from "./Brand";
 
 export default function Shell({ children, hideNav }) {
   const auth = getStoredAuth();
@@ -14,9 +15,7 @@ export default function Shell({ children, hideNav }) {
           background: "var(--bg-primary)", position: "sticky", top: 0, zIndex: 20,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-            <Link to="/dashboard" className="font-display" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "0.04em" }}>
-              CALIBRATION<span style={{ color: "var(--accent)" }}>OS</span>
-            </Link>
+            <Link to="/dashboard"><Brand size={22} /></Link>
             {auth?.role === "owner" && (
               <nav style={{ display: "flex", gap: 4 }}>
                 {[

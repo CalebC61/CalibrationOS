@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, setStoredAuth } from "../lib/api";
+import Brand from "../components/Brand";
 
 export default function Login() {
   const [email, setEmail] = useState("caleb@thecalibrationcrew.us");
@@ -25,10 +26,8 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "var(--bg-primary)" }}>
       <div className="w-full max-w-md page-fade">
         <div className="mb-8 text-center">
-          <div className="font-display" style={{ fontSize: 36, fontWeight: 800, letterSpacing: "0.04em" }}>
-            CALIBRATION<span style={{ color: "var(--accent)" }}>OS</span>
-          </div>
-          <div className="muted" style={{ marginTop: 4, fontSize: 13, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+          <Brand size={32} />
+          <div className="muted" style={{ marginTop: 10, fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase" }}>
             Field Operations · Phoenix Valley
           </div>
         </div>

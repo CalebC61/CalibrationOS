@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, formatTime, formatDate, dateStr } from "../lib/api";
+import Brand from "../components/Brand";
 
 const ADAS_OPTIONS = [
   { v: "forward_camera", l: "Forward-Facing Camera (most common)", default: "static" },
@@ -116,8 +117,8 @@ export default function PublicBooking() {
   return (
     <div style={{ minHeight: "100vh", padding: "32px 16px", background: "var(--bg-primary)" }}>
       <div style={{ maxWidth: 640, margin: "0 auto" }}>
-        <div className="font-display" style={{ fontSize: 28, fontWeight: 800, textAlign: "center", marginBottom: 4 }}>
-          CALIBRATION<span style={{ color: "var(--accent)" }}>OS</span>
+        <div style={{ textAlign: "center", marginBottom: 4 }}>
+          <Brand size={26} />
         </div>
         <div className="muted" style={{ textAlign: "center", marginBottom: 24, fontSize: 14 }}>
           Booking for <b style={{ color: "var(--text-primary)" }}>{shop.name}</b>

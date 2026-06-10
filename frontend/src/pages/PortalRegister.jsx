@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { portalApi, setPortalAuth } from "../lib/portalApi";
+import Brand from "../components/Brand";
 
 export default function PortalRegister() {
   const { token } = useParams();
@@ -58,10 +59,10 @@ export default function PortalRegister() {
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-primary)", padding: "32px 16px" }}>
       <div style={{ maxWidth: 560, margin: "0 auto" }}>
-        <div className="font-display" style={{ fontSize: 28, fontWeight: 800, textAlign: "center" }}>
-          CALIBRATION<span style={{ color: "var(--accent)" }}>OS</span>
+        <div style={{ textAlign: "center", marginBottom: 6 }}>
+          <Brand size={28} />
         </div>
-        <div className="muted" style={{ textAlign: "center", fontSize: 13, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 8 }}>Shop Portal Registration</div>
+        <div className="muted" style={{ textAlign: "center", fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 8 }}>Shop Portal Registration</div>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           Welcome, <b>{invite.shop_name}</b>
         </div>

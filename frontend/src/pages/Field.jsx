@@ -228,9 +228,10 @@ function Header({ name, onLogout, back }) {
       {back ? (
         <button className="btn btn-ghost" onClick={back} data-testid="field-back">← Back</button>
       ) : (
-        <div className="font-display" style={{ fontWeight: 800, letterSpacing: "0.04em" }}>
-          CAL<span style={{ color: "var(--accent)" }}>OS</span>
-        </div>
+        <span className="brand-mark" style={{ fontSize: 18 }}>
+          <span className="brand-word">CAL</span>
+          <span className="brand-suffix">OS</span>
+        </span>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span className="muted" style={{ fontSize: 12 }}>{name}</span>

@@ -58,7 +58,20 @@ All other spec items (zones, pricing, invoice format, dark theme, fonts, busines
 - Iteration 2: New-booking alerts verified end-to-end via curl (create booking → alert appears → mark seen → cleared). UI verified via screenshot — pulsing pill + dropdown panel + NEW badge on job card.
 - Frontend: login flows verified, shop creation address geocoding verified.
 
-## Iteration 5 — Shop Customer Portal (2026-01)
+## Iteration 6 — The Calibration Crew Brand Pass (2026-01)
+**User provided logo + brand spec.** Goal: make every surface read as The Calibration Crew's app, not a generic dashboard.
+
+### Changes
+- **Color palette swap**: pure black/dark grays → cool gunsteel (#2A2E37 primary / #343843 surface / #3E424F elevated / #404653 input). Orange (#F97316) unchanged.
+- **Font swap**: Barlow Condensed → **Saira Stencil One** (Google Fonts) for all brand wordmarks, display headings, h1/h2, zone headers. Matches the logo's geometric horizontal-cut stencil aesthetic. DM Sans kept for body (readability), JetBrains Mono kept for numerics.
+- **Brand wordmark component** (`/components/Brand.jsx`): Mirrors the logo's actual treatment — "CALIBRATION" in orange stencil + "OS" in solid orange block with gunsteel text inside. Reused in 7 places: owner Shell, PortalShell, Login, PortalLogin, PortalRegister, PublicShopStatus, PublicBooking. Field PWA uses a compact "CAL OS" variant for mobile.
+- **Email template**: Resend invitation HTML re-styled to gunsteel + Saira Stencil heading + orange action button matching the in-app wordmark.
+- **Input focus state**: Added orange focus ring (3px box-shadow with accent-dim).
+
+### Visual outcome
+- Logo wordmark appears across every entry point (login, portal login, public booking, scorecard, registration) at consistent proportions.
+- Headers, day labels, zone labels, brand wordmark all use the same stencil typeface — reinforces the identity on every screen.
+- Gunsteel background has cooler blue undertone than pure black, matching the logo background tone precisely.
 **Choices: manual charge approval, portal-only booking, Resend for email, drive-window anonymization, full portal in one go.**
 
 ### Backend

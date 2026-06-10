@@ -1,5 +1,6 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { getPortalAuth, setPortalAuth } from "../lib/portalApi";
+import Brand from "./Brand";
 
 export default function PortalShell({ children }) {
   const auth = getPortalAuth();
@@ -13,10 +14,7 @@ export default function PortalShell({ children }) {
         background: "var(--bg-primary)", position: "sticky", top: 0, zIndex: 20,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <Link to="/portal" className="font-display" style={{ fontSize: 22, fontWeight: 800, letterSpacing: "0.04em" }}>
-            CALIBRATION<span style={{ color: "var(--accent)" }}>OS</span>
-            <span className="muted" style={{ fontSize: 11, marginLeft: 8, letterSpacing: "0.16em", textTransform: "uppercase" }}>Shop Portal</span>
-          </Link>
+          <Link to="/portal"><Brand size={20} tag="Shop Portal" /></Link>
           {auth && (
             <nav style={{ display: "flex", gap: 4 }}>
               {[

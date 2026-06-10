@@ -1255,13 +1255,13 @@ async def send_email(to: str, subject: str, html: str, kind: str = "transactiona
 
 def invite_email_html(shop_name: str, register_url: str) -> str:
     return f"""
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;color:#f5f5f5;font-family:Arial,sans-serif;padding:40px 0;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#2A2E37;color:#f5f5f5;font-family:'DM Sans',Arial,sans-serif;padding:40px 0;">
       <tr><td align="center">
-        <table width="560" cellpadding="0" cellspacing="0" style="background:#1A1A1A;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:32px;">
+        <table width="560" cellpadding="0" cellspacing="0" style="background:#343843;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:32px;">
           <tr><td>
-            <h1 style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:28px;letter-spacing:0.04em;margin:0 0 8px;">CALIBRATION<span style="color:#F97316;">OS</span></h1>
-            <p style="color:#888;font-size:12px;letter-spacing:0.1em;text-transform:uppercase;margin:0 0 24px;">Shop Portal Invitation</p>
-            <h2 style="font-size:22px;margin:0 0 12px;">{shop_name}, you&rsquo;re invited.</h2>
+            <div style="font-family:'Saira Stencil One','Courier New',monospace;font-size:28px;letter-spacing:0.04em;color:#F97316;margin:0 0 8px;">CALIBRATION<span style="background:#F97316;color:#2A2E37;padding:2px 8px;margin-left:6px;border-radius:2px;">OS</span></div>
+            <p style="color:#9CA0AB;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;margin:0 0 24px;font-weight:600;">By The Calibration Crew · Shop Portal Invitation</p>
+            <h2 style="font-family:'Saira Stencil One','Courier New',monospace;font-size:22px;margin:0 0 12px;letter-spacing:0.02em;">{shop_name}, YOU&rsquo;RE INVITED.</h2>
             <p style="color:#c4c4c4;line-height:1.6;font-size:15px;">The Calibration Crew has set up a dedicated portal for your shop. Inside you can:</p>
             <ul style="color:#c4c4c4;line-height:1.7;font-size:15px;">
               <li>View all your scheduled and completed calibrations</li>
@@ -1271,9 +1271,9 @@ def invite_email_html(shop_name: str, register_url: str) -> str:
             </ul>
             <p style="color:#c4c4c4;line-height:1.6;font-size:15px;">Setup takes ~2 minutes and includes a card-on-file requirement (we charge per completed job to keep things friction-free).</p>
             <p style="text-align:center;margin:32px 0;">
-              <a href="{register_url}" style="background:#F97316;color:#0a0a0a;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:700;display:inline-block;">Register Now &rarr;</a>
+              <a href="{register_url}" style="background:#F97316;color:#2A2E37;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:700;display:inline-block;font-family:'Saira Stencil One','Courier New',monospace;letter-spacing:0.06em;">REGISTER NOW &rarr;</a>
             </p>
-            <p style="color:#666;font-size:12px;">This link expires in 14 days. Questions? Reply to this email.</p>
+            <p style="color:#6B7280;font-size:12px;">This link expires in 14 days. Questions? Reply to this email.</p>
           </td></tr>
         </table>
       </td></tr>

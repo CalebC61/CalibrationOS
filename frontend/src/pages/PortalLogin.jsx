@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { portalApi, setPortalAuth } from "../lib/portalApi";
+import Brand from "../components/Brand";
 
 export default function PortalLogin() {
   const [email, setEmail] = useState("");
@@ -24,11 +25,8 @@ export default function PortalLogin() {
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ width: "100%", maxWidth: 420 }} className="page-fade">
-        <div className="font-display" style={{ fontSize: 30, fontWeight: 800, textAlign: "center" }}>
-          CALIBRATION<span style={{ color: "var(--accent)" }}>OS</span>
-        </div>
-        <div className="muted" style={{ textAlign: "center", fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 24 }}>
-          Shop Portal
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <Brand size={28} tag="Shop Portal" />
         </div>
         <form onSubmit={submit} className="surface" style={{ padding: 28 }} data-testid="portal-login-form">
           <div style={{ marginBottom: 14 }}>

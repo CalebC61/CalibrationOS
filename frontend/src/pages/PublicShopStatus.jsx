@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, formatTime, formatDate } from "../lib/api";
+import Brand from "../components/Brand";
 
 export default function PublicShopStatus() {
   const { token } = useParams();
@@ -19,10 +20,10 @@ export default function PublicShopStatus() {
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-primary)", padding: "32px 16px" }}>
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        <div className="font-display" style={{ fontSize: 26, fontWeight: 800, textAlign: "center", marginBottom: 4 }}>
-          CALIBRATION<span style={{ color: "var(--accent)" }}>OS</span>
+        <div style={{ textAlign: "center", marginBottom: 4 }}>
+          <Brand size={26} />
         </div>
-        <div className="muted" style={{ textAlign: "center", fontSize: 13, marginBottom: 24 }}>Scorecard</div>
+        <div className="muted" style={{ textAlign: "center", fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 24 }}>Shop Scorecard</div>
 
         <div className="surface" style={{ padding: 20, marginBottom: 20 }}>
           <div className="h2" style={{ marginBottom: 6 }}>{data.shop_name}</div>
