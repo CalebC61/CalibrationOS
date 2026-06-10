@@ -2,6 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css');
+
 /* ============ CalibrationOS Design Tokens ============ */
 :root {
   --bg-primary: #111111;
@@ -119,6 +121,13 @@ html, body, #root {
   box-shadow: 0 0 0 1px var(--accent), 0 0 24px rgba(249,115,22,0.18);
   animation: newJobGlow 2.4s ease-in-out infinite;
 }
+.card-job-dropzone {
+  border-color: var(--accent) !important;
+  border-style: dashed !important;
+  background: var(--accent-dim);
+}
+.card-job[draggable="true"] { cursor: grab; }
+.card-job[draggable="true"]:active { cursor: grabbing; }
 @keyframes newJobGlow {
   0%, 100% { box-shadow: 0 0 0 1px var(--accent), 0 0 16px rgba(249,115,22,0.14); }
   50%      { box-shadow: 0 0 0 1px var(--accent), 0 0 32px rgba(249,115,22,0.28); }

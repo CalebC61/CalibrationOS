@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
 import { api, formatTime, todayStr, dateStr } from "../lib/api";
 import Shell from "../components/Shell";
+import DispatchModal from "../components/DispatchModal";
+import RouteMap from "../components/RouteMap";
 
 const STATUS_FLOW = {
   booked: { next: "driving", label: "Start Driving" },
@@ -13,22 +14,23 @@ export default function Dashboard() {
   const [date, setDate] = useState(todayStr());
   const [jobs, setJobs] = useState([]);
   const [summary, setSummary] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [alerts, setAlerts] = useState({ count: 0, alerts: [] });
   const [alertsOpen, setAlertsOpen] = useState(false);
+  const [offers, setOffers] = useState([]);
+  const [dispatchTarget, setDispatchTarget] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      const [j, s, a] = await Promise.all([
+      const [j, s, a, o] = await Promise.all([
         api.get(`/jobs?date_str=${date}`),
         api.get(`/dashboard/summary?date_str=${date}`),
         api.get(`/notifications/new-bookings`),
+        api.get(`/contractor-offers`),
       ]);
-      setJobs(j.data); setSummary(s.data); setAlerts(a.data);
+      setJobs(j.data); setSummary(s.data); setAlerts(a.data); setOffers(o.data);
     } catch (e) { console.error(e); }
-    setLoading(false);
   }, [date]);
-
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
 
   async function markSeen() {
@@ -36,18 +38,6 @@ export default function Dashboard() {
     setAlerts({ count: 0, alerts: [] });
     setAlertsOpen(false);
   }
-
-  const newJobIds = new Set(alerts.alerts.map(a => a.job_id));
-
-  const west = jobs.filter(j => j.zone === "west").sort((a,b) => a.scheduled_start.localeCompare(b.scheduled_start));
-  const east = jobs.filter(j => j.zone === "east").sort((a,b) => a.scheduled_start.localeCompare(b.scheduled_start));
-
-  function shiftDate(days) {
-    const d = new Date(date + "T00:00:00");
-    d.setDate(d.getDate() + days);
-    setDate(dateStr(d));
-  }
-
   async function setStatus(jobId, status) {
     if (status === "complete") {
       const ok = window.confirm("Complete this job? This will generate a draft Xero invoice (mocked).");
@@ -58,30 +48,49 @@ export default function Dashboard() {
     }
     load();
   }
+  async function manualRespond(offerId, accept) {
+    await api.post(`/contractor-offers/${offerId}/respond`, { accept });
+    load();
+  }
+
+  const newJobIds = new Set(alerts.alerts.map(a => a.job_id));
+  const offerByJob = Object.fromEntries(offers.filter(o => o.status === "pending").map(o => [o.job_id, o]));
+
+  const west = jobs.filter(j => j.zone === "west").sort((a,b) => a.scheduled_start.localeCompare(b.scheduled_start));
+  const east = jobs.filter(j => j.zone === "east").sort((a,b) => a.scheduled_start.localeCompare(b.scheduled_start));
+
+  function shiftDate(days) {
+    const d = new Date(date + "T00:00:00");
+    d.setDate(d.getDate() + days);
+    setDate(dateStr(d));
+  }
+
+  async function handleDrop(zone, draggedId, targetIdx) {
+    const zoneJobs = zone === "west" ? west : east;
+    const ids = zoneJobs.map(j => j.id).filter(id => id !== draggedId);
+    ids.splice(targetIdx, 0, draggedId);
+    try {
+      await api.post("/jobs/reorder", { zone, date, ordered_job_ids: ids });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.detail || "Reorder failed");
+    }
+    setDragOver(null);
+  }
 
   return (
     <Shell>
-      {/* New booking alert pill */}
       {alerts.count > 0 && (
-        <div className="new-booking-pill page-fade" style={{ marginBottom: 16, position: "relative" }}
-          data-testid="new-bookings-banner">
-          <button
-            onClick={() => setAlertsOpen(o => !o)}
-            data-testid="new-bookings-pill"
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 10,
+        <div className="page-fade" style={{ marginBottom: 16, position: "relative" }} data-testid="new-bookings-banner">
+          <button onClick={() => setAlertsOpen(o => !o)} data-testid="new-bookings-pill"
+            style={{ display: "inline-flex", alignItems: "center", gap: 10,
               background: "var(--accent-dim)", color: "var(--accent)",
               border: "1px solid var(--border-active)", borderRadius: 999,
-              padding: "8px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer",
-            }}>
-            <span className="pulse-dot" style={{
-              width: 8, height: 8, borderRadius: 999, background: "var(--accent)",
-              boxShadow: "0 0 0 0 var(--accent)",
-            }} />
+              padding: "8px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+            <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 999, background: "var(--accent)" }} />
             <span data-testid="new-bookings-count">{alerts.count}</span> new booking{alerts.count === 1 ? "" : "s"} since you last looked
             <span style={{ opacity: 0.7, fontSize: 12 }}>{alertsOpen ? "▲" : "▼"}</span>
           </button>
-
           {alertsOpen && (
             <div className="surface page-fade" style={{
               position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30,
@@ -113,7 +122,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Date strip + summary */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>
         <div>
           <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase" }}>Dispatch board</div>
@@ -136,15 +144,29 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Split panel: West / East */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16 }}>
-        <ZonePanel title="West Valley" subtitle="8:00 AM – 2:00 PM" zone="west" jobs={west}
-          onStatus={setStatus} headerClass="zone-header-west" newJobIds={newJobIds} />
-        <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east}
-          onStatus={setStatus} headerClass="zone-header-east" newJobIds={newJobIds} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16, marginBottom: 20 }}>
+        <ZonePanel title="West Valley" subtitle="8:00 AM – 2:00 PM" zone="west" jobs={west} onStatus={setStatus}
+          headerClass="zone-header-west" newJobIds={newJobIds} offerByJob={offerByJob}
+          onDispatch={setDispatchTarget} onRespond={manualRespond}
+          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
+        <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east} onStatus={setStatus}
+          headerClass="zone-header-east" newJobIds={newJobIds} offerByJob={offerByJob}
+          onDispatch={setDispatchTarget} onRespond={manualRespond}
+          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
       </div>
 
-      {loading && jobs.length === 0 && <div className="muted" style={{ marginTop: 24 }}>Loading…</div>}
+      {jobs.length > 0 && (
+        <section>
+          <div className="h3" style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>Route Map</span>
+            <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>Numbered by sequence · Orange = West · Blue = East</span>
+          </div>
+          <RouteMap jobs={[...west, ...east]} />
+        </section>
+      )}
+
+      <DispatchModal open={!!dispatchTarget} job={dispatchTarget}
+        onClose={() => setDispatchTarget(null)} onDone={load} />
     </Shell>
   );
 }
@@ -158,7 +180,8 @@ function Metric({ label, value }) {
   );
 }
 
-function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobIds }) {
+function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobIds, offerByJob,
+                    onDispatch, onRespond, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className={`zone-header ${headerClass}`}>
@@ -166,24 +189,56 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobI
         <span style={{ fontSize: 12, opacity: 0.8 }}>{subtitle} · {jobs.length} jobs</span>
       </div>
       {jobs.length === 0 && (
-        <div className="surface muted" style={{ padding: 20, textAlign: "center" }}>
-          No jobs in this zone yet.
-        </div>
+        <div className="surface muted" style={{ padding: 20, textAlign: "center" }}>No jobs in this zone yet.</div>
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {jobs.map((j, idx) => <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus} isNew={newJobIds?.has(j.id)} />)}
+        {jobs.map((j, idx) => (
+          <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
+            isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
+            onDispatch={onDispatch} onRespond={onRespond}
+            zone={zone} dropIndex={idx}
+            isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
+            onDragOver={(e) => { e.preventDefault(); setDragOver({ zone, idx }); }}
+            onDragLeave={() => setDragOver(null)}
+            onHandleDrop={(e) => {
+              e.preventDefault();
+              const draggedId = e.dataTransfer.getData("text/plain");
+              if (draggedId) onDrop(zone, draggedId, idx);
+            }}
+          />
+        ))}
       </div>
     </section>
   );
 }
 
-function JobCard({ job, index, onStatus, isNew }) {
+function OfferCountdown({ expiresAt }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+  const ms = new Date(expiresAt).getTime() - now;
+  if (ms <= 0) return <span className="muted">expired</span>;
+  const min = Math.floor(ms / 60000);
+  const sec = Math.floor((ms % 60000) / 1000);
+  return <span className="font-mono">{min}:{String(sec).padStart(2, "0")}</span>;
+}
+
+function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond,
+                   zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
+  const isLocked = job.status === "complete" || job.status === "cancelled";
   return (
-    <div className={"card-job" + (isNew ? " card-job-new" : "")} data-testid={`job-card-${job.id}`}>
+    <div
+      className={"card-job" + (isNew ? " card-job-new" : "") + (isDragOver ? " card-job-dropzone" : "")}
+      draggable={!isLocked}
+      onDragStart={(e) => e.dataTransfer.setData("text/plain", job.id)}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onHandleDrop}
+      data-testid={`job-card-${job.id}`}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div style={{ flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
             <span className="font-mono" style={{
               background: "var(--bg-elevated)", padding: "2px 8px", borderRadius: 6,
               fontSize: 12, fontWeight: 600,
@@ -191,6 +246,11 @@ function JobCard({ job, index, onStatus, isNew }) {
             <span className={`badge badge-${job.status}`}>{job.status.replace(/_/g, " ")}</span>
             {isNew && <span className="badge" style={{ background: "var(--accent-dim)", color: "var(--accent)", border: "1px solid var(--border-active)" }} data-testid="badge-new">NEW</span>}
             {job.invoice_status === "draft" && <span className="badge badge-draft">Invoice: Draft</span>}
+            {offer && (
+              <span className="badge badge-dispatched_to_contractor" data-testid={`offer-countdown-${job.id}`}>
+                {offer.contractor_name} · <OfferCountdown expiresAt={offer.expires_at} />
+              </span>
+            )}
           </div>
           <div className="h3" style={{ marginTop: 4 }}>{job.shop_name}</div>
           <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
@@ -207,16 +267,28 @@ function JobCard({ job, index, onStatus, isNew }) {
           <div className="font-mono" style={{ fontSize: 13, marginTop: 4 }}>${job.price.toFixed(2)}</div>
         </div>
       </div>
-      {flow && (
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+        {flow && (
           <button className="btn btn-primary" onClick={() => onStatus(job.id, flow.next)}
             data-testid={`job-action-${job.id}`}>{flow.label}</button>
-          {job.status === "booked" && (
+        )}
+        {job.status === "booked" && (
+          <>
+            <button className="btn btn-ghost" onClick={() => onDispatch(job)}
+              data-testid={`job-dispatch-${job.id}`}>Dispatch to Contractor</button>
             <button className="btn btn-ghost" onClick={() => onStatus(job.id, "cancelled")}
               data-testid={`job-cancel-${job.id}`}>Cancel</button>
-          )}
-        </div>
-      )}
+          </>
+        )}
+        {offer && (
+          <>
+            <button className="btn btn-ghost" style={{ borderColor: "rgba(16,185,129,0.4)", color: "var(--green)" }}
+              onClick={() => onRespond(offer.id, true)} data-testid={`offer-accept-${offer.id}`}>Mark Accepted</button>
+            <button className="btn btn-ghost" style={{ borderColor: "rgba(239,68,68,0.4)", color: "var(--red)" }}
+              onClick={() => onRespond(offer.id, false)} data-testid={`offer-decline-${offer.id}`}>Mark Declined</button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

@@ -194,6 +194,38 @@ ZONES = {
 
 CALEB_HOME = {"lat": 33.3528, "lng": -111.7890, "address": "Gilbert, AZ"}
 
+# ---------- Settings persistence (pricing + zones can be edited at runtime) ----------
+async def load_settings():
+    """Load pricing and zones from DB into the in-memory dicts. Idempotent."""
+    pricing_doc = await db.app_settings.find_one({"_id": "pricing"})
+    if pricing_doc and "data" in pricing_doc:
+        for k, v in pricing_doc["data"].items():
+            if k in STANDARD_PRICING and "price" in v:
+                STANDARD_PRICING[k]["price"] = float(v["price"])
+                if "label" in v:
+                    STANDARD_PRICING[k]["label"] = v["label"]
+    zones_doc = await db.app_settings.find_one({"_id": "zones"})
+    if zones_doc and "data" in zones_doc:
+        for k, v in zones_doc["data"].items():
+            if k in ZONES:
+                for field in ("start", "end", "max_jobs", "slot_minutes", "buffer_minutes"):
+                    if field in v and v[field] is not None:
+                        ZONES[k][field] = v[field]
+
+async def save_pricing():
+    await db.app_settings.update_one(
+        {"_id": "pricing"},
+        {"$set": {"data": STANDARD_PRICING, "updated_at": iso(now_utc())}},
+        upsert=True,
+    )
+
+async def save_zones():
+    await db.app_settings.update_one(
+        {"_id": "zones"},
+        {"$set": {"data": ZONES, "updated_at": iso(now_utc())}},
+        upsert=True,
+    )
+
 # ---------- Pydantic models ----------
 class LoginIn(BaseModel):
     email: EmailStr
@@ -253,6 +285,37 @@ class JobComplete(BaseModel):
     result: Literal["pass", "fail"]
     notes: Optional[str] = None
     document_name: Optional[str] = "calibration_report.pdf"
+
+class DispatchIn(BaseModel):
+    contractor_id: str
+
+class OfferResponseIn(BaseModel):
+    accept: bool
+
+class ReorderIn(BaseModel):
+    zone: Literal["west", "east"]
+    date: str  # YYYY-MM-DD
+    ordered_job_ids: List[str]
+
+class PricingUpdate(BaseModel):
+    static: Optional[float] = None
+    dynamic: Optional[float] = None
+    dual: Optional[float] = None
+    triple: Optional[float] = None
+    tesla: Optional[float] = None
+
+class ZoneUpdate(BaseModel):
+    start: Optional[str] = None  # "HH:MM"
+    end: Optional[str] = None
+    max_jobs: Optional[int] = None
+    slot_minutes: Optional[int] = None
+    buffer_minutes: Optional[int] = None
+
+class ContractorUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    home_address: Optional[str] = None
+    is_active: Optional[bool] = None
 
 # ---------- Auth routes ----------
 @api.post("/auth/login", response_model=TokenOut)
@@ -726,6 +789,213 @@ async def mark_alerts_seen(tech=Depends(require_owner)):
     )
     return {"marked": res.modified_count}
 
+# ---------- Contractor dispatch ----------
+async def expire_stale_offers():
+    """Expire offers past their 30-min window. Called on each list-offers / list-jobs read."""
+    now = iso(now_utc())
+    stale = await db.contractor_offers.find(
+        {"status": "pending", "expires_at": {"$lt": now}}, {"_id": 0}
+    ).to_list(100)
+    for offer in stale:
+        await db.contractor_offers.update_one({"id": offer["id"]}, {"$set": {"status": "expired", "responded_at": now}})
+        # Revert job back to booked + assign to owner
+        owner = await db.technicians.find_one({"role": "owner"})
+        await db.jobs.update_one(
+            {"id": offer["job_id"]},
+            {"$set": {"status": "booked", "technician_id": owner["id"] if owner else None, "updated_at": now}}
+        )
+        # Mock SMS to owner
+        if owner and owner.get("phone"):
+            await mock_send_sms(owner["phone"],
+                f"Contractor did not respond. Job {offer['job_id'][:8].upper()} is back on your board.",
+                kind="offer_expired", job_id=offer["job_id"])
+
+@api.post("/jobs/{job_id}/dispatch")
+async def dispatch_job(job_id: str, data: DispatchIn, tech=Depends(require_owner)):
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job["status"] not in ("booked",):
+        raise HTTPException(400, f"Cannot dispatch a job in '{job['status']}' state")
+    contractor = await db.technicians.find_one({"id": data.contractor_id, "role": "contractor", "is_active": True})
+    if not contractor:
+        raise HTTPException(400, "Active contractor not found")
+    now = now_utc()
+    offer = {
+        "id": gen_id(),
+        "job_id": job_id,
+        "contractor_id": contractor["id"],
+        "contractor_name": contractor["name"],
+        "offered_at": iso(now),
+        "expires_at": iso(now + timedelta(minutes=30)),
+        "status": "pending",
+        "responded_at": None,
+        "sms_sent": True,
+        "shop_name": job["shop_name"],
+        "scheduled_start": job["scheduled_start"],
+        "job_address": job["job_address"],
+        "vehicle": f"{job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}",
+        "calibration_label": job["calibration_label"],
+        "price": job["price"],
+    }
+    await db.contractor_offers.insert_one(offer.copy())
+    await db.jobs.update_one({"id": job_id}, {"$set": {"status": "dispatched_to_contractor", "technician_id": contractor["id"], "updated_at": iso(now)}})
+    # Mock SMS to contractor
+    msg = (f"New job available: {job['shop_name']} at {job['job_address']}. "
+           f"{job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}. "
+           f"{job['calibration_label']} at {datetime.fromisoformat(job['scheduled_start']).strftime('%-I:%M %p')}. "
+           f"Reply YES to accept, NO to decline. Offer expires in 30 minutes.")
+    if contractor.get("phone"):
+        await mock_send_sms(contractor["phone"], msg, kind="contractor_offer", job_id=job_id)
+    return offer
+
+@api.get("/contractor-offers")
+async def list_offers(tech=Depends(get_current_tech)):
+    await expire_stale_offers()
+    q = {}
+    if tech["role"] == "contractor":
+        q["contractor_id"] = tech["id"]
+        q["status"] = "pending"
+    offers = await db.contractor_offers.find(q, {"_id": 0}).sort("offered_at", -1).limit(100).to_list(100)
+    return offers
+
+@api.post("/contractor-offers/{offer_id}/respond")
+async def respond_to_offer(offer_id: str, body: OfferResponseIn, tech=Depends(get_current_tech)):
+    """Contractor accepts/declines; also callable by owner as manual override (simulating SMS reply)."""
+    offer = await db.contractor_offers.find_one({"id": offer_id})
+    if not offer:
+        raise HTTPException(404, "Offer not found")
+    if offer["status"] != "pending":
+        raise HTTPException(400, f"Offer already {offer['status']}")
+    # Auth check: contractor on own offer, or owner
+    if tech["role"] == "contractor" and offer["contractor_id"] != tech["id"]:
+        raise HTTPException(403, "Not your offer")
+    now = iso(now_utc())
+    new_status = "accepted" if body.accept else "declined"
+    await db.contractor_offers.update_one({"id": offer_id},
+        {"$set": {"status": new_status, "responded_at": now}})
+    if body.accept:
+        # Confirm assignment
+        await db.jobs.update_one({"id": offer["job_id"]},
+            {"$set": {"technician_id": offer["contractor_id"], "updated_at": now}})
+        owner = await db.technicians.find_one({"role": "owner"})
+        if owner and owner.get("phone"):
+            await mock_send_sms(owner["phone"],
+                f"✓ {offer['contractor_name']} accepted job {offer['job_id'][:8].upper()} ({offer['shop_name']}).",
+                kind="offer_accepted", job_id=offer["job_id"])
+    else:
+        # Revert to owner
+        owner = await db.technicians.find_one({"role": "owner"})
+        await db.jobs.update_one({"id": offer["job_id"]},
+            {"$set": {"status": "booked", "technician_id": owner["id"] if owner else None, "updated_at": now}})
+        if owner and owner.get("phone"):
+            await mock_send_sms(owner["phone"],
+                f"✗ {offer['contractor_name']} declined job {offer['job_id'][:8].upper()}. Back on your board.",
+                kind="offer_declined", job_id=offer["job_id"])
+    return {"status": new_status}
+
+@api.get("/contractors")
+async def list_contractors(tech=Depends(require_owner)):
+    techs = await db.technicians.find(
+        {"role": "contractor"}, {"_id": 0, "password_hash": 0}
+    ).to_list(50)
+    return techs
+
+# ---------- Job reorder with drive-time recalc ----------
+@api.post("/jobs/reorder")
+async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
+    z = ZONES[data.zone]
+    try:
+        d = datetime.strptime(data.date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "Invalid date")
+    day_start = datetime.combine(d, time(0, 0), tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+    # Fetch jobs in scope
+    jobs = await db.jobs.find({
+        "id": {"$in": data.ordered_job_ids},
+        "zone": data.zone,
+        "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
+        "status": {"$nin": ["cancelled", "complete"]},
+    }, {"_id": 0}).to_list(100)
+    by_id = {j["id"]: j for j in jobs}
+    if set(data.ordered_job_ids) - set(by_id.keys()):
+        raise HTTPException(400, "Some job IDs are invalid or not reorderable")
+    # Sequential recalc from zone start, anchored at owner home for first job
+    cursor = datetime.combine(d, parse_time_str(z["start"]), tzinfo=timezone.utc)
+    origin = (CALEB_HOME["lat"], CALEB_HOME["lng"])
+    updates = []
+    for seq, jid in enumerate(data.ordered_job_ids, start=1):
+        j = by_id[jid]
+        dm = mock_distance_matrix(origin[0], origin[1], j["job_lat"], j["job_lng"])
+        # Earliest start = cursor + drive, rounded up to next 15-min boundary
+        earliest = cursor + timedelta(minutes=dm["duration_minutes"])
+        minute = (earliest.minute // 15) * 15
+        if earliest.minute % 15 != 0 or earliest.second > 0:
+            minute += 15
+        if minute >= 60:
+            earliest = earliest.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            earliest = earliest.replace(minute=minute, second=0, microsecond=0)
+        new_start = earliest
+        new_end = new_start + timedelta(minutes=z["slot_minutes"])
+        zone_end_dt = datetime.combine(d, parse_time_str(z["end"]), tzinfo=timezone.utc)
+        if new_end > zone_end_dt:
+            raise HTTPException(400, f"Reorder would push job past zone end. Try a different order.")
+        updates.append({
+            "id": jid,
+            "scheduled_start": iso(new_start),
+            "scheduled_end": iso(new_end),
+            "drive_time_minutes": dm["duration_minutes"],
+            "sequence_order": seq,
+        })
+        cursor = new_end
+        origin = (j["job_lat"], j["job_lng"])
+    # Persist
+    for u in updates:
+        await db.jobs.update_one({"id": u["id"]}, {"$set": {
+            "scheduled_start": u["scheduled_start"], "scheduled_end": u["scheduled_end"],
+            "drive_time_minutes": u["drive_time_minutes"], "sequence_order": u["sequence_order"],
+            "updated_at": iso(now_utc()),
+        }})
+    return {"updated": len(updates), "jobs": updates}
+
+# ---------- Editable settings ----------
+@api.put("/settings/pricing")
+async def update_pricing(body: PricingUpdate, tech=Depends(require_owner)):
+    d = body.model_dump(exclude_unset=True)
+    for k, v in d.items():
+        if k in STANDARD_PRICING and v is not None:
+            STANDARD_PRICING[k]["price"] = float(v)
+    await save_pricing()
+    return [{"calibration_type": k, **v} for k, v in STANDARD_PRICING.items()]
+
+@api.put("/settings/zones/{zone_key}")
+async def update_zone(zone_key: str, body: ZoneUpdate, tech=Depends(require_owner)):
+    if zone_key not in ZONES:
+        raise HTTPException(404, "Zone not found")
+    d = body.model_dump(exclude_unset=True)
+    for k, v in d.items():
+        if k in ZONES[zone_key] and v is not None:
+            ZONES[zone_key][k] = v
+    await save_zones()
+    return list(ZONES.values())
+
+@api.put("/contractors/{contractor_id}")
+async def update_contractor(contractor_id: str, body: ContractorUpdate, tech=Depends(require_owner)):
+    c = await db.technicians.find_one({"id": contractor_id, "role": "contractor"})
+    if not c:
+        raise HTTPException(404, "Contractor not found")
+    update = body.model_dump(exclude_unset=True)
+    if "home_address" in update and update["home_address"]:
+        geo = mock_geocode(update["home_address"])
+        update["home_lat"] = geo["lat"]
+        update["home_lng"] = geo["lng"]
+    update["updated_at"] = iso(now_utc())
+    await db.technicians.update_one({"id": contractor_id}, {"$set": update})
+    fresh = await db.technicians.find_one({"id": contractor_id}, {"_id": 0, "password_hash": 0})
+    return fresh
+
 # ---------- Seed ----------
 async def seed_data():
     # Owner
@@ -797,6 +1067,7 @@ async def seed_data():
 @app.on_event("startup")
 async def startup():
     await seed_data()
+    await load_settings()
 
 # Include router
 app.include_router(api)

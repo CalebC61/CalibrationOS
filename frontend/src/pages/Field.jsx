@@ -14,15 +14,26 @@ export default function Field() {
   const [docName, setDocName] = useState("");
   const [loading, setLoading] = useState(true);
 
+  const [offers, setOffers] = useState([]);
+
   const load = useCallback(async () => {
     try {
-      const { data } = await api.get(`/jobs?date_str=${todayStr()}`);
-      setJobs(data);
+      const [j, o] = await Promise.all([
+        api.get(`/jobs?date_str=${todayStr()}`),
+        api.get(`/contractor-offers`),
+      ]);
+      setJobs(j.data);
+      setOffers(o.data.filter(x => x.status === "pending"));
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
 
   function logout() { setStoredAuth(null); nav("/login"); }
+
+  async function respondOffer(offerId, accept) {
+    await api.post(`/contractor-offers/${offerId}/respond`, { accept });
+    load();
+  }
 
   async function setStatus(jobId, status) {
     await api.post(`/jobs/${jobId}/status`, { status });
@@ -117,7 +128,32 @@ export default function Field() {
           {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
         </h1>
         {loading && <div className="muted">Loading…</div>}
-        {!loading && jobs.length === 0 && (
+
+        {offers.length > 0 && (
+          <div style={{ marginBottom: 16 }} data-testid="pending-offers">
+            <div className="label" style={{ color: "var(--accent)" }}>Pending offers ({offers.length})</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {offers.map(o => (
+                <div key={o.id} className="card-job-new card-job" data-testid={`offer-${o.id}`}>
+                  <div className="h3">{o.shop_name}</div>
+                  <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{o.vehicle}</div>
+                  <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+                    {formatTime(o.scheduled_start)} · ${o.price.toFixed(2)}
+                  </div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{o.job_address}</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                    <button className="btn btn-primary" style={{ flex: 1 }}
+                      onClick={() => respondOffer(o.id, true)} data-testid={`accept-${o.id}`}>Accept</button>
+                    <button className="btn btn-ghost" style={{ flex: 1, borderColor: "rgba(239,68,68,0.4)", color: "var(--red)" }}
+                      onClick={() => respondOffer(o.id, false)} data-testid={`decline-${o.id}`}>Decline</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {!loading && jobs.length === 0 && offers.length === 0 && (
           <div className="surface muted" style={{ padding: 24, textAlign: "center" }}>No jobs today.</div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
