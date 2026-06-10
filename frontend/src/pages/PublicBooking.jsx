@@ -43,7 +43,6 @@ export default function PublicBooking() {
       .then(r => { setShop(r.data); setAddress(r.data.address); setNotifyPhone(r.data.contact_phone || ""); })
       .catch(e => setError(e.response?.data?.detail || "Booking link not active"));
   }, [token]);
-
   async function geocodeAddr() {
     if (!address) return;
     const { data } = await api.post("/geocode", { address });

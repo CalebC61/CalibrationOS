@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { api, formatTime, todayStr, dateStr } from "../lib/api";
 import Shell from "../components/Shell";
@@ -17,7 +17,7 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState({ count: 0, alerts: [] });
   const [alertsOpen, setAlertsOpen] = useState(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const [j, s, a] = await Promise.all([
         api.get(`/jobs?date_str=${date}`),
@@ -27,8 +27,9 @@ export default function Dashboard() {
       setJobs(j.data); setSummary(s.data); setAlerts(a.data);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [date]);
+  }, [date]);
+
+  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
 
   async function markSeen() {
     await api.post("/notifications/mark-seen");

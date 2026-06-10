@@ -34,4 +34,4 @@ export default function Invoices() {
   );
 }
 const Th = ({ children }) => <th style={{ padding: "10px 14px", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", fontWeight: 600 }}>{children}</th>;
-const Td = ({ children, ...p }) => <td style={{ padding: "12px 14px", fontSize: 14 }} {...p}>{children}</td>;
+const Td = ({ children, colSpan, style, className }) => <td colSpan={colSpan} className={className} style={{ padding: "12px 14px", fontSize: 14, ...(style || {}) }}>{children}</td>;

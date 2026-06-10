@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr } from "../lib/api";
 
@@ -14,13 +14,13 @@ export default function Field() {
   const [docName, setDocName] = useState("");
   const [loading, setLoading] = useState(true);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const { data } = await api.get(`/jobs?date_str=${todayStr()}`);
       setJobs(data);
     } finally { setLoading(false); }
-  }
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
+  }, []);
+  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
 
   function logout() { setStoredAuth(null); nav("/login"); }
 
