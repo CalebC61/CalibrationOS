@@ -13,6 +13,7 @@ import secrets
 import random
 import math
 import base64
+from urllib.parse import quote
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Literal
@@ -900,8 +901,10 @@ async def download_document(doc_id: str, tech=Depends(get_current_tech)):
         if not job or job.get("technician_id") != tech["id"]:
             raise HTTPException(403, "Not your document")
     binary = base64.b64decode(doc["data_b64"])
+    # RFC 5987 — handles non-Latin-1 filenames (em-dashes, accents, etc.) without crashing
+    quoted = quote(doc["file_name"])
     return Response(content=binary, media_type=doc.get("content_type", "application/octet-stream"),
-                    headers={"Content-Disposition": f'attachment; filename="{doc["file_name"]}"'})
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"})
 
 # ---------- Public shop status page ----------
 @api.get("/public/shop-status/{token}")

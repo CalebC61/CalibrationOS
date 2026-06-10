@@ -58,7 +58,15 @@ All other spec items (zones, pricing, invoice format, dark theme, fonts, busines
 - Iteration 2: New-booking alerts verified end-to-end via curl (create booking → alert appears → mark seen → cleared). UI verified via screenshot — pulsing pill + dropdown panel + NEW badge on job card.
 - Frontend: login flows verified, shop creation address geocoding verified.
 
-## Iteration 3 — Contractor Dispatch + Reorder + Route Map + Editable Settings (2026-01)
+## Iteration 4 — At-Risk + Reschedule/Cancel + Real Upload + Scorecard (2026-01)
+- **At-risk detection:** `annotate_at_risk()` adds `is_at_risk` + `risk_reason` to every job. Booked job >10 min past start, or driving/on_site job past scheduled_end → flagged. Dashboard summary returns `at_risk_count`; UI shows red border + ⚠ AT RISK badge on the card and a red "At Risk" metric tile.
+- **Reschedule & cancel-with-reason:** Single modal component handles both. Reschedule loads available slots via `/public/availability` (drive-time aware). Cancel just captures reason. Both send mock SMS to customer (kind `rescheduled` / `cancelled`).
+- **Real file upload:** `/api/jobs/{id}/upload-document` accepts multipart, 10 MB cap, stores base64 in `db.documents`. File renamed to spec format. Download endpoint streams binary with **RFC 5987 Content-Disposition** (handles em-dashes / unicode). Field PWA replaced text input with real file picker (`capture="environment"` for camera).
+- **Tomorrow preview strip:** Below route map, shows tomorrow's jobs as horizontally scrollable mini-cards with zone badge, time, shop, vehicle.
+- **Public Scorecard page:** `/scorecard/:token` shows shop-side view — 30-day stats (jobs/completed/upcoming/total spent), CTA to book, upcoming list, recent completions list. Shop detail page includes copyable scorecard link.
+
+## Testing Status
+- Iteration 4: **12/12 backend pass after fix** (one bug found and fixed: unicode em-dash in Content-Disposition → RFC 5987). Frontend visually verified for at-risk badges, reschedule/cancel modals, tomorrow strip, scorecard page (valid + invalid token), shop-detail scorecard URL block.
 - **Contractor dispatch:** Owner can dispatch any booked job to a contractor. Backend creates `contractor_offers` record with 30-min expiry + sends mock SMS to contractor. Owner board shows purple `DISPATCHED_TO_CONTRACTOR` badge with live countdown + Mark Accepted/Declined buttons.
 - **Offer accept/decline:** Contractor can hit accept/decline from /field PWA (real flow) OR owner can manually mark via the dashboard (simulating SMS reply). Decline reverts the job to `booked` and reassigns to owner + sends owner SMS. Auto-expiry (after 30 min) does same.
 - **Drag-and-drop reorder:** Native HTML5 drag-and-drop on job cards within a zone panel. POST `/api/jobs/reorder` recomputes drive times sequentially with the slot algorithm; refuses if the order would push past zone end.
