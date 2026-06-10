@@ -540,6 +540,29 @@ async def public_book(data: BookingIn):
     if job["notification_phone"]:
         await mock_send_sms(job["notification_phone"], msg, kind="booking_confirmed", job_id=job["id"])
 
+    # Notify owner of the new booking (alert + mock SMS)
+    if owner:
+        await db.new_booking_alerts.insert_one({
+            "id": gen_id(),
+            "job_id": job["id"],
+            "owner_id": owner["id"],
+            "created_at": iso(now_utc()),
+            "seen_at": None,
+            "shop_name": shop["name"],
+            "scheduled_start": job["scheduled_start"],
+            "zone": zone,
+            "vehicle": f"{data.year} {data.make} {data.model}",
+            "price": price,
+        })
+        owner_msg = (
+            f"🎉 New booking from {shop['name']}: "
+            f"{start_dt.strftime('%a %b %d at %-I:%M %p')} — "
+            f"{data.year} {data.make} {data.model} (${price:.0f}). "
+            f"View on dispatch board."
+        )
+        if owner.get("phone"):
+            await mock_send_sms(owner["phone"], owner_msg, kind="owner_new_booking", job_id=job["id"])
+
     return {"job_id": job["id"], "booking_reference": job["id"][:8].upper(),
             "scheduled_start": job["scheduled_start"], "zone": zone, "price": price}
 
@@ -682,6 +705,26 @@ async def sms_log(limit: int = 50, tech=Depends(require_owner)):
 async def list_invoices(tech=Depends(require_owner)):
     invs = await db.mock_xero_invoices.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return invs
+
+# ---------- New-booking alerts ----------
+@api.get("/notifications/new-bookings")
+async def new_booking_alerts(tech=Depends(require_owner)):
+    """Returns unseen new-booking alerts for the owner."""
+    alerts = await db.new_booking_alerts.find(
+        {"owner_id": tech["id"], "seen_at": None},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return {"count": len(alerts), "alerts": alerts}
+
+@api.post("/notifications/mark-seen")
+async def mark_alerts_seen(tech=Depends(require_owner)):
+    """Mark all unseen new-booking alerts as seen for this owner."""
+    now = iso(now_utc())
+    res = await db.new_booking_alerts.update_many(
+        {"owner_id": tech["id"], "seen_at": None},
+        {"$set": {"seen_at": now}}
+    )
+    return {"marked": res.modified_count}
 
 # ---------- Seed ----------
 async def seed_data():

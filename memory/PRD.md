@@ -55,7 +55,14 @@ All other spec items (zones, pricing, invoice format, dark theme, fonts, busines
 
 ## Testing Status
 - Iteration 1: **15/15 backend tests pass** (auth, RBAC, shops, geocode, public booking, slot rules, custom pricing, full job lifecycle → invoice).
+- Iteration 2: New-booking alerts verified end-to-end via curl (create booking → alert appears → mark seen → cleared). UI verified via screenshot — pulsing pill + dropdown panel + NEW badge on job card.
 - Frontend: login flows verified, shop creation address geocoding verified.
+
+## Iteration 2 — New Booking Alerts (2026-01)
+- Backend: `new_booking_alerts` collection. On every public booking: alert created + mock SMS to owner phone (`owner_new_booking` kind).
+- `GET /api/notifications/new-bookings` returns unseen alerts for current owner.
+- `POST /api/notifications/mark-seen` clears them.
+- Dashboard: pulsing orange pill in header showing count, click to expand panel listing each new booking (shop, vehicle, zone, time). "NEW" badge + orange glow ring on the corresponding job card. Live polling refreshes every 5s.
 
 ## Prioritized Backlog
 ### P0 (next iteration)

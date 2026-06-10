@@ -14,19 +14,29 @@ export default function Dashboard() {
   const [jobs, setJobs] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [alerts, setAlerts] = useState({ count: 0, alerts: [] });
+  const [alertsOpen, setAlertsOpen] = useState(false);
 
   async function load() {
-    setLoading(true);
     try {
-      const [j, s] = await Promise.all([
+      const [j, s, a] = await Promise.all([
         api.get(`/jobs?date_str=${date}`),
         api.get(`/dashboard/summary?date_str=${date}`),
+        api.get(`/notifications/new-bookings`),
       ]);
-      setJobs(j.data); setSummary(s.data);
+      setJobs(j.data); setSummary(s.data); setAlerts(a.data);
     } catch (e) { console.error(e); }
     setLoading(false);
   }
-  useEffect(() => { load(); }, [date]);
+  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [date]);
+
+  async function markSeen() {
+    await api.post("/notifications/mark-seen");
+    setAlerts({ count: 0, alerts: [] });
+    setAlertsOpen(false);
+  }
+
+  const newJobIds = new Set(alerts.alerts.map(a => a.job_id));
 
   const west = jobs.filter(j => j.zone === "west").sort((a,b) => a.scheduled_start.localeCompare(b.scheduled_start));
   const east = jobs.filter(j => j.zone === "east").sort((a,b) => a.scheduled_start.localeCompare(b.scheduled_start));
@@ -50,6 +60,58 @@ export default function Dashboard() {
 
   return (
     <Shell>
+      {/* New booking alert pill */}
+      {alerts.count > 0 && (
+        <div className="new-booking-pill page-fade" style={{ marginBottom: 16, position: "relative" }}
+          data-testid="new-bookings-banner">
+          <button
+            onClick={() => setAlertsOpen(o => !o)}
+            data-testid="new-bookings-pill"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 10,
+              background: "var(--accent-dim)", color: "var(--accent)",
+              border: "1px solid var(--border-active)", borderRadius: 999,
+              padding: "8px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer",
+            }}>
+            <span className="pulse-dot" style={{
+              width: 8, height: 8, borderRadius: 999, background: "var(--accent)",
+              boxShadow: "0 0 0 0 var(--accent)",
+            }} />
+            <span data-testid="new-bookings-count">{alerts.count}</span> new booking{alerts.count === 1 ? "" : "s"} since you last looked
+            <span style={{ opacity: 0.7, fontSize: 12 }}>{alertsOpen ? "▲" : "▼"}</span>
+          </button>
+
+          {alertsOpen && (
+            <div className="surface page-fade" style={{
+              position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30,
+              minWidth: 360, maxWidth: 480, padding: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+            }} data-testid="new-bookings-panel">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <div className="h3">New bookings</div>
+                <button className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }}
+                  onClick={markSeen} data-testid="mark-bookings-seen">Mark all seen</button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+                {alerts.alerts.map(a => (
+                  <div key={a.id} className="elevated" style={{ padding: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{a.shop_name}</div>
+                        <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{a.vehicle}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <span className={`badge badge-${a.zone}`}>{a.zone}</span>
+                        <div className="font-mono" style={{ fontSize: 12, marginTop: 4 }}>{formatTime(a.scheduled_start)}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Date strip + summary */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>
         <div>
@@ -76,9 +138,9 @@ export default function Dashboard() {
       {/* Split panel: West / East */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16 }}>
         <ZonePanel title="West Valley" subtitle="8:00 AM – 2:00 PM" zone="west" jobs={west}
-          onStatus={setStatus} headerClass="zone-header-west" />
+          onStatus={setStatus} headerClass="zone-header-west" newJobIds={newJobIds} />
         <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east}
-          onStatus={setStatus} headerClass="zone-header-east" />
+          onStatus={setStatus} headerClass="zone-header-east" newJobIds={newJobIds} />
       </div>
 
       {loading && jobs.length === 0 && <div className="muted" style={{ marginTop: 24 }}>Loading…</div>}
@@ -95,7 +157,7 @@ function Metric({ label, value }) {
   );
 }
 
-function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass }) {
+function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobIds }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className={`zone-header ${headerClass}`}>
@@ -108,16 +170,16 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass }) {
         </div>
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {jobs.map((j, idx) => <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus} />)}
+        {jobs.map((j, idx) => <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus} isNew={newJobIds?.has(j.id)} />)}
       </div>
     </section>
   );
 }
 
-function JobCard({ job, index, onStatus }) {
+function JobCard({ job, index, onStatus, isNew }) {
   const flow = STATUS_FLOW[job.status];
   return (
-    <div className="card-job" data-testid={`job-card-${job.id}`}>
+    <div className={"card-job" + (isNew ? " card-job-new" : "")} data-testid={`job-card-${job.id}`}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -126,6 +188,7 @@ function JobCard({ job, index, onStatus }) {
               fontSize: 12, fontWeight: 600,
             }}>#{index}</span>
             <span className={`badge badge-${job.status}`}>{job.status.replace(/_/g, " ")}</span>
+            {isNew && <span className="badge" style={{ background: "var(--accent-dim)", color: "var(--accent)", border: "1px solid var(--border-active)" }} data-testid="badge-new">NEW</span>}
             {job.invoice_status === "draft" && <span className="badge badge-draft">Invoice: Draft</span>}
           </div>
           <div className="h3" style={{ marginTop: 4 }}>{job.shop_name}</div>
