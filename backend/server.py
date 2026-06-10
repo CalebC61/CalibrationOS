@@ -1,11 +1,12 @@
 """CalibrationOS Backend — Phase 1 MVP (Path B: revenue path with mocked integrations)."""
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
 from fastapi.responses import Response
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import asyncio
 import logging
 import uuid
 import hashlib
@@ -27,6 +28,15 @@ load_dotenv(ROOT_DIR / '.env')
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
+
+# Stripe + Resend setup
+import stripe as stripe_sdk
+import resend as resend_sdk
+stripe_sdk.api_key = os.environ.get('STRIPE_API_KEY', 'sk_test_emergent')
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+if RESEND_API_KEY:
+    resend_sdk.api_key = RESEND_API_KEY
 
 app = FastAPI(title="CalibrationOS API")
 api = APIRouter(prefix="/api")
@@ -73,6 +83,27 @@ async def require_owner(tech=Depends(get_current_tech)):
     if tech["role"] != "owner":
         raise HTTPException(status_code=403, detail="Owner only")
     return tech
+
+def make_portal_token(shop_user_id: str) -> str:
+    payload = {
+        "sub": shop_user_id, "kind": "portal",
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXP_HOURS),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+async def get_current_shop_user(token: Optional[str] = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated (portal)")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        if payload.get("kind") != "portal":
+            raise HTTPException(status_code=401, detail="Not a portal token")
+        su = await db.shop_users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        if not su:
+            raise HTTPException(status_code=401, detail="Shop user not found")
+        return su
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 # ---------- Helpers ----------
 def now_utc() -> datetime:
@@ -326,6 +357,23 @@ class RescheduleIn(BaseModel):
 
 class CancelIn(BaseModel):
     reason: Optional[str] = None
+
+class InviteCreateIn(BaseModel):
+    shop_id: str
+    recipient_email: EmailStr
+    origin: Optional[str] = None  # Frontend passes window.location.origin
+
+class ShopUserRegisterIn(BaseModel):
+    invite_token: str
+    full_name: str
+    password: str
+    terms_signature: str
+    terms_agreed: bool
+    origin: Optional[str] = None
+
+class ShopUserLoginIn(BaseModel):
+    email: EmailStr
+    password: str
 
 # ---------- Auth routes ----------
 @api.post("/auth/login", response_model=TokenOut)
@@ -1176,6 +1224,325 @@ async def update_contractor(contractor_id: str, body: ContractorUpdate, tech=Dep
     await db.technicians.update_one({"id": contractor_id}, {"$set": update})
     fresh = await db.technicians.find_one({"id": contractor_id}, {"_id": 0, "password_hash": 0})
     return fresh
+
+# ---------- Email (Resend) ----------
+async def send_email(to: str, subject: str, html: str, kind: str = "transactional", meta: Optional[dict] = None):
+    """Send transactional email via Resend. Gracefully falls back to DB log if no key."""
+    log = {
+        "id": gen_id(), "to": to, "from": SENDER_EMAIL, "subject": subject,
+        "html": html, "kind": kind, "meta": meta or {}, "sent_at": iso(now_utc()),
+        "delivered": False, "provider_id": None, "error": None,
+    }
+    if not RESEND_API_KEY:
+        log["error"] = "No RESEND_API_KEY configured — saved to admin_notifications for manual send"
+        await db.admin_notifications.insert_one({**log, "subject": f"[MANUAL SEND] {subject}"})
+        logger.info(f"[MOCK EMAIL → {to}] {subject}")
+        return log
+    try:
+        import asyncio
+        result = await asyncio.to_thread(resend_sdk.Emails.send, {
+            "from": SENDER_EMAIL, "to": [to], "subject": subject, "html": html,
+        })
+        log["delivered"] = True
+        log["provider_id"] = result.get("id") if isinstance(result, dict) else None
+        await db.email_log.insert_one(log)
+        return log
+    except Exception as e:
+        log["error"] = str(e)
+        await db.email_log.insert_one(log)
+        logger.error(f"Resend send failed: {e}")
+        return log
+
+def invite_email_html(shop_name: str, register_url: str) -> str:
+    return f"""
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#111;color:#f5f5f5;font-family:Arial,sans-serif;padding:40px 0;">
+      <tr><td align="center">
+        <table width="560" cellpadding="0" cellspacing="0" style="background:#1A1A1A;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:32px;">
+          <tr><td>
+            <h1 style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:28px;letter-spacing:0.04em;margin:0 0 8px;">CALIBRATION<span style="color:#F97316;">OS</span></h1>
+            <p style="color:#888;font-size:12px;letter-spacing:0.1em;text-transform:uppercase;margin:0 0 24px;">Shop Portal Invitation</p>
+            <h2 style="font-size:22px;margin:0 0 12px;">{shop_name}, you&rsquo;re invited.</h2>
+            <p style="color:#c4c4c4;line-height:1.6;font-size:15px;">The Calibration Crew has set up a dedicated portal for your shop. Inside you can:</p>
+            <ul style="color:#c4c4c4;line-height:1.7;font-size:15px;">
+              <li>View all your scheduled and completed calibrations</li>
+              <li>See our daily route map so you can spot add-on opportunities</li>
+              <li>Download recalibration documentation for invoicing</li>
+              <li>Book new calibrations 24/7</li>
+            </ul>
+            <p style="color:#c4c4c4;line-height:1.6;font-size:15px;">Setup takes ~2 minutes and includes a card-on-file requirement (we charge per completed job to keep things friction-free).</p>
+            <p style="text-align:center;margin:32px 0;">
+              <a href="{register_url}" style="background:#F97316;color:#0a0a0a;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:700;display:inline-block;">Register Now &rarr;</a>
+            </p>
+            <p style="color:#666;font-size:12px;">This link expires in 14 days. Questions? Reply to this email.</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+    """
+
+# ---------- Shop user auth + portal endpoints ----------
+@api.post("/invites")
+async def create_invite(body: InviteCreateIn, tech=Depends(require_owner)):
+    shop = await db.shops.find_one({"id": body.shop_id})
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    token = secrets.token_urlsafe(24)
+    invite = {
+        "id": gen_id(), "shop_id": body.shop_id, "shop_name": shop["name"],
+        "recipient_email": body.recipient_email, "token": token,
+        "status": "pending",
+        "created_at": iso(now_utc()),
+        "expires_at": iso(now_utc() + timedelta(days=14)),
+        "registered_at": None, "shop_user_id": None,
+    }
+    await db.invites.insert_one(invite.copy())
+    origin = (body.origin or "").rstrip('/')
+    register_url = f"{origin}/portal/invite/{token}" if origin else f"/portal/invite/{token}"
+    await send_email(
+        to=body.recipient_email,
+        subject=f"You're invited to the CalibrationOS Shop Portal — {shop['name']}",
+        html=invite_email_html(shop["name"], register_url),
+        kind="invite", meta={"invite_id": invite["id"], "shop_id": shop["id"]},
+    )
+    return {**invite, "register_url": register_url}
+
+@api.get("/invites")
+async def list_invites(tech=Depends(require_owner)):
+    invites = await db.invites.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return invites
+
+@api.get("/public/invites/{token}")
+async def public_invite_lookup(token: str):
+    inv = await db.invites.find_one({"token": token}, {"_id": 0})
+    if not inv:
+        raise HTTPException(404, "Invitation not found")
+    if inv["status"] != "pending":
+        raise HTTPException(400, f"Invitation already {inv['status']}")
+    if inv["expires_at"] < iso(now_utc()):
+        raise HTTPException(400, "Invitation expired")
+    shop = await db.shops.find_one({"id": inv["shop_id"]},
+        {"_id": 0, "name": 1, "address": 1, "contact_phone": 1})
+    return {**inv, "shop": shop}
+
+@api.post("/public/invites/{token}/register")
+async def register_shop_user(token: str, body: ShopUserRegisterIn):
+    if not body.terms_agreed:
+        raise HTTPException(400, "You must agree to the terms")
+    inv = await db.invites.find_one({"token": token})
+    if not inv or inv["status"] != "pending" or inv["expires_at"] < iso(now_utc()):
+        raise HTTPException(400, "Invitation invalid or expired")
+    existing = await db.shop_users.find_one({"email": inv["recipient_email"].lower()})
+    if existing:
+        raise HTTPException(400, "An account already exists for this email")
+    # Create Stripe customer (graceful fallback if Stripe key is the placeholder)
+    stripe_customer_id = None
+    stripe_error = None
+    if stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent"):
+        try:
+            cust = await asyncio.to_thread(stripe_sdk.Customer.create,
+                email=inv["recipient_email"], name=body.full_name,
+                metadata={"shop_id": inv["shop_id"]})
+            stripe_customer_id = cust["id"]
+        except Exception as e:
+            stripe_error = str(e)
+            logger.warning(f"Stripe customer creation skipped: {e}")
+    else:
+        stripe_error = "Stripe key not configured (using placeholder)"
+    user_id = gen_id()
+    su = {
+        "id": user_id, "email": inv["recipient_email"].lower(),
+        "full_name": body.full_name,
+        "password_hash": hash_password(body.password),
+        "shop_id": inv["shop_id"], "shop_name": inv["shop_name"],
+        "stripe_customer_id": stripe_customer_id,
+        "stripe_payment_method_id": None,
+        "card_brand": None, "card_last4": None, "card_exp_month": None, "card_exp_year": None,
+        "terms_signature": body.terms_signature,
+        "terms_signed_at": iso(now_utc()),
+        "is_active": True,
+        "created_at": iso(now_utc()),
+    }
+    await db.shop_users.insert_one(su.copy())
+    await db.invites.update_one({"token": token}, {"$set": {
+        "status": "registered", "registered_at": iso(now_utc()), "shop_user_id": user_id,
+    }})
+    # Create Stripe Checkout in setup mode to capture card (only if Stripe configured)
+    origin = (body.origin or "").rstrip('/')
+    checkout_url = None
+    if stripe_customer_id and origin:
+        try:
+            session = await asyncio.to_thread(stripe_sdk.checkout.Session.create,
+                mode="setup", payment_method_types=["card"],
+                customer=stripe_customer_id,
+                success_url=f"{origin}/portal/setup-return?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{origin}/portal/setup-return?cancelled=1",
+                metadata={"shop_user_id": user_id})
+            checkout_url = session["url"]
+        except Exception as e:
+            logger.warning(f"Stripe Checkout setup skipped: {e}")
+            stripe_error = str(e)
+    token_jwt = make_portal_token(user_id)
+    return {
+        "shop_user_id": user_id, "token": token_jwt,
+        "stripe_checkout_url": checkout_url,
+        "stripe_unavailable": checkout_url is None,
+        "stripe_error": stripe_error,
+    }
+
+@api.get("/portal/stripe-setup-status")
+async def portal_stripe_setup_status(session_id: str, su=Depends(get_current_shop_user)):
+    """Called after Stripe redirect to confirm + persist the payment method."""
+    try:
+        session = await asyncio.to_thread(stripe_sdk.checkout.Session.retrieve, session_id,
+            expand=["setup_intent", "setup_intent.payment_method"])
+    except Exception as e:
+        raise HTTPException(500, f"Could not retrieve setup session: {e}")
+    setup_intent = session.get("setup_intent") or {}
+    pm = setup_intent.get("payment_method") or {}
+    pm_id = pm.get("id") if isinstance(pm, dict) else pm
+    if not pm_id:
+        return {"status": "incomplete", "session_status": session.get("status")}
+    # Attach as default + fetch card details
+    try:
+        await asyncio.to_thread(stripe_sdk.Customer.modify, su["stripe_customer_id"],
+            invoice_settings={"default_payment_method": pm_id})
+        pm_obj = pm if isinstance(pm, dict) and pm.get("card") else \
+                 await asyncio.to_thread(stripe_sdk.PaymentMethod.retrieve, pm_id)
+        card = pm_obj.get("card", {}) if isinstance(pm_obj, dict) else {}
+    except Exception as e:
+        raise HTTPException(500, f"Could not attach payment method: {e}")
+    await db.shop_users.update_one({"id": su["id"]}, {"$set": {
+        "stripe_payment_method_id": pm_id,
+        "card_brand": card.get("brand"), "card_last4": card.get("last4"),
+        "card_exp_month": card.get("exp_month"), "card_exp_year": card.get("exp_year"),
+        "updated_at": iso(now_utc()),
+    }})
+    fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
+    return {"status": "complete", "shop_user": fresh}
+
+@api.post("/portal/auth/login")
+async def portal_login(body: ShopUserLoginIn):
+    su = await db.shop_users.find_one({"email": body.email.lower()})
+    if not su or not verify_password(body.password, su.get("password_hash", "")):
+        raise HTTPException(401, "Invalid email or password")
+    if not su.get("is_active", True):
+        raise HTTPException(403, "Account disabled")
+    token = make_portal_token(su["id"])
+    return {"token": token, "shop_user_id": su["id"], "full_name": su["full_name"],
+            "shop_name": su["shop_name"], "shop_id": su["shop_id"],
+            "has_payment_method": bool(su.get("stripe_payment_method_id"))}
+
+@api.get("/portal/me")
+async def portal_me(su=Depends(get_current_shop_user)):
+    shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
+    return {"shop_user": su, "shop": shop}
+
+@api.get("/portal/jobs")
+async def portal_jobs(su=Depends(get_current_shop_user)):
+    """List ALL of this shop's jobs."""
+    jobs = await db.jobs.find({"shop_id": su["shop_id"]}, {"_id": 0}).sort("scheduled_start", -1).to_list(500)
+    return annotate_at_risk(jobs)
+
+@api.get("/portal/jobs/{job_id}")
+async def portal_job_detail(job_id: str, su=Depends(get_current_shop_user)):
+    job = await db.jobs.find_one({"id": job_id, "shop_id": su["shop_id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    docs = await db.documents.find({"job_id": job_id}, {"_id": 0, "data_b64": 0}).to_list(50)
+    return {"job": job, "documents": docs}
+
+@api.get("/portal/jobs/{job_id}/documents/{doc_id}/download")
+async def portal_document_download(job_id: str, doc_id: str, su=Depends(get_current_shop_user)):
+    job = await db.jobs.find_one({"id": job_id, "shop_id": su["shop_id"]})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    doc = await db.documents.find_one({"id": doc_id, "job_id": job_id})
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    binary = base64.b64decode(doc["data_b64"])
+    quoted = quote(doc["file_name"])
+    return Response(content=binary, media_type=doc.get("content_type", "application/octet-stream"),
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"})
+
+@api.get("/portal/day-map")
+async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_shop_user)):
+    """Returns OWN jobs fully detailed + other shops' jobs as anonymized blocks with drive-window from this shop."""
+    if date_str:
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+    else:
+        d = now_utc().date()
+    day_start = datetime.combine(d, time(0, 0), tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+    all_jobs = await db.jobs.find({
+        "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
+        "status": {"$ne": "cancelled"},
+    }, {"_id": 0}).sort("scheduled_start", 1).to_list(500)
+    # This shop's coordinates as drive-window origin
+    shop = await db.shops.find_one({"id": su["shop_id"]})
+    origin_lat = shop.get("lat") if shop else 33.4484
+    origin_lng = shop.get("lng") if shop else -112.0740
+    own, others = [], []
+    for j in all_jobs:
+        if j["shop_id"] == su["shop_id"]:
+            own.append(j)
+        else:
+            # Drive estimate from THIS shop to that pin
+            dm = mock_distance_matrix(origin_lat, origin_lng, j["job_lat"], j["job_lng"])
+            others.append({
+                "id": j["id"],
+                "scheduled_start": j["scheduled_start"],
+                "scheduled_end": j["scheduled_end"],
+                "zone": j["zone"],
+                "sequence_order": j.get("sequence_order"),
+                "job_lat": j["job_lat"], "job_lng": j["job_lng"],
+                "drive_minutes_from_you": dm["duration_minutes"],
+                "status": j["status"],
+                # NO shop_name, vehicle, customer, calibration, price, address
+            })
+    return {"own": annotate_at_risk(own), "others": others, "date": d.isoformat()}
+
+@api.post("/portal/book")
+async def portal_book(data: BookingIn, su=Depends(get_current_shop_user)):
+    """Booking through the portal — uses authenticated shop_user instead of token."""
+    shop = await db.shops.find_one({"id": su["shop_id"], "status": "active"})
+    if not shop:
+        raise HTTPException(400, "Your shop is not active")
+    # Override booking_token to the shop's current token internally
+    data.booking_token = shop["booking_link_token"]
+    return await public_book(data)
+
+# ---------- Owner: charge queue ----------
+@api.get("/charge-queue")
+async def charge_queue(tech=Depends(require_owner)):
+    """Completed jobs from portal shops whose card is on file, not yet charged."""
+    portal_users = await db.shop_users.find(
+        {"stripe_payment_method_id": {"$ne": None}}, {"_id": 0}
+    ).to_list(500)
+    shop_id_to_user = {u["shop_id"]: u for u in portal_users}
+    jobs = await db.jobs.find({
+        "status": "complete",
+        "shop_id": {"$in": list(shop_id_to_user.keys())},
+        "charged_at": {"$exists": False},
+    }, {"_id": 0}).sort("actual_completion", -1).to_list(200)
+    enriched = []
+    for j in jobs:
+        u = shop_id_to_user.get(j["shop_id"], {})
+        enriched.append({
+            **j,
+            "card_brand": u.get("card_brand"),
+            "card_last4": u.get("card_last4"),
+            "shop_user_email": u.get("email"),
+        })
+    return enriched
+
+# ---------- Email log ----------
+@api.get("/email-log")
+async def email_log(tech=Depends(require_owner)):
+    logs = await db.email_log.find({}, {"_id": 0}).sort("sent_at", -1).limit(100).to_list(100)
+    pending = await db.admin_notifications.find(
+        {"subject": {"$regex": "^\\[MANUAL SEND\\]"}}, {"_id": 0}
+    ).sort("sent_at", -1).limit(50).to_list(50)
+    return {"sent": logs, "pending_manual": pending}
 
 # ---------- Seed ----------
 async def seed_data():

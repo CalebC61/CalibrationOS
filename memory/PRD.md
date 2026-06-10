@@ -58,7 +58,47 @@ All other spec items (zones, pricing, invoice format, dark theme, fonts, busines
 - Iteration 2: New-booking alerts verified end-to-end via curl (create booking → alert appears → mark seen → cleared). UI verified via screenshot — pulsing pill + dropdown panel + NEW badge on job card.
 - Frontend: login flows verified, shop creation address geocoding verified.
 
-## Iteration 4 — At-Risk + Reschedule/Cancel + Real Upload + Scorecard (2026-01)
+## Iteration 5 — Shop Customer Portal (2026-01)
+**Choices: manual charge approval, portal-only booking, Resend for email, drive-window anonymization, full portal in one go.**
+
+### Backend
+- New collections: `shop_users`, `invites`, `email_log`
+- Separate JWT issuer for shop users (`kind: portal`) with own `get_current_shop_user` dependency
+- Endpoints:
+  - `POST /api/invites` (owner) — generate invite + send Resend email (falls back to manual-send queue if no key)
+  - `GET /api/invites` (owner) — list all invitations
+  - `GET /api/public/invites/{token}` — public invitation lookup
+  - `POST /api/public/invites/{token}/register` — create shop_user + create Stripe customer + return Stripe Checkout setup URL (graceful fallback if Stripe placeholder key)
+  - `GET /api/portal/stripe-setup-status?session_id=` — confirm + persist payment method from Stripe redirect
+  - `POST /api/portal/auth/login`, `GET /api/portal/me`
+  - `GET /api/portal/jobs`, `GET /api/portal/jobs/{id}` — own jobs only (RBAC enforced)
+  - `GET /api/portal/jobs/{id}/documents/{doc_id}/download` — RFC 5987 streaming
+  - `GET /api/portal/day-map?date_str=` — **own jobs full detail + others as anonymous blocks with drive-window from your shop**
+  - `POST /api/portal/book` — booking via portal auth (replaces public-token booking for portal shops)
+  - `GET /api/charge-queue` (owner) — completed portal-shop jobs not yet charged
+  - `GET /api/email-log` — sent + manual-send queue
+- Email helper using Resend SDK via `asyncio.to_thread`; gracefully writes to `admin_notifications` queue if `RESEND_API_KEY` missing
+
+### Frontend
+- New pages: `/portal/login`, `/portal/invite/:token` (registration), `/portal/setup-return` (Stripe callback handler), `/portal` (dashboard + day-map), `/portal/jobs`, `/portal/jobs/:id`, `/portal/book`, `/portal/settings`
+- New owner pages: `/invites` (send + queue UI), `/charges` (charge queue with mock-charge UI)
+- Owner nav updated: Dispatch · Shops · Invites · Charges · Invoices · Messages · Settings
+- Public booking token (/book/:token) removed from owner workflow per "portal only" choice (route still exists but new bookings go through the portal)
+- Branded invite email template (HTML, dark theme)
+- PortalShell with own nav (Dashboard / My Jobs / Book / Settings)
+- Anonymized day map: own pins colored orange/blue with "Y#" numbering, other shops' pins gray with "·" — tooltip shows time + drive-minutes-from-your-shop
+
+### Integration status
+- **Resend:** Code paths complete. Drop `RESEND_API_KEY=re_...` into `/app/backend/.env` and emails auto-send. Until then, invite links appear in the owner's `/invites` manual-send queue with a copy button.
+- **Stripe:** Code paths complete using raw `stripe` SDK with SetupIntent. The system-provided `sk_test_emergent` placeholder doesn't work with the raw SDK (it's an emergentintegrations-wrapper-only token). Drop a real Stripe test key from dashboard.stripe.com into `STRIPE_API_KEY=sk_test_51...` and card capture activates. Registration currently falls back gracefully (creates user, skips Stripe, shows "No card on file" banner with Add Card CTA in Settings).
+
+### Verified end-to-end
+- Owner sends invite (Glass Doctor — Mesa, AutoGlassNow — Goodyear) → register URL appears + manual queue
+- Shop user registers (full name, password, T&A signature with checkbox) → JWT issued → portal opens
+- "No card on file" banner displays when payment method missing
+- Portal dashboard renders day map with own + anonymized other-shop pins (drive-window tooltip)
+- My Jobs shows the shop's existing seeded job (Toyota Camry $115 custom rate from AGN-Goodyear)
+- Owner navs to /invites (Resend manual queue visible) and /charges (empty awaiting completed portal jobs)
 - **At-risk detection:** `annotate_at_risk()` adds `is_at_risk` + `risk_reason` to every job. Booked job >10 min past start, or driving/on_site job past scheduled_end → flagged. Dashboard summary returns `at_risk_count`; UI shows red border + ⚠ AT RISK badge on the card and a red "At Risk" metric tile.
 - **Reschedule & cancel-with-reason:** Single modal component handles both. Reschedule loads available slots via `/public/availability` (drive-time aware). Cancel just captures reason. Both send mock SMS to customer (kind `rescheduled` / `cancelled`).
 - **Real file upload:** `/api/jobs/{id}/upload-document` accepts multipart, 10 MB cap, stores base64 in `db.documents`. File renamed to spec format. Download endpoint streams binary with **RFC 5987 Content-Disposition** (handles em-dashes / unicode). Field PWA replaced text input with real file picker (`capture="environment"` for camera).
