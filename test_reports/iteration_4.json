@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 4 testing — at-risk detection, reschedule/cancel-with-reason, real file upload, public shop-status page. Backend pytest: 11 passed, 1 failed (real bug in document download: UnicodeEncodeError on Content-Disposition because seeded shop names contain U+2014 em-dash). Frontend visual verification: dashboard renders 3 buttons per booked job (Start Driving / Dispatch to Contractor / Reschedule / Cancel — 4 actually, 'Start Driving' is the dispatch-to-self), 5 ⚠ AT RISK badges visible, 'At Risk' metric in summary strip, tomorrow strip rendered with 8 tomorrow-job mini-cards. Reschedule modal opens with shop+vehicle context, date picker (defaults today), reason quick-pick buttons + free-text, Confirm button. Cancel modal opens via same component with NO date picker (mode=cancel), reason controls present, Confirm hits POST /cancel. Public /scorecard/{token} page renders shop info, 4 stat cards (Jobs 35 / Completed 0 / Upcoming 29 / Total Spent $0), 'Book a new calibration' CTA, and full upcoming list. Invalid token shows 'Shop not found or link inactive'. ShopDetail testids 'shop-scorecard-link' and 'copy-scorecard' confirmed in source.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/documents/{id}/download",
+        "issue": "Returns 500 UnicodeEncodeError when filename contains non-latin-1 characters. Seeded shops are named 'Safelite — Gilbert', 'AutoGlassNow — Goodyear', 'Glass Doctor — Mesa' (U+2014 em-dash). spec_name pipeline preserves the em-dash and Content-Disposition header tries to encode as latin-1 and crashes. Fix: either ASCII-sanitize spec_name (replace non-ASCII with '_' or '-') before building the header, or use RFC 5987 filename*=UTF-8'' encoding (urllib.parse.quote).",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Dashboard booked-job card",
+        "issues": ["Card shows 4 action buttons (Start Driving, Dispatch to Contractor, Reschedule, Cancel) — spec said 3 (Dispatch/Reschedule/Cancel). 'Start Driving' is self-dispatch which is the owner's natural action, so this is intentional and not a defect, but worth confirming with PM."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/iteration4_results.xml"
+  ],
+  "action_items": [
+    "FIX (HIGH): /api/documents/{id}/download crashes with UnicodeEncodeError when the spec filename contains an em-dash (or any non-latin-1 char) inherited from the shop name. Quick fix in server.py upload_document() spec_name line ~864 — strip/replace non-ASCII before storing, e.g.: spec_name = ''.join(c if ord(c) < 128 else '-' for c in spec_name)  OR  set the Content-Disposition header using RFC 5987: headers={'Content-Disposition': f\"attachment; filename*=UTF-8''{urllib.parse.quote(doc['file_name'])}\"}",
+    "OPTIONAL: server.py is now 1264 lines — splitting into routers (jobs/docs/public/contractors) is overdue."
+  ],
+  "critical_code_review_comments": [
+    "server.py upload_document: stores entire base64 payload in MongoDB document — fine for MVP but a 10 MB blob ≈ 13.3 MB base64 + BSON overhead which approaches the 16 MB BSON document limit. Recommend GridFS or S3 before production.",
+    "server.py download_document: no Content-Disposition filename sanitization for unicode (root cause of the 500 above).",
+    "annotate_at_risk: only considers status booked/driving/on_site — 'dispatched_to_contractor' jobs that are past start are never flagged. If a contractor accepts late, the owner has no risk visibility.",
+    "reschedule_job: does not validate the new slot against zone-window or check for overlap with existing jobs — could accidentally double-book or schedule outside zone hours. Reschedule UI uses /public/availability which does enforce this, but the API itself is permissive.",
+    "public/shop-status: 'upcoming' filter includes 'dispatched_to_contractor' which is correct, but 'booking_link' field in response duplicates 'booking_link_token' — minor."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/iteration_4.json",
+    "/app/test_reports/pytest/iteration4_results.xml"
+  ],
+  "success_rate": {
+    "backend": "92% (11/12 pytest cases — 1 real bug)",
+    "frontend": "100% on testid presence + visual confirmation of reschedule modal, cancel modal, at-risk badges, At Risk metric, tomorrow strip, scorecard public page (valid + invalid token), shop detail scorecard URL block"
+  },
+  "test_credentials": "Owner: caleb@thecalibrationcrew.us / Owner123!  Contractor: contractor@thecalibrationcrew.us / Contractor123!",
+  "seed_data_creation": "Created several TEST_-prefixed booked / cancelled jobs and 2 uploaded documents during pytest run. Left in DB for further visual inspection. The shop name still contains em-dash so download will keep failing until fixed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with: REACT_APP_BACKEND_URL=<url> pytest /app/backend/tests/test_iteration4.py -v. The one failing test is TestDocumentUpload::test_upload_list_download — once the unicode Content-Disposition bug is fixed it should pass. All other endpoints (at-risk annotation in /jobs + /dashboard/summary, /jobs/{id}/reschedule, /jobs/{id}/cancel, /jobs/{id}/upload-document, /jobs/{id}/documents, /public/shop-status/{token}) verified. Frontend testids confirmed: badge-at-risk-{id}, job-reschedule-{id}, reschedule-cancel-modal, reschedule-date, reason-text, modal-confirm, tomorrow-strip, tomorrow-job-{id}, doc-upload (and doc-uploaded/doc-remove after upload), shop-scorecard-link, copy-scorecard, cta-book, upcoming-{id}, completed-{id}.",
+  "rca of the issue": "Document download 500: server.py line ~903 builds Content-Disposition with filename containing U+2014 (em-dash) which Starlette serializes as latin-1 → UnicodeEncodeError. Reproduction: upload any file to a job whose shop name has an em-dash (all 3 seeded shops do) → GET /api/documents/{id}/download → 500. Mitigation A (simple): sanitize spec_name in upload_document() to ASCII-only. Mitigation B (correct): use RFC 5987 in Content-Disposition: filename*=UTF-8''<percent-encoded>. Mitigation B preserves the original filename; Mitigation A loses fidelity but is one line."
+}

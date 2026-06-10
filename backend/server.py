@@ -1,5 +1,6 @@
 """CalibrationOS Backend — Phase 1 MVP (Path B: revenue path with mocked integrations)."""
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi.responses import Response
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ import hashlib
 import secrets
 import random
 import math
+import base64
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Literal
@@ -316,6 +318,13 @@ class ContractorUpdate(BaseModel):
     phone: Optional[str] = None
     home_address: Optional[str] = None
     is_active: Optional[bool] = None
+
+class RescheduleIn(BaseModel):
+    scheduled_start: str  # ISO datetime
+    reason: Optional[str] = None
+
+class CancelIn(BaseModel):
+    reason: Optional[str] = None
 
 # ---------- Auth routes ----------
 @api.post("/auth/login", response_model=TokenOut)
@@ -630,6 +639,30 @@ async def public_book(data: BookingIn):
             "scheduled_start": job["scheduled_start"], "zone": zone, "price": price}
 
 # ---------- Jobs (dispatcher + field) ----------
+def annotate_at_risk(jobs: List[dict]) -> List[dict]:
+    """Mark jobs that are running late or are next-up after a late job."""
+    now = now_utc()
+    for j in jobs:
+        j["is_at_risk"] = False
+        j["risk_reason"] = None
+        if j["status"] in ("driving", "on_site"):
+            sched_end = datetime.fromisoformat(j["scheduled_end"])
+            if sched_end.tzinfo is None:
+                sched_end = sched_end.replace(tzinfo=timezone.utc)
+            if now > sched_end:
+                overrun = int((now - sched_end).total_seconds() / 60)
+                j["is_at_risk"] = True
+                j["risk_reason"] = f"Running {overrun} min over scheduled end"
+        elif j["status"] == "booked":
+            sched_start = datetime.fromisoformat(j["scheduled_start"])
+            if sched_start.tzinfo is None:
+                sched_start = sched_start.replace(tzinfo=timezone.utc)
+            if now > sched_start + timedelta(minutes=10):
+                late = int((now - sched_start).total_seconds() / 60)
+                j["is_at_risk"] = True
+                j["risk_reason"] = f"Start {late} min past scheduled time"
+    return jobs
+
 @api.get("/jobs")
 async def list_jobs(date_str: Optional[str] = None, tech=Depends(get_current_tech)):
     """List jobs for a given date (default: today). Contractors only see their own jobs."""
@@ -646,7 +679,7 @@ async def list_jobs(date_str: Optional[str] = None, tech=Depends(get_current_tec
     if tech["role"] == "contractor":
         q["technician_id"] = tech["id"]
     jobs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_start", 1).to_list(500)
-    return jobs
+    return annotate_at_risk(jobs)
 
 @api.get("/jobs/{job_id}")
 async def get_job(job_id: str, tech=Depends(get_current_tech)):
@@ -750,12 +783,157 @@ async def dashboard_summary(date_str: Optional[str] = None, tech=Depends(require
     drive_min = sum((j.get("drive_time_minutes") or 0) for j in jobs)
     miles = round(drive_min * 0.5, 1)  # ~30 mph average
     done_by = max((j["scheduled_end"] for j in jobs), default=None)
+    annotated = annotate_at_risk(jobs)
+    at_risk = sum(1 for j in annotated if j["is_at_risk"])
     return {
         "date": d.isoformat(),
         "job_count": len(jobs),
         "revenue": revenue,
         "estimated_miles": miles,
         "done_by": done_by,
+        "at_risk_count": at_risk,
+    }
+
+# ---------- Reschedule + cancel (with reason) ----------
+@api.post("/jobs/{job_id}/reschedule")
+async def reschedule_job(job_id: str, body: RescheduleIn, tech=Depends(require_owner)):
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job["status"] in ("complete", "cancelled"):
+        raise HTTPException(400, f"Cannot reschedule a {job['status']} job")
+    try:
+        new_start = datetime.fromisoformat(body.scheduled_start.replace("Z", "+00:00"))
+        if new_start.tzinfo is None:
+            new_start = new_start.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(400, "Invalid scheduled_start")
+    z = ZONES[job["zone"]]
+    new_end = new_start + timedelta(minutes=z["slot_minutes"])
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "scheduled_start": iso(new_start),
+        "scheduled_end": iso(new_end),
+        "reschedule_reason": body.reason,
+        "rescheduled_at": iso(now_utc()),
+        "updated_at": iso(now_utc()),
+    }})
+    # Notify customer
+    if job.get("notification_phone"):
+        msg = (f"Your calibration appointment has been rescheduled to "
+               f"{new_start.strftime('%a %b %d at %-I:%M %p')}. "
+               f"Reply if this doesn't work for you. — The Calibration Crew")
+        await mock_send_sms(job["notification_phone"], msg, kind="rescheduled", job_id=job_id)
+    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    return fresh
+
+@api.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str, body: CancelIn, tech=Depends(require_owner)):
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job["status"] in ("complete", "cancelled"):
+        raise HTTPException(400, f"Already {job['status']}")
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "status": "cancelled",
+        "cancellation_reason": body.reason,
+        "cancelled_at": iso(now_utc()),
+        "updated_at": iso(now_utc()),
+    }})
+    if job.get("notification_phone"):
+        reason_suffix = f" Reason: {body.reason}" if body.reason else ""
+        msg = f"Your scheduled calibration has been cancelled.{reason_suffix} Please contact us to reschedule."
+        await mock_send_sms(job["notification_phone"], msg, kind="cancelled", job_id=job_id)
+    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    return fresh
+
+# ---------- Real document upload (replaces mocked filename) ----------
+@api.post("/jobs/{job_id}/upload-document")
+async def upload_document(job_id: str, file: UploadFile = File(...), tech=Depends(get_current_tech)):
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
+        raise HTTPException(403, "Not your job")
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:  # 10 MB limit
+        raise HTTPException(400, "File too large (max 10 MB)")
+    shop = await db.shops.find_one({"id": job["shop_id"]})
+    file_name = file.filename or "calibration_report"
+    # Spec naming: Customer_SHOP_Make_Model_Year.ext
+    ext = (file_name.rsplit(".", 1)[-1] if "." in file_name else "pdf").lower()
+    spec_name = (f"{job['customer_last_name']}_{shop['name'].upper().replace(' ', '')}_"
+                 f"{job['vehicle_make']}_{job['vehicle_model']}_{job['vehicle_year']}.{ext}")
+    doc = {
+        "id": gen_id(),
+        "job_id": job_id,
+        "file_name": spec_name,
+        "original_name": file_name,
+        "content_type": file.content_type or "application/octet-stream",
+        "size_bytes": len(contents),
+        "data_b64": base64.b64encode(contents).decode(),
+        "uploaded_at": iso(now_utc()),
+        "uploaded_by": tech["id"],
+        "storage_path": f"calibration-docs/Recals/Recal - {tech['name']}/{datetime.fromisoformat(job['scheduled_start']).strftime('%Y/%B')}/{spec_name}",
+    }
+    await db.documents.insert_one(doc.copy())
+    # Return without the big data field
+    return {k: v for k, v in doc.items() if k != "data_b64"}
+
+@api.get("/jobs/{job_id}/documents")
+async def list_job_documents(job_id: str, tech=Depends(get_current_tech)):
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
+        raise HTTPException(403, "Not your job")
+    docs = await db.documents.find({"job_id": job_id}, {"_id": 0, "data_b64": 0}).to_list(50)
+    return docs
+
+@api.get("/documents/{doc_id}/download")
+async def download_document(doc_id: str, tech=Depends(get_current_tech)):
+    doc = await db.documents.find_one({"id": doc_id})
+    if not doc or "data_b64" not in doc:
+        raise HTTPException(404, "Document not found")
+    # Permission: owner sees all; contractor only theirs
+    if tech["role"] == "contractor":
+        job = await db.jobs.find_one({"id": doc["job_id"]})
+        if not job or job.get("technician_id") != tech["id"]:
+            raise HTTPException(403, "Not your document")
+    binary = base64.b64decode(doc["data_b64"])
+    return Response(content=binary, media_type=doc.get("content_type", "application/octet-stream"),
+                    headers={"Content-Disposition": f'attachment; filename="{doc["file_name"]}"'})
+
+# ---------- Public shop status page ----------
+@api.get("/public/shop-status/{token}")
+async def public_shop_status(token: str):
+    shop = await db.shops.find_one({"booking_link_token": token, "status": "active"}, {"_id": 0})
+    if not shop:
+        raise HTTPException(404, "Shop not found or link inactive")
+    # Last 30 days of jobs for this shop
+    cutoff = iso(now_utc() - timedelta(days=30))
+    jobs = await db.jobs.find(
+        {"shop_id": shop["id"], "scheduled_start": {"$gte": cutoff}},
+        {"_id": 0, "id": 1, "scheduled_start": 1, "scheduled_end": 1, "status": 1,
+         "calibration_label": 1, "price": 1, "vehicle_year": 1, "vehicle_make": 1,
+         "vehicle_model": 1, "customer_last_name": 1, "actual_completion": 1, "result": 1}
+    ).sort("scheduled_start", -1).limit(50).to_list(50)
+    completed = [j for j in jobs if j["status"] == "complete"]
+    upcoming = [j for j in jobs if j["status"] in ("booked", "driving", "on_site", "dispatched_to_contractor")]
+    total_spent = sum(j["price"] for j in completed)
+    return {
+        "shop_name": shop["name"],
+        "shop_address": shop["address"],
+        "zone": shop["zone"],
+        "booking_link": shop["booking_link_token"],
+        "stats": {
+            "jobs_last_30_days": len(jobs),
+            "completed_count": len(completed),
+            "upcoming_count": len(upcoming),
+            "total_spent_last_30_days": total_spent,
+            "last_completion": completed[0]["actual_completion"] if completed else None,
+        },
+        "upcoming": upcoming,
+        "completed": completed,
     }
 
 # ---------- SMS log (for transparency in mock mode) ----------

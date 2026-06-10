@@ -33,6 +33,7 @@ export default function ShopDetail() {
   if (!shop) return <Shell><div className="muted">Loading…</div></Shell>;
 
   const url = `${window.location.origin}/book/${shop.booking_link_token}`;
+  const scorecardUrl = `${window.location.origin}/scorecard/${shop.booking_link_token}`;
 
   return (
     <Shell>
@@ -44,12 +45,19 @@ export default function ShopDetail() {
         </div>
 
         <div className="surface" style={{ padding: 20, marginBottom: 16 }}>
-          <div className="h3" style={{ marginBottom: 12 }}>Booking Link</div>
+          <div className="h3" style={{ marginBottom: 12 }}>Public Links</div>
+          <div className="label">Booking link</div>
           <div className="font-mono" style={{ background: "var(--bg-elevated)", padding: 10, borderRadius: 6, fontSize: 13, wordBreak: "break-all" }} data-testid="shop-booking-link">{url}</div>
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 12, marginBottom: 16, flexWrap: "wrap" }}>
             <button className="btn btn-primary" onClick={() => { navigator.clipboard.writeText(url); alert("Copied!"); }}>Copy</button>
-            <a className="btn btn-ghost" href={url} target="_blank" rel="noreferrer">Open Public Page</a>
+            <a className="btn btn-ghost" href={url} target="_blank" rel="noreferrer">Open</a>
             <button className="btn btn-ghost" onClick={regen} data-testid="regen-link">Regenerate</button>
+          </div>
+          <div className="label">Scorecard (share with shop)</div>
+          <div className="font-mono" style={{ background: "var(--bg-elevated)", padding: 10, borderRadius: 6, fontSize: 13, wordBreak: "break-all" }} data-testid="shop-scorecard-link">{scorecardUrl}</div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button className="btn btn-primary" onClick={() => { navigator.clipboard.writeText(scorecardUrl); alert("Copied!"); }} data-testid="copy-scorecard">Copy</button>
+            <a className="btn btn-ghost" href={scorecardUrl} target="_blank" rel="noreferrer">Open</a>
           </div>
         </div>
 

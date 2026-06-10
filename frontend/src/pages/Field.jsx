@@ -30,9 +30,26 @@ export default function Field() {
 
   function logout() { setStoredAuth(null); nav("/login"); }
 
+  const [uploadedDoc, setUploadedDoc] = useState(null);
+  const [uploading, setUploading] = useState(false);
+
   async function respondOffer(offerId, accept) {
     await api.post(`/contractor-offers/${offerId}/respond`, { accept });
     load();
+  }
+
+  async function uploadDoc(jobId, file) {
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const { data } = await api.post(`/jobs/${jobId}/upload-document`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setUploadedDoc(data);
+    } catch (e) {
+      alert(e.response?.data?.detail || "Upload failed");
+    } finally { setUploading(false); }
   }
 
   async function setStatus(jobId, status) {
@@ -40,11 +57,10 @@ export default function Field() {
     load();
   }
   async function complete(jobId) {
-    const docFile = docName.trim() || "calibration_report.pdf";
     setCompleting(true);
     try {
-      await api.post(`/jobs/${jobId}/complete`, { result, notes: notes || null, document_name: docFile });
-      setActive(null); setResult("pass"); setNotes(""); setDocName("");
+      await api.post(`/jobs/${jobId}/complete`, { result, notes: notes || null });
+      setActive(null); setResult("pass"); setNotes(""); setDocName(""); setUploadedDoc(null);
       load();
     } finally { setCompleting(false); }
   }
@@ -94,11 +110,29 @@ export default function Field() {
                 <textarea className="input" rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
               </div>
               <div style={{ marginTop: 14 }}>
-                <div className="label">Documentation file name (mocked upload)</div>
-                <input className="input" placeholder="e.g. Johnson_SAFELITEGILBERT_Honda_Accord_2023.pdf"
-                  value={docName} onChange={e => setDocName(e.target.value)} data-testid="doc-name" />
+                <div className="label">Calibration documentation (PDF or photo)</div>
+                {!uploadedDoc ? (
+                  <label className="btn btn-ghost" style={{ width: "100%", padding: 14, cursor: "pointer", justifyContent: "center" }}>
+                    {uploading ? "Uploading…" : "📷 Take photo / 📄 Upload PDF"}
+                    <input type="file" accept="image/*,application/pdf" capture="environment"
+                      style={{ display: "none" }} disabled={uploading}
+                      onChange={(e) => { if (e.target.files[0]) uploadDoc(j.id, e.target.files[0]); }}
+                      data-testid="doc-upload" />
+                  </label>
+                ) : (
+                  <div className="elevated" style={{ padding: 12 }} data-testid="doc-uploaded">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>✓ {uploadedDoc.file_name}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>{(uploadedDoc.size_bytes / 1024).toFixed(1)} KB · {uploadedDoc.content_type}</div>
+                      </div>
+                      <button className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }}
+                        onClick={() => setUploadedDoc(null)} data-testid="doc-remove">Replace</button>
+                    </div>
+                  </div>
+                )}
                 <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                  Real builds will allow camera capture / PDF upload to cloud storage.
+                  Will be renamed and attached to the invoice automatically.
                 </div>
               </div>
               <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}

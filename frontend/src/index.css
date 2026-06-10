@@ -126,6 +126,10 @@ html, body, #root {
   border-style: dashed !important;
   background: var(--accent-dim);
 }
+.card-job-at-risk {
+  border-color: var(--red);
+  box-shadow: 0 0 0 1px var(--red), 0 0 16px rgba(239,68,68,0.18);
+}
 .card-job[draggable="true"] { cursor: grab; }
 .card-job[draggable="true"]:active { cursor: grabbing; }
 @keyframes newJobGlow {

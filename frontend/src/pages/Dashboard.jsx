@@ -3,6 +3,8 @@ import { api, formatTime, todayStr, dateStr } from "../lib/api";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
+import RescheduleCancelModal from "../components/RescheduleCancelModal";
+import TomorrowStrip from "../components/TomorrowStrip";
 
 const STATUS_FLOW = {
   booked: { next: "driving", label: "Start Driving" },
@@ -18,6 +20,7 @@ export default function Dashboard() {
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [offers, setOffers] = useState([]);
   const [dispatchTarget, setDispatchTarget] = useState(null);
+  const [rescheduleTarget, setRescheduleTarget] = useState(null); // { job, mode: 'reschedule' | 'cancel' }
   const [dragOver, setDragOver] = useState(null);
 
   const load = useCallback(async () => {
@@ -148,10 +151,12 @@ export default function Dashboard() {
         <ZonePanel title="West Valley" subtitle="8:00 AM – 2:00 PM" zone="west" jobs={west} onStatus={setStatus}
           headerClass="zone-header-west" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
+          onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
           dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
         <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east} onStatus={setStatus}
           headerClass="zone-header-east" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
+          onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
           dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
       </div>
 
@@ -167,21 +172,29 @@ export default function Dashboard() {
 
       <DispatchModal open={!!dispatchTarget} job={dispatchTarget}
         onClose={() => setDispatchTarget(null)} onDone={load} />
+      <RescheduleCancelModal open={!!rescheduleTarget} job={rescheduleTarget?.job}
+        mode={rescheduleTarget?.mode}
+        onClose={() => setRescheduleTarget(null)} onDone={load} />
+      <TomorrowStrip baseDate={date} />
     </Shell>
   );
 }
 
-function Metric({ label, value }) {
+function Metric({ label, value, highlight }) {
   return (
-    <div className="surface" style={{ padding: "10px 16px", minWidth: 100 }}>
+    <div className="surface" style={{
+      padding: "10px 16px", minWidth: 100,
+      borderColor: highlight === "red" ? "var(--red)" : "var(--border)",
+      boxShadow: highlight === "red" ? "0 0 18px rgba(239,68,68,0.18)" : undefined,
+    }}>
       <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>{label}</div>
-      <div className="font-display" style={{ fontSize: 22, fontWeight: 700 }}>{value}</div>
+      <div className="font-display" style={{ fontSize: 22, fontWeight: 700, color: highlight === "red" ? "var(--red)" : undefined }}>{value}</div>
     </div>
   );
 }
 
 function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobIds, offerByJob,
-                    onDispatch, onRespond, dragOver, setDragOver, onDrop }) {
+                    onDispatch, onRespond, onReschedule, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className={`zone-header ${headerClass}`}>
@@ -195,7 +208,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobI
         {jobs.map((j, idx) => (
           <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
-            onDispatch={onDispatch} onRespond={onRespond}
+            onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule}
             zone={zone} dropIndex={idx}
             isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
             onDragOver={(e) => { e.preventDefault(); setDragOver({ zone, idx }); }}
@@ -222,13 +235,13 @@ function OfferCountdown({ expiresAt }) {
   return <span className="font-mono">{min}:{String(sec).padStart(2, "0")}</span>;
 }
 
-function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond,
+function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
   const isLocked = job.status === "complete" || job.status === "cancelled";
   return (
     <div
-      className={"card-job" + (isNew ? " card-job-new" : "") + (isDragOver ? " card-job-dropzone" : "")}
+      className={"card-job" + (isNew ? " card-job-new" : "") + (isDragOver ? " card-job-dropzone" : "") + (job.is_at_risk ? " card-job-at-risk" : "")}
       draggable={!isLocked}
       onDragStart={(e) => e.dataTransfer.setData("text/plain", job.id)}
       onDragOver={onDragOver}
@@ -249,6 +262,12 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond,
             {offer && (
               <span className="badge badge-dispatched_to_contractor" data-testid={`offer-countdown-${job.id}`}>
                 {offer.contractor_name} · <OfferCountdown expiresAt={offer.expires_at} />
+              </span>
+            )}
+            {job.is_at_risk && (
+              <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)", border: "1px solid rgba(239,68,68,0.3)" }}
+                title={job.risk_reason} data-testid={`badge-at-risk-${job.id}`}>
+                ⚠ AT RISK
               </span>
             )}
           </div>
@@ -276,7 +295,9 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond,
           <>
             <button className="btn btn-ghost" onClick={() => onDispatch(job)}
               data-testid={`job-dispatch-${job.id}`}>Dispatch to Contractor</button>
-            <button className="btn btn-ghost" onClick={() => onStatus(job.id, "cancelled")}
+            <button className="btn btn-ghost" onClick={() => onReschedule(job, "reschedule")}
+              data-testid={`job-reschedule-${job.id}`}>Reschedule</button>
+            <button className="btn btn-ghost" onClick={() => onReschedule(job, "cancel")}
               data-testid={`job-cancel-${job.id}`}>Cancel</button>
           </>
         )}

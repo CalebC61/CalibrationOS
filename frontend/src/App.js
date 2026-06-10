@@ -7,6 +7,7 @@ import ShopsList from "@/pages/ShopsList";
 import ShopNew from "@/pages/ShopNew";
 import ShopDetail from "@/pages/ShopDetail";
 import PublicBooking from "@/pages/PublicBooking";
+import PublicShopStatus from "@/pages/PublicShopStatus";
 import Field from "@/pages/Field";
 import Invoices from "@/pages/Invoices";
 import Messages from "@/pages/Messages";
@@ -34,6 +35,7 @@ function App() {
           <Route path="/" element={<RoleRedirect />} />
           <Route path="/login" element={<Login />} />
           <Route path="/book/:token" element={<PublicBooking />} />
+          <Route path="/scorecard/:token" element={<PublicShopStatus />} />
           <Route path="/dashboard" element={<Protected ownerOnly><Dashboard /></Protected>} />
           <Route path="/shops" element={<Protected ownerOnly><ShopsList /></Protected>} />
           <Route path="/shops/new" element={<Protected ownerOnly><ShopNew /></Protected>} />
