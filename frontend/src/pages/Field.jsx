@@ -1,0 +1,171 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr } from "../lib/api";
+
+/** Mobile-optimized PWA technician field view. Works on phone or desktop. */
+export default function Field() {
+  const nav = useNavigate();
+  const auth = getStoredAuth();
+  const [jobs, setJobs] = useState([]);
+  const [active, setActive] = useState(null);
+  const [completing, setCompleting] = useState(false);
+  const [result, setResult] = useState("pass");
+  const [notes, setNotes] = useState("");
+  const [docName, setDocName] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  async function load() {
+    try {
+      const { data } = await api.get(`/jobs?date_str=${todayStr()}`);
+      setJobs(data);
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
+
+  function logout() { setStoredAuth(null); nav("/login"); }
+
+  async function setStatus(jobId, status) {
+    await api.post(`/jobs/${jobId}/status`, { status });
+    load();
+  }
+  async function complete(jobId) {
+    const docFile = docName.trim() || "calibration_report.pdf";
+    setCompleting(true);
+    try {
+      await api.post(`/jobs/${jobId}/complete`, { result, notes: notes || null, document_name: docFile });
+      setActive(null); setResult("pass"); setNotes(""); setDocName("");
+      load();
+    } finally { setCompleting(false); }
+  }
+
+  if (active) {
+    const j = jobs.find(x => x.id === active);
+    if (!j) { setActive(null); return null; }
+    return (
+      <Phone>
+        <Header name={auth?.name} onLogout={logout} back={() => setActive(null)} />
+        <div className="surface page-fade" style={{ padding: 18, margin: 12 }} data-testid="job-detail">
+          <div className="muted" style={{ fontSize: 12 }}>{formatTime(j.scheduled_start)}</div>
+          <div className="h2" style={{ marginTop: 4 }}>{j.shop_name}</div>
+          <div className="muted" style={{ fontSize: 14, marginTop: 4 }}>
+            {j.vehicle_year} {j.vehicle_make} {j.vehicle_model}
+          </div>
+          <a className="btn btn-ghost" style={{ marginTop: 12, width: "100%" }}
+            href={`https://maps.google.com/?q=${encodeURIComponent(j.job_address)}`} target="_blank" rel="noreferrer">
+            📍 {j.job_address}
+          </a>
+          {j.notification_phone && <a className="btn btn-ghost" style={{ marginTop: 8, width: "100%" }} href={`tel:${j.notification_phone}`}>📞 Call shop</a>}
+          <div style={{ marginTop: 16, fontSize: 14, padding: 10, background: "var(--bg-elevated)", borderRadius: 8 }}>
+            <div><b>Service:</b> {j.calibration_label}</div>
+            <div><b>Price:</b> ${j.price.toFixed(2)}</div>
+            <div><b>Status:</b> <span className={`badge badge-${j.status}`}>{j.status.replace(/_/g, " ")}</span></div>
+          </div>
+
+          {j.status === "booked" && (
+            <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
+              onClick={() => setStatus(j.id, "driving")} data-testid="action-start-driving">Start Driving</button>
+          )}
+          {j.status === "driving" && (
+            <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
+              onClick={() => setStatus(j.id, "on_site")} data-testid="action-arrived">I&apos;ve Arrived</button>
+          )}
+          {j.status === "on_site" && (
+            <div style={{ marginTop: 16 }}>
+              <div className="label">Result *</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className={"btn " + (result === "pass" ? "btn-primary" : "btn-ghost")} onClick={() => setResult("pass")}
+                  style={{ flex: 1 }} data-testid="result-pass">PASS</button>
+                <button className={"btn " + (result === "fail" ? "btn-primary" : "btn-ghost")} onClick={() => setResult("fail")}
+                  style={{ flex: 1 }} data-testid="result-fail">FAIL</button>
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <div className="label">Notes (optional)</div>
+                <textarea className="input" rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <div className="label">Documentation file name (mocked upload)</div>
+                <input className="input" placeholder="e.g. Johnson_SAFELITEGILBERT_Honda_Accord_2023.pdf"
+                  value={docName} onChange={e => setDocName(e.target.value)} data-testid="doc-name" />
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  Real builds will allow camera capture / PDF upload to cloud storage.
+                </div>
+              </div>
+              <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
+                disabled={completing} onClick={() => complete(j.id)} data-testid="action-complete">
+                {completing ? "Submitting…" : "Submit Completion"}
+              </button>
+            </div>
+          )}
+          {j.status === "complete" && (
+            <div className="elevated" style={{ marginTop: 16, padding: 14, textAlign: "center" }} data-testid="job-complete-confirmation">
+              <div style={{ fontSize: 36, color: "var(--green)" }}>✓</div>
+              <div className="h3" style={{ marginTop: 4 }}>Job Complete</div>
+              <div className="muted" style={{ fontSize: 13 }}>Invoice {j.invoice_id} created — Maddy notified.</div>
+            </div>
+          )}
+        </div>
+      </Phone>
+    );
+  }
+
+  return (
+    <Phone>
+      <Header name={auth?.name} onLogout={logout} />
+      <div style={{ padding: 12 }}>
+        <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4 }}>Today</div>
+        <h1 className="h1" style={{ marginBottom: 12, fontSize: 28 }}>
+          {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+        </h1>
+        {loading && <div className="muted">Loading…</div>}
+        {!loading && jobs.length === 0 && (
+          <div className="surface muted" style={{ padding: 24, textAlign: "center" }}>No jobs today.</div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {jobs.map((j, idx) => (
+            <button key={j.id} className="card-job" style={{ textAlign: "left", width: "100%", cursor: "pointer", background: "var(--bg-surface)" }}
+              onClick={() => setActive(j.id)} data-testid={`field-job-${j.id}`}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div className="font-mono" style={{ fontSize: 12, padding: "2px 8px", background: "var(--bg-elevated)", borderRadius: 6 }}>
+                  #{idx + 1}
+                </div>
+                <div className="font-display" style={{ fontSize: 18, fontWeight: 700 }}>{formatTime(j.scheduled_start)}</div>
+              </div>
+              <div className="h3" style={{ marginTop: 6 }}>{j.shop_name}</div>
+              <div className="muted" style={{ fontSize: 13 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
+              <div style={{ marginTop: 8 }}><span className={`badge badge-${j.status}`}>{j.status.replace(/_/g, " ")}</span></div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </Phone>
+  );
+}
+
+function Phone({ children }) {
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", maxWidth: 480, margin: "0 auto" }}>
+      {children}
+    </div>
+  );
+}
+
+function Header({ name, onLogout, back }) {
+  return (
+    <header style={{
+      display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px",
+      borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg-primary)", zIndex: 10,
+    }}>
+      {back ? (
+        <button className="btn btn-ghost" onClick={back} data-testid="field-back">← Back</button>
+      ) : (
+        <div className="font-display" style={{ fontWeight: 800, letterSpacing: "0.04em" }}>
+          CAL<span style={{ color: "var(--accent)" }}>OS</span>
+        </div>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span className="muted" style={{ fontSize: 12 }}>{name}</span>
+        <button className="btn btn-ghost" onClick={onLogout} data-testid="field-logout">Out</button>
+      </div>
+    </header>
+  );
+}
