@@ -138,7 +138,29 @@ PHOENIX_CITY_COORDS = {
 }
 
 def mock_geocode(address: str) -> dict:
-    """Mock Google Geocoding. Returns lat/lng + formatted address based on city keywords."""
+    """Geocoding. Uses Google Maps if GOOGLE_MAPS_API_KEY is set, else keyword fallback."""
+    gmaps_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if gmaps_key:
+        try:
+            import requests
+            r = requests.get(
+                "https://maps.googleapis.com/maps/api/geocode/json",
+                params={"address": address, "key": gmaps_key},
+                timeout=4,
+            )
+            data = r.json()
+            if data.get("status") == "OK" and data.get("results"):
+                top = data["results"][0]
+                loc = top["geometry"]["location"]
+                lat, lng = loc["lat"], loc["lng"]
+                in_metro = 32.9 < lat < 33.9 and -112.9 < lng < -111.4
+                return {"lat": round(lat, 6), "lng": round(lng, 6),
+                        "formatted_address": top.get("formatted_address", address),
+                        "in_metro": in_metro, "source": "google"}
+            logger.warning(f"Google geocode status={data.get('status')} for {address}")
+        except Exception as e:
+            logger.warning(f"Google geocode failed: {e}; falling back to keyword mock")
+    # Fallback: keyword-based mock
     a = address.lower()
     base = None
     for key, coords in PHOENIX_CITY_COORDS.items():
@@ -146,15 +168,14 @@ def mock_geocode(address: str) -> dict:
             base = coords
             break
     if base is None:
-        # Default: somewhere in central Phoenix with slight jitter
         base = (33.4484, -112.0740)
-    # Small jitter so each address has a unique-ish coordinate
     seed = sum(ord(c) for c in address)
     rng = random.Random(seed)
     lat = base[0] + rng.uniform(-0.04, 0.04)
     lng = base[1] + rng.uniform(-0.04, 0.04)
     in_metro = 32.9 < lat < 33.9 and -112.9 < lng < -111.4
-    return {"lat": round(lat, 6), "lng": round(lng, 6), "formatted_address": address, "in_metro": in_metro}
+    return {"lat": round(lat, 6), "lng": round(lng, 6),
+            "formatted_address": address, "in_metro": in_metro, "source": "mock"}
 
 def detect_zone(lng: float) -> str:
     if lng < -112.0:
@@ -169,10 +190,29 @@ def haversine_miles(lat1, lng1, lat2, lng2) -> float:
     return 2 * R * math.asin(math.sqrt(a))
 
 def mock_distance_matrix(o_lat, o_lng, d_lat, d_lng) -> dict:
-    """Mock drive time: ~2 min per mile + traffic buffer."""
+    """Drive time. Uses Google Distance Matrix if key set, else haversine fallback."""
+    gmaps_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if gmaps_key:
+        try:
+            import requests
+            r = requests.get(
+                "https://maps.googleapis.com/maps/api/distancematrix/json",
+                params={"origins": f"{o_lat},{o_lng}", "destinations": f"{d_lat},{d_lng}",
+                        "departure_time": "now", "key": gmaps_key},
+                timeout=4,
+            )
+            data = r.json()
+            if data.get("status") == "OK":
+                elem = data["rows"][0]["elements"][0]
+                if elem.get("status") == "OK":
+                    minutes = int(elem["duration"]["value"] / 60)
+                    miles = round(elem["distance"]["value"] / 1609.34, 1)
+                    return {"distance_miles": miles, "duration_minutes": max(10, minutes), "source": "google"}
+        except Exception as e:
+            logger.warning(f"Google distance matrix failed: {e}; falling back to haversine")
     miles = haversine_miles(o_lat, o_lng, d_lat, d_lng)
     minutes = max(10, int(miles * 2.2 + 5))
-    return {"distance_miles": round(miles, 1), "duration_minutes": minutes}
+    return {"distance_miles": round(miles, 1), "duration_minutes": minutes, "source": "mock"}
 
 async def mock_send_sms(to: str, body: str, kind: str = "generic", job_id: Optional[str] = None):
     """Mock Twilio. Logs to sms_log collection so we can show it in UI."""
