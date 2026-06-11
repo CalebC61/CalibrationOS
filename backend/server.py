@@ -215,13 +215,40 @@ def mock_distance_matrix(o_lat, o_lng, d_lat, d_lng) -> dict:
     return {"distance_miles": round(miles, 1), "duration_minutes": minutes, "source": "mock"}
 
 async def mock_send_sms(to: str, body: str, kind: str = "generic", job_id: Optional[str] = None):
-    """Mock Twilio. Logs to sms_log collection so we can show it in UI."""
+    """SMS sender. Uses Linqapp if LINQAPP_API_KEY + LINQAPP_FROM_NUMBER set, else logs to DB."""
     doc = {
         "id": gen_id(), "to": to, "body": body, "kind": kind,
         "job_id": job_id, "sent_at": iso(now_utc()),
+        "provider": "mock", "provider_id": None, "delivered": False, "error": None,
     }
+    linq_key = os.environ.get("LINQAPP_API_KEY", "")
+    linq_from = os.environ.get("LINQAPP_FROM_NUMBER", "")
+    if linq_key and linq_from and to:
+        try:
+            import requests
+            r = await asyncio.to_thread(
+                requests.post,
+                "https://api.linqapp.com/api/partner/v3/chats",
+                headers={"Authorization": f"Bearer {linq_key}", "Content-Type": "application/json"},
+                json={"from": linq_from, "to": [to],
+                      "message": {"parts": [{"type": "text", "value": body}]}},
+                timeout=6,
+            )
+            if r.status_code < 300:
+                data = r.json() if r.content else {}
+                doc["provider"] = "linqapp"
+                doc["provider_id"] = data.get("id") or data.get("chat_id")
+                doc["delivered"] = True
+                logger.info(f"[Linq SMS → {to}] sent: {doc['provider_id']}")
+            else:
+                doc["error"] = f"HTTP {r.status_code}: {r.text[:200]}"
+                logger.warning(f"Linq SMS failed: {doc['error']}")
+        except Exception as e:
+            doc["error"] = str(e)
+            logger.warning(f"Linq SMS exception: {e}")
+    else:
+        logger.info(f"[MOCK SMS → {to}] {body[:80]}")
     await db.sms_log.insert_one(doc)
-    logger.info(f"[MOCK SMS → {to}] {body[:80]}")
     return doc
 
 async def mock_xero_create_invoice(job: dict, shop: dict, vehicle: dict, pricing_label: str) -> dict:
