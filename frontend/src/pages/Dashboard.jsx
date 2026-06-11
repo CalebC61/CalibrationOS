@@ -4,6 +4,7 @@ import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
 import RescheduleCancelModal from "../components/RescheduleCancelModal";
+import JobEditModal from "../components/JobEditModal";
 import TomorrowStrip from "../components/TomorrowStrip";
 
 const STATUS_FLOW = {
@@ -21,6 +22,7 @@ export default function Dashboard() {
   const [offers, setOffers] = useState([]);
   const [dispatchTarget, setDispatchTarget] = useState(null);
   const [rescheduleTarget, setRescheduleTarget] = useState(null); // { job, mode: 'reschedule' | 'cancel' }
+  const [editTarget, setEditTarget] = useState(null);
   const [dragOver, setDragOver] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [reorderPending, setReorderPending] = useState(false);
@@ -197,23 +199,8 @@ export default function Dashboard() {
         )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16, marginBottom: 20 }}>
-        <ZonePanel title="West Valley" subtitle="8:00 AM – 2:00 PM" zone="west" jobs={west} onStatus={setStatus}
-          headerClass="zone-header-west" newJobIds={newJobIds} offerByJob={offerByJob}
-          onDispatch={setDispatchTarget} onRespond={manualRespond}
-          onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
-          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop}
-          dragging={dragging} setDragging={setDragging} />
-        <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east} onStatus={setStatus}
-          headerClass="zone-header-east" newJobIds={newJobIds} offerByJob={offerByJob}
-          onDispatch={setDispatchTarget} onRespond={manualRespond}
-          onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
-          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop}
-          dragging={dragging} setDragging={setDragging} />
-      </div>
-
       {jobs.length > 0 && (
-        <section>
+        <section style={{ marginBottom: 24 }}>
           <div className="h3" style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>Route Map</span>
             <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>Numbered by sequence · Orange = West · Blue = East</span>
@@ -222,11 +209,30 @@ export default function Dashboard() {
         </section>
       )}
 
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16, marginBottom: 20 }}>
+        <ZonePanel title="West Valley" subtitle="8:00 AM – 2:00 PM" zone="west" jobs={west} onStatus={setStatus}
+          headerClass="zone-header-west" newJobIds={newJobIds} offerByJob={offerByJob}
+          onDispatch={setDispatchTarget} onRespond={manualRespond}
+          onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
+          onEdit={setEditTarget}
+          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop}
+          dragging={dragging} setDragging={setDragging} />
+        <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east} onStatus={setStatus}
+          headerClass="zone-header-east" newJobIds={newJobIds} offerByJob={offerByJob}
+          onDispatch={setDispatchTarget} onRespond={manualRespond}
+          onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
+          onEdit={setEditTarget}
+          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop}
+          dragging={dragging} setDragging={setDragging} />
+      </div>
+
       <DispatchModal open={!!dispatchTarget} job={dispatchTarget}
         onClose={() => setDispatchTarget(null)} onDone={load} />
       <RescheduleCancelModal open={!!rescheduleTarget} job={rescheduleTarget?.job}
         mode={rescheduleTarget?.mode}
         onClose={() => setRescheduleTarget(null)} onDone={load} />
+      <JobEditModal open={!!editTarget} job={editTarget}
+        onClose={() => setEditTarget(null)} onSaved={load} />
       <TomorrowStrip baseDate={date} />
     </Shell>
   );
@@ -246,7 +252,7 @@ function Metric({ label, value, highlight }) {
 }
 
 function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobIds, offerByJob,
-                    onDispatch, onRespond, onReschedule, dragOver, setDragOver, onDrop, dragging, setDragging }) {
+                    onDispatch, onRespond, onReschedule, onEdit, dragOver, setDragOver, onDrop, dragging, setDragging }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className={`zone-header ${headerClass}`}>
@@ -261,6 +267,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobI
           <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
             onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule}
+            onEdit={onEdit}
             zone={zone} dropIndex={idx}
             isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
             onDragOver={(e) => { e.preventDefault(); setDragOver({ zone, idx }); }}
@@ -294,11 +301,12 @@ function OfferCountdown({ expiresAt }) {
   return <span className="font-mono">{min}:{String(sec).padStart(2, "0")}</span>;
 }
 
-function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule,
+function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule, onEdit,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop,
                    onDragStartHandler, onDragEndHandler }) {
   const flow = STATUS_FLOW[job.status];
   const isLocked = job.status === "complete" || job.status === "cancelled";
+  const openEdit = () => { if (!isLocked && onEdit) onEdit(job); };
   return (
     <div
       className={"card-job" + (isNew ? " card-job-new" : "") + (isDragOver ? " card-job-dropzone" : "") + (job.is_at_risk ? " card-job-at-risk" : "") + (job._reordering ? " card-job-reordering" : "")}
@@ -310,7 +318,13 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
       onDrop={onHandleDrop}
       data-testid={`job-card-${job.id}`}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+      <div
+        onClick={openEdit}
+        style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12,
+                 cursor: isLocked ? "default" : "pointer" }}
+        title={isLocked ? "" : "Click to edit"}
+        data-testid={`job-card-body-${job.id}`}
+      >
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
             <span className="drag-handle font-mono" style={{
@@ -341,6 +355,7 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
             {job.vehicle_year} {job.vehicle_make} {job.vehicle_model} · {job.calibration_label}
           </div>
           <a href={`https://maps.google.com/?q=${encodeURIComponent(job.job_address)}`} target="_blank" rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
             style={{ display: "inline-block", marginTop: 6, fontSize: 13, color: "var(--accent)" }}>
             {job.job_address} →
           </a>

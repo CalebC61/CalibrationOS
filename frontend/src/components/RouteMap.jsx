@@ -30,7 +30,7 @@ export default function RouteMap({ jobs }) {
   const westLine = valid.filter(j => j.zone === "west").map(j => [j.job_lat, j.job_lng]);
   const eastLine = valid.filter(j => j.zone === "east").map(j => [j.job_lat, j.job_lng]);
   return (
-    <div style={{ height: 380, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }} data-testid="route-map">
+    <div style={{ height: 520, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }} data-testid="route-map">
       <MapContainer center={center} zoom={10} style={{ height: "100%", width: "100%", background: "#0d1116" }}>
         <TileLayer
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"

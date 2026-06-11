@@ -170,3 +170,6 @@ All other spec items (zones, pricing, invoice format, dark theme, fonts, busines
 1. User reviews app, provides feedback on flows and visual polish.
 2. When ready, user provides real API credentials (Xero, Google Maps, Twilio, Google Calendar) → swap mocks to real.
 3. Decide on contractor dispatch UI priority vs route map priority for iteration 2.
+
+## Changelog
+- 2026-02-11: **Inline job editing.** Added `PATCH /api/jobs/{job_id}` (owner-only) accepting customer/vehicle/calibration/address/schedule/notification/price/notes fields. Address changes re-geocode + reassign zone + recompute drive time from previous job. Calibration-type changes refresh label + suggested price from shop rate card. Dashboard job-card body is now clickable (cursor + tooltip) and opens a new `JobEditModal` with grouped sections (Customer & Vehicle / Calibration / Schedule & Location / Notifications). Locked (complete/cancelled) cards are non-editable.

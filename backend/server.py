@@ -425,6 +425,23 @@ class RescheduleIn(BaseModel):
 class CancelIn(BaseModel):
     reason: Optional[str] = None
 
+class JobEditIn(BaseModel):
+    # All optional — only provided fields are updated.
+    customer_last_name: Optional[str] = None
+    vehicle_year: Optional[int] = None
+    vehicle_make: Optional[str] = None
+    vehicle_model: Optional[str] = None
+    vehicle_trim: Optional[str] = None
+    vehicle_vin: Optional[str] = None
+    adas_system: Optional[Literal["forward_camera", "surround_view", "radar", "multi_camera", "tesla", "other"]] = None
+    calibration_type: Optional[Literal["static", "dynamic", "dual", "triple", "tesla"]] = None
+    job_address: Optional[str] = None
+    scheduled_start: Optional[str] = None  # ISO datetime; end recomputed from zone slot_minutes
+    notification_phone: Optional[str] = None
+    notification_email: Optional[str] = None
+    price: Optional[float] = None
+    notes: Optional[str] = None
+
 class InviteCreateIn(BaseModel):
     shop_id: str
     recipient_email: EmailStr
@@ -959,6 +976,116 @@ async def cancel_job(job_id: str, body: CancelIn, tech=Depends(require_owner)):
         reason_suffix = f" Reason: {body.reason}" if body.reason else ""
         msg = f"Your scheduled calibration has been cancelled.{reason_suffix} Please contact us to reschedule."
         await mock_send_sms(job["notification_phone"], msg, kind="cancelled", job_id=job_id)
+    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    return fresh
+
+# ---------- Edit job (all-fields editor) ----------
+@api.patch("/jobs/{job_id}")
+async def edit_job(job_id: str, body: JobEditIn, tech=Depends(require_owner)):
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job["status"] in ("complete", "cancelled"):
+        raise HTTPException(400, f"Cannot edit a {job['status']} job")
+
+    data = body.model_dump(exclude_unset=True)
+    update: dict = {}
+
+    # Customer & vehicle denormalized fields
+    if "customer_last_name" in data:
+        update["customer_last_name"] = data["customer_last_name"]
+    if "vehicle_year" in data:
+        update["vehicle_year"] = data["vehicle_year"]
+    if "vehicle_make" in data:
+        update["vehicle_make"] = data["vehicle_make"]
+    if "vehicle_model" in data:
+        update["vehicle_model"] = data["vehicle_model"]
+    if "vehicle_vin" in data:
+        update["vehicle_vin"] = data["vehicle_vin"]
+
+    # Sync the underlying vehicle document too
+    vehicle_update = {}
+    for k_src, k_dst in [("vehicle_year", "year"), ("vehicle_make", "make"),
+                         ("vehicle_model", "model"), ("vehicle_vin", "vin"),
+                         ("vehicle_trim", "trim"), ("customer_last_name", "customer_last_name"),
+                         ("adas_system", "adas_system")]:
+        if k_src in data:
+            vehicle_update[k_dst] = data[k_src]
+    if vehicle_update and job.get("vehicle_id"):
+        await db.vehicles.update_one({"id": job["vehicle_id"]}, {"$set": vehicle_update})
+
+    if "adas_system" in data:
+        # not stored on job, but vehicle update above handles it
+        pass
+
+    # Calibration type → label + suggested price (unless price also provided)
+    if "calibration_type" in data:
+        ct = data["calibration_type"]
+        update["calibration_type"] = ct
+        update["calibration_label"] = STANDARD_PRICING[ct]["label"]
+        if "price" not in data:
+            shop = await db.shops.find_one({"id": job["shop_id"]})
+            if shop:
+                update["price"] = shop_price_for(shop, ct)
+
+    # Manual price override
+    if "price" in data and data["price"] is not None:
+        update["price"] = float(data["price"])
+
+    if "notification_phone" in data:
+        update["notification_phone"] = data["notification_phone"]
+    if "notification_email" in data:
+        update["notification_email"] = data["notification_email"]
+    if "notes" in data:
+        update["notes"] = data["notes"]
+
+    # Address change → re-geocode, update lat/lng/zone, recompute drive time
+    if "job_address" in data and data["job_address"] and data["job_address"] != job["job_address"]:
+        geo = mock_geocode(data["job_address"])
+        if not geo["in_metro"]:
+            raise HTTPException(400, "Address is outside the service area")
+        new_zone = detect_zone(geo["lng"])
+        update["job_address"] = data["job_address"]
+        update["job_lat"] = geo["lat"]
+        update["job_lng"] = geo["lng"]
+        update["zone"] = new_zone
+        # Recompute drive from previous job in zone+day
+        start_dt = datetime.fromisoformat(job["scheduled_start"])
+        if start_dt.tzinfo is None:
+            start_dt = start_dt.replace(tzinfo=timezone.utc)
+        day_start = datetime.combine(start_dt.date(), time(0, 0), tzinfo=timezone.utc)
+        prev = await db.jobs.find({
+            "zone": new_zone, "id": {"$ne": job_id},
+            "scheduled_start": {"$gte": iso(day_start), "$lt": iso(start_dt)},
+            "status": {"$nin": ["cancelled"]},
+        }, {"_id": 0}).sort("scheduled_start", -1).limit(1).to_list(1)
+        if prev:
+            o = (prev[0]["job_lat"], prev[0]["job_lng"])
+        else:
+            o = (CALEB_HOME["lat"], CALEB_HOME["lng"])
+        dm = mock_distance_matrix(o[0], o[1], geo["lat"], geo["lng"])
+        update["drive_time_minutes"] = dm["duration_minutes"]
+
+    # Scheduled start change → recompute end based on zone slot_minutes
+    if "scheduled_start" in data and data["scheduled_start"]:
+        try:
+            new_start = datetime.fromisoformat(data["scheduled_start"].replace("Z", "+00:00"))
+            if new_start.tzinfo is None:
+                new_start = new_start.replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(400, "Invalid scheduled_start")
+        z_key = update.get("zone", job["zone"])
+        slot_min = ZONES[z_key]["slot_minutes"]
+        update["scheduled_start"] = iso(new_start)
+        update["scheduled_end"] = iso(new_start + timedelta(minutes=slot_min))
+
+    if not update:
+        # Nothing to change
+        fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+        return fresh
+
+    update["updated_at"] = iso(now_utc())
+    await db.jobs.update_one({"id": job_id}, {"$set": update})
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     return fresh
 
