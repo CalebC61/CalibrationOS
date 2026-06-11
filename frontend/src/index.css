@@ -144,14 +144,22 @@ html, body, #root {
   box-shadow: 0 0 0 1px var(--accent), 0 0 24px rgba(249,115,22,0.18);
   animation: newJobGlow 2.4s ease-in-out infinite;
 }
+.card-job-at-risk {
+  border-color: var(--red);
+  box-shadow: 0 0 0 1px var(--red), 0 0 16px rgba(239,68,68,0.18);
+}
+.card-job-reordering {
+  opacity: 0.55;
+  transition: opacity 200ms ease;
+}
+.card-job[draggable="true"] { cursor: grab; }
+.card-job[draggable="true"]:active { cursor: grabbing; opacity: 0.7; }
 .card-job-dropzone {
   border-color: var(--accent) !important;
   border-style: dashed !important;
   background: var(--accent-dim);
-}
-.card-job-at-risk {
-  border-color: var(--red);
-  box-shadow: 0 0 0 1px var(--red), 0 0 16px rgba(239,68,68,0.18);
+  transform: scale(1.01);
+  transition: transform 120ms ease;
 }
 .card-job[draggable="true"] { cursor: grab; }
 .card-job[draggable="true"]:active { cursor: grabbing; }

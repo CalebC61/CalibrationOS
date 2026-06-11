@@ -22,8 +22,11 @@ export default function Dashboard() {
   const [dispatchTarget, setDispatchTarget] = useState(null);
   const [rescheduleTarget, setRescheduleTarget] = useState(null); // { job, mode: 'reschedule' | 'cancel' }
   const [dragOver, setDragOver] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [reorderPending, setReorderPending] = useState(false);
 
   const load = useCallback(async () => {
+    if (dragging || reorderPending) return;  // don't clobber optimistic state mid-drag
     try {
       const [j, s, a, o] = await Promise.all([
         api.get(`/jobs?date_str=${date}`),
@@ -33,7 +36,7 @@ export default function Dashboard() {
       ]);
       setJobs(j.data); setSummary(s.data); setAlerts(a.data); setOffers(o.data);
     } catch (e) { console.error(e); }
-  }, [date]);
+  }, [date, dragging, reorderPending]);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
 
   async function markSeen() {
@@ -70,15 +73,62 @@ export default function Dashboard() {
 
   async function handleDrop(zone, draggedId, targetIdx) {
     const zoneJobs = zone === "west" ? west : east;
-    const ids = zoneJobs.map(j => j.id).filter(id => id !== draggedId);
-    ids.splice(targetIdx, 0, draggedId);
-    try {
-      await api.post("/jobs/reorder", { zone, date, ordered_job_ids: ids });
-      load();
-    } catch (e) {
-      alert(e.response?.data?.detail || "Reorder failed");
-    }
+    const dragged = zoneJobs.find(j => j.id === draggedId);
+    if (!dragged) return;
+    const currentIdx = zoneJobs.findIndex(j => j.id === draggedId);
+    if (currentIdx === targetIdx) { setDragOver(null); return; }
+
+    // Build the new ordering
+    const reordered = zoneJobs.filter(j => j.id !== draggedId);
+    reordered.splice(targetIdx, 0, dragged);
+    const orderedIds = reordered.map(j => j.id);
+
+    // OPTIMISTIC UPDATE: shuffle scheduled_start times within the zone so the visual order
+    // matches immediately. Real backend recompute happens server-side via Distance Matrix.
+    const optimistic = jobs.map(j => {
+      if (j.zone !== zone) return j;
+      const newPos = orderedIds.indexOf(j.id);
+      if (newPos < 0) return j;
+      // Take the existing start times in original order, reassign by new position
+      const originalStarts = zoneJobs.map(x => x.scheduled_start);
+      const originalEnds = zoneJobs.map(x => x.scheduled_end);
+      return {
+        ...j,
+        scheduled_start: originalStarts[newPos],
+        scheduled_end: originalEnds[newPos],
+        sequence_order: newPos + 1,
+        _reordering: true,
+      };
+    });
+    setJobs(optimistic);
     setDragOver(null);
+    setReorderPending(true);
+
+    try {
+      const { data } = await api.post("/jobs/reorder", { zone, date, ordered_job_ids: orderedIds });
+      // Replace the just-updated jobs with the backend-authoritative values (real drive times)
+      if (data && data.jobs) {
+        setJobs(prev => prev.map(j => {
+          const upd = data.jobs.find(u => u.id === j.id);
+          if (!upd) return { ...j, _reordering: false };
+          return {
+            ...j,
+            scheduled_start: upd.scheduled_start,
+            scheduled_end: upd.scheduled_end,
+            drive_time_minutes: upd.drive_time_minutes,
+            sequence_order: upd.sequence_order,
+            _reordering: false,
+          };
+        }));
+      }
+    } catch (e) {
+      alert(e.response?.data?.detail || "Reorder failed — reverting");
+      // Revert: trigger a fresh load
+      setReorderPending(false);
+      load();
+      return;
+    }
+    setReorderPending(false);
   }
 
   return (
@@ -152,12 +202,14 @@ export default function Dashboard() {
           headerClass="zone-header-west" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
           onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
-          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
+          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop}
+          dragging={dragging} setDragging={setDragging} />
         <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east} onStatus={setStatus}
           headerClass="zone-header-east" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
           onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
-          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
+          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop}
+          dragging={dragging} setDragging={setDragging} />
       </div>
 
       {jobs.length > 0 && (
@@ -194,7 +246,7 @@ function Metric({ label, value, highlight }) {
 }
 
 function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobIds, offerByJob,
-                    onDispatch, onRespond, onReschedule, dragOver, setDragOver, onDrop }) {
+                    onDispatch, onRespond, onReschedule, dragOver, setDragOver, onDrop, dragging, setDragging }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className={`zone-header ${headerClass}`}>
@@ -213,9 +265,16 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobI
             isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
             onDragOver={(e) => { e.preventDefault(); setDragOver({ zone, idx }); }}
             onDragLeave={() => setDragOver(null)}
+            onDragStartHandler={(e) => {
+              e.dataTransfer.setData("text/plain", j.id);
+              e.dataTransfer.effectAllowed = "move";
+              setDragging(true);
+            }}
+            onDragEndHandler={() => { setDragging(false); setDragOver(null); }}
             onHandleDrop={(e) => {
               e.preventDefault();
               const draggedId = e.dataTransfer.getData("text/plain");
+              setDragging(false);
               if (draggedId) onDrop(zone, draggedId, idx);
             }}
           />
@@ -236,14 +295,16 @@ function OfferCountdown({ expiresAt }) {
 }
 
 function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule,
-                   zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
+                   zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop,
+                   onDragStartHandler, onDragEndHandler }) {
   const flow = STATUS_FLOW[job.status];
   const isLocked = job.status === "complete" || job.status === "cancelled";
   return (
     <div
-      className={"card-job" + (isNew ? " card-job-new" : "") + (isDragOver ? " card-job-dropzone" : "") + (job.is_at_risk ? " card-job-at-risk" : "")}
+      className={"card-job" + (isNew ? " card-job-new" : "") + (isDragOver ? " card-job-dropzone" : "") + (job.is_at_risk ? " card-job-at-risk" : "") + (job._reordering ? " card-job-reordering" : "")}
       draggable={!isLocked}
-      onDragStart={(e) => e.dataTransfer.setData("text/plain", job.id)}
+      onDragStart={onDragStartHandler || ((e) => e.dataTransfer.setData("text/plain", job.id))}
+      onDragEnd={onDragEndHandler}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onHandleDrop}
@@ -252,10 +313,14 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-            <span className="font-mono" style={{
-              background: "var(--bg-elevated)", padding: "2px 8px", borderRadius: 6,
-              fontSize: 12, fontWeight: 600,
-            }}>#{index}</span>
+            <span className="drag-handle font-mono" style={{
+              background: "var(--bg-elevated)", padding: "2px 10px", borderRadius: 6,
+              fontSize: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 4,
+              cursor: isLocked ? "default" : "grab",
+            }} title={isLocked ? "Locked" : "Drag to reorder"}>
+              {!isLocked && <span style={{ color: "var(--text-muted)", fontSize: 11 }}>⋮⋮</span>}
+              #{index}
+            </span>
             <span className={`badge badge-${job.status}`}>{job.status.replace(/_/g, " ")}</span>
             {isNew && <span className="badge" style={{ background: "var(--accent-dim)", color: "var(--accent)", border: "1px solid var(--border-active)" }} data-testid="badge-new">NEW</span>}
             {job.invoice_status === "draft" && <span className="badge badge-draft">Invoice: Draft</span>}
