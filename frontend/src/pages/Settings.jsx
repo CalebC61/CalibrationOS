@@ -191,21 +191,127 @@ function ContractorTab() {
 }
 
 function IntegrationsTab() {
+  const [xero, setXero] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState(null);
+
+  async function loadXero() {
+    try {
+      const { data } = await api.get("/xero/status");
+      setXero(data);
+    } catch (e) { setXero({ connected: false }); }
+  }
+  useEffect(() => {
+    loadXero();
+    // Detect callback redirect query string
+    const url = new URL(window.location.href);
+    const xeroParam = url.searchParams.get("xero");
+    if (xeroParam === "connected") {
+      setFlash({ kind: "success", msg: "Xero connected. Invoices will be pushed automatically on job completion." });
+      url.searchParams.delete("xero");
+      window.history.replaceState({}, "", url.toString());
+      setTimeout(() => setFlash(null), 5000);
+    } else if (xeroParam === "error") {
+      setFlash({ kind: "error", msg: `Xero connection failed: ${url.searchParams.get("detail") || "unknown"}` });
+      url.searchParams.delete("xero"); url.searchParams.delete("detail");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
+
+  async function connectXero() {
+    setBusy(true);
+    try {
+      const { data } = await api.get("/xero/auth/start");
+      window.location.href = data.authorize_url;
+    } catch (e) {
+      alert(e.response?.data?.detail || "Failed to start Xero auth");
+      setBusy(false);
+    }
+  }
+
+  async function disconnectXero() {
+    if (!window.confirm("Disconnect Xero? Existing invoices in Xero are kept but new jobs won't auto-push until you reconnect.")) return;
+    setBusy(true);
+    try {
+      await api.post("/xero/disconnect");
+      await loadXero();
+    } catch (e) { alert(e.response?.data?.detail || "Disconnect failed"); }
+    finally { setBusy(false); }
+  }
+
+  async function refreshAll() {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/xero/refresh-all");
+      setFlash({ kind: "success", msg: `Refreshed ${data.refreshed}/${data.total} invoice statuses.` });
+      setTimeout(() => setFlash(null), 4000);
+    } catch (e) { alert(e.response?.data?.detail || "Refresh failed"); }
+    finally { setBusy(false); }
+  }
+
   return (
-    <div className="surface" style={{ padding: 20, maxWidth: 560 }} data-testid="integrations-tab">
-      {[
-        { name: "Xero", status: "Mock — invoices simulated", color: "var(--yellow)" },
-        { name: "Google Maps", status: "Mock — keyword-based geocoding", color: "var(--yellow)" },
-        { name: "Twilio SMS", status: "Mock — messages logged in app", color: "var(--yellow)" },
-        { name: "Google Calendar", status: "Deferred to next iteration", color: "var(--text-muted)" },
-      ].map(i => (
-        <div key={i.name} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
-          <span style={{ fontWeight: 600 }}>{i.name}</span>
-          <span style={{ color: i.color, fontSize: 13 }}>{i.status}</span>
+    <div style={{ maxWidth: 640, display: "flex", flexDirection: "column", gap: 16 }} data-testid="integrations-tab">
+      {flash && (
+        <div style={{
+          padding: "10px 14px", borderRadius: 8,
+          background: flash.kind === "success" ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
+          border: `1px solid ${flash.kind === "success" ? "rgba(16,185,129,0.4)" : "rgba(239,68,68,0.4)"}`,
+          color: flash.kind === "success" ? "var(--green)" : "var(--red)",
+          fontSize: 14,
+        }} data-testid="xero-flash">{flash.msg}</div>
+      )}
+
+      <div className="surface" style={{ padding: 20 }} data-testid="xero-card">
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+          <div>
+            <div className="h3" style={{ marginBottom: 4 }}>Xero Accounting</div>
+            <div className="muted" style={{ fontSize: 13 }}>
+              {xero?.connected
+                ? <>Connected to <b style={{ color: "var(--text)" }}>{xero.org_name}</b> · tenant <span className="font-mono" style={{ fontSize: 11 }}>{xero.tenant_id?.slice(0, 8)}…</span></>
+                : "Not connected. Invoices currently use the internal mock."}
+            </div>
+          </div>
+          <span className="badge" style={{
+            background: xero?.connected ? "rgba(16,185,129,0.18)" : "rgba(245,158,11,0.18)",
+            color: xero?.connected ? "var(--green)" : "var(--yellow)",
+            border: `1px solid ${xero?.connected ? "rgba(16,185,129,0.4)" : "rgba(245,158,11,0.4)"}`,
+          }}>{xero?.connected ? "LIVE" : "MOCK"}</span>
         </div>
-      ))}
-      <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>
-        When you&apos;re ready, provide your API keys and we&apos;ll wire real integrations.
+        <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+          {xero?.connected ? (
+            <>
+              <button className="btn btn-ghost" onClick={refreshAll} disabled={busy} data-testid="xero-refresh-all">
+                Refresh all invoice statuses
+              </button>
+              <button className="btn btn-ghost" onClick={disconnectXero} disabled={busy} data-testid="xero-disconnect">
+                Disconnect
+              </button>
+            </>
+          ) : (
+            <button className="btn btn-primary" onClick={connectXero} disabled={busy} data-testid="xero-connect">
+              {busy ? "Opening Xero…" : "Connect to Xero"}
+            </button>
+          )}
+        </div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+          When connected, completed jobs auto-push a DRAFT invoice to Xero with the calibration label, vehicle reference, and a $0 description line — keyed by our internal job id in the Reference field.
+        </div>
+      </div>
+
+      <div className="surface" style={{ padding: 20 }}>
+        <div className="h3" style={{ marginBottom: 10 }}>Other Integrations</div>
+        {[
+          { name: "Stripe (card-on-file)", status: "Live — test mode", color: "var(--green)" },
+          { name: "Google Maps", status: "Live — Geocoding + Distance Matrix", color: "var(--green)" },
+          { name: "Resend (email)", status: "Live", color: "var(--green)" },
+          { name: "Linqapp (SMS)", status: "Blocked — destination phone not verified in sandbox", color: "var(--red)" },
+          { name: "Google Calendar", status: "Pending OAuth setup", color: "var(--yellow)" },
+        ].map(i => (
+          <div key={i.name} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+            <span style={{ fontWeight: 600 }}>{i.name}</span>
+            <span style={{ color: i.color, fontSize: 13 }}>{i.status}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

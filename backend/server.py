@@ -866,17 +866,52 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
     }
     await db.documents.insert_one(doc.copy())
 
-    # Mock Xero invoice
+    # Xero invoice — real push if Xero is connected, otherwise mock
     pricing_label = STANDARD_PRICING[job["calibration_type"]]["label"]
-    invoice = await mock_xero_create_invoice(job, shop, vehicle, pricing_label)
+    xero_token = await db.xero_tokens.find_one({"owner_id": tech["id"]}, {"owner_id": 1})
+    if not xero_token:
+        # Fall back to internal owner token (jobs are often completed by a tech, not the owner)
+        xero_token = await db.xero_tokens.find_one({}, {"owner_id": 1})
+
+    xero_invoice = None
+    if xero_token:
+        try:
+            shop_doc = shop
+            creds = await xero_service.get_valid_credentials(db, xero_token["owner_id"])
+            contact_id = shop_doc.get("xero_contact_id")
+            if not contact_id:
+                contact_id = await xero_service.find_or_create_contact(creds, shop_doc)
+                await db.shops.update_one({"id": shop_doc["id"]}, {"$set": {"xero_contact_id": contact_id}})
+            xero_invoice = await xero_service.create_invoice(
+                creds, contact_id=contact_id, job=job, line_label=pricing_label
+            )
+            logger.info(f"[XERO] Auto-pushed invoice for job {job_id} → {xero_invoice['invoice_number']}")
+        except Exception as e:  # don't block job completion on Xero failure
+            logger.warning(f"[XERO] Auto-push failed for job {job_id}: {e}; falling back to mock")
+
+    if xero_invoice:
+        invoice_update = {
+            "xero_invoice_id": xero_invoice["invoice_id"],
+            "xero_invoice_number": xero_invoice["invoice_number"],
+            "invoice_id": xero_invoice["invoice_number"] or xero_invoice["invoice_id"],
+            "invoice_status": (xero_invoice["status"] or "").lower(),
+            "invoice_amount_due": xero_invoice.get("amount_due"),
+            "invoice_amount_paid": xero_invoice.get("amount_paid"),
+            "invoice_online_url": xero_invoice.get("online_url"),
+        }
+    else:
+        mock_invoice = await mock_xero_create_invoice(job, shop, vehicle, pricing_label)
+        invoice_update = {
+            "invoice_id": mock_invoice["invoice_id"],
+            "invoice_status": "draft",
+        }
 
     update = {
         "status": "complete",
         "actual_completion": iso(now_utc()),
         "result": body.result,
         "notes": body.notes,
-        "invoice_id": invoice["invoice_id"],
-        "invoice_status": "draft",
+        **invoice_update,
         "updated_at": iso(now_utc()),
     }
     await db.jobs.update_one({"id": job_id}, {"$set": update})
@@ -1835,6 +1870,177 @@ async def skip_charge_job(job_id: str, tech=Depends(require_owner)):
     }})
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     return fresh
+
+# ---------- Xero OAuth + invoice push ----------
+import xero_service  # noqa: E402
+
+@api.get("/xero/status")
+async def xero_status(tech=Depends(require_owner)):
+    doc = await db.xero_tokens.find_one({"owner_id": tech["id"]})
+    if not doc:
+        return {"connected": False, "tenant_id": None, "org_name": None, "expires_at": None}
+    return {
+        "connected": True,
+        "tenant_id": doc["tenant_id"],
+        "org_name": doc.get("org_name"),
+        "expires_at": doc.get("expires_at"),
+        "scope": doc.get("scope"),
+    }
+
+@api.get("/xero/auth/start")
+async def xero_auth_start(tech=Depends(require_owner)):
+    state = secrets.token_urlsafe(24)
+    await db.xero_oauth_state.update_one(
+        {"owner_id": tech["id"]},
+        {"$set": {"owner_id": tech["id"], "state": state, "created_at": iso(now_utc())}},
+        upsert=True,
+    )
+    return {"authorize_url": xero_service.build_authorize_url(state)}
+
+@api.get("/xero/auth/callback")
+async def xero_auth_callback(code: Optional[str] = None, state: Optional[str] = None,
+                              error: Optional[str] = None):
+    frontend = os.environ.get("FRONTEND_APP_URL", "/").rstrip("/")
+    if error:
+        return RedirectResponse(f"{frontend}/settings?xero=error&detail={error}")
+    if not code or not state:
+        raise HTTPException(400, "Missing code or state")
+
+    state_doc = await db.xero_oauth_state.find_one({"state": state})
+    if not state_doc:
+        raise HTTPException(400, "Invalid OAuth state")
+    owner_id = state_doc["owner_id"]
+    await db.xero_oauth_state.delete_many({"owner_id": owner_id})
+
+    td = await xero_service.exchange_code_for_tokens(code)
+    access_token = td["access_token"]
+    refresh_token = td.get("refresh_token")
+    expires_in = td.get("expires_in", 1800)
+    expires_at = (now_utc() + timedelta(seconds=expires_in)).isoformat()
+
+    tenants = await xero_service.fetch_tenants(access_token)
+    if not tenants:
+        return RedirectResponse(f"{frontend}/settings?xero=error&detail=no_tenants")
+    tenant = tenants[0]
+    tenant_id = tenant["tenantId"]
+
+    try:
+        org = await xero_service.fetch_organisation(access_token, tenant_id)
+        org_name = org.get("Name") or tenant.get("tenantName")
+    except Exception:
+        org_name = tenant.get("tenantName")
+
+    await db.xero_tokens.update_one(
+        {"owner_id": owner_id},
+        {"$set": {
+            "owner_id": owner_id,
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_at": expires_at,
+            "scope": td.get("scope"),
+            "token_type": td.get("token_type", "Bearer"),
+            "tenant_id": tenant_id,
+            "org_name": org_name,
+            "updated_at": iso(now_utc()),
+        }, "$setOnInsert": {"created_at": iso(now_utc())}},
+        upsert=True,
+    )
+    logger.info(f"[XERO] Connected owner {owner_id} → tenant {tenant_id} ({org_name})")
+    return RedirectResponse(f"{frontend}/settings?xero=connected")
+
+@api.post("/xero/disconnect")
+async def xero_disconnect(tech=Depends(require_owner)):
+    doc = await db.xero_tokens.find_one({"owner_id": tech["id"]})
+    if doc and doc.get("refresh_token"):
+        await xero_service.revoke_refresh_token(doc["refresh_token"])
+    await db.xero_tokens.delete_one({"owner_id": tech["id"]})
+    return {"disconnected": True}
+
+@api.post("/xero/jobs/{job_id}/push-invoice")
+async def xero_push_invoice(job_id: str, tech=Depends(require_owner)):
+    """Create (or refresh) a Xero invoice for the given job."""
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("xero_invoice_id"):
+        # Already pushed — just refresh status
+        creds = await xero_service.get_valid_credentials(db, tech["id"])
+        info = await xero_service.fetch_invoice(creds, job["xero_invoice_id"])
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "invoice_status": (info["status"] or "").lower(),
+            "invoice_amount_due": info.get("amount_due"),
+            "invoice_amount_paid": info.get("amount_paid"),
+            "updated_at": iso(now_utc()),
+        }})
+        return {"job_id": job_id, **info, "already_existed": True}
+
+    shop = await db.shops.find_one({"id": job["shop_id"]})
+    if not shop:
+        raise HTTPException(400, "Shop not found for job")
+
+    creds = await xero_service.get_valid_credentials(db, tech["id"])
+    contact_id = shop.get("xero_contact_id")
+    if not contact_id:
+        contact_id = await xero_service.find_or_create_contact(creds, shop)
+        await db.shops.update_one({"id": shop["id"]}, {"$set": {"xero_contact_id": contact_id}})
+
+    pricing_label = STANDARD_PRICING[job["calibration_type"]]["label"]
+    info = await xero_service.create_invoice(creds, contact_id=contact_id, job=job, line_label=pricing_label)
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "xero_invoice_id": info["invoice_id"],
+        "xero_invoice_number": info["invoice_number"],
+        "invoice_id": info["invoice_number"] or info["invoice_id"],  # legacy display field
+        "invoice_status": (info["status"] or "").lower(),
+        "invoice_amount_due": info.get("amount_due"),
+        "invoice_amount_paid": info.get("amount_paid"),
+        "invoice_online_url": info.get("online_url"),
+        "updated_at": iso(now_utc()),
+    }})
+    logger.info(f"[XERO] Pushed invoice for job {job_id} → {info['invoice_number']} ({info['status']})")
+    return {"job_id": job_id, **info, "already_existed": False}
+
+@api.post("/xero/jobs/{job_id}/refresh-status")
+async def xero_refresh_invoice_status(job_id: str, tech=Depends(require_owner)):
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    inv_id = job.get("xero_invoice_id")
+    if not inv_id:
+        raise HTTPException(400, "Job has no Xero invoice yet — push it first")
+    creds = await xero_service.get_valid_credentials(db, tech["id"])
+    info = await xero_service.fetch_invoice(creds, inv_id)
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "invoice_status": (info["status"] or "").lower(),
+        "invoice_amount_due": info.get("amount_due"),
+        "invoice_amount_paid": info.get("amount_paid"),
+        "updated_at": iso(now_utc()),
+    }})
+    return {"job_id": job_id, **info}
+
+@api.post("/xero/refresh-all")
+async def xero_refresh_all(tech=Depends(require_owner)):
+    """Batch refresh status for all jobs with a Xero invoice that isn't PAID yet."""
+    jobs = await db.jobs.find({
+        "xero_invoice_id": {"$exists": True, "$ne": None},
+        "invoice_status": {"$nin": ["paid", "voided"]},
+    }, {"_id": 0, "id": 1, "xero_invoice_id": 1}).to_list(500)
+    if not jobs:
+        return {"refreshed": 0}
+    creds = await xero_service.get_valid_credentials(db, tech["id"])
+    n = 0
+    for j in jobs:
+        try:
+            info = await xero_service.fetch_invoice(creds, j["xero_invoice_id"])
+            await db.jobs.update_one({"id": j["id"]}, {"$set": {
+                "invoice_status": (info["status"] or "").lower(),
+                "invoice_amount_due": info.get("amount_due"),
+                "invoice_amount_paid": info.get("amount_paid"),
+                "updated_at": iso(now_utc()),
+            }})
+            n += 1
+        except HTTPException as e:
+            logger.warning(f"[XERO] Refresh job {j['id']} failed: {e.detail}")
+    return {"refreshed": n, "total": len(jobs)}
 
 # ---------- Email log ----------
 @api.get("/email-log")
