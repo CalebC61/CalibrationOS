@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, formatTime, todayStr } from "../lib/api";
 
 const QUICK_REASONS = [
@@ -51,12 +52,15 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
     } finally { setBusy(false); }
   }
 
-  return (
+  return createPortal(
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 50,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }} data-testid="reschedule-cancel-modal">
-      <div onClick={e => e.stopPropagation()} className="surface page-fade" style={{ padding: 24, maxWidth: 520, width: "100%" }}>
+      <div onClick={e => e.stopPropagation()} className="surface page-fade" style={{
+        padding: 24, maxWidth: 520, width: "100%",
+        maxHeight: "calc(100vh - 32px)", overflowY: "auto",
+      }}>
         <h2 className="h2" style={{ marginBottom: 4 }}>
           {mode === "reschedule" ? "Reschedule Job" : "Cancel Job"}
         </h2>
@@ -118,6 +122,7 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

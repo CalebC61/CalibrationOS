@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 
 const CAL_TYPES = [
@@ -92,22 +93,27 @@ export default function JobEditModal({ open, job, onClose, onSaved }) {
     }
   }
 
-  return (
+  return createPortal(
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 50,
-      display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 16,
-      overflowY: "auto",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }} data-testid="job-edit-modal">
       <div onClick={e => e.stopPropagation()} className="surface page-fade"
-        style={{ padding: 24, maxWidth: 640, width: "100%", margin: "40px 0" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4, gap: 12 }}>
-          <h2 className="h2" style={{ margin: 0 }}>Edit Job</h2>
-          <span className={`badge badge-${job.zone}`}>{job.zone}</span>
-        </div>
-        <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
-          {job.shop_name} · Booking #{job.id.slice(0, 8).toUpperCase()}
+        style={{
+          padding: 0, maxWidth: 640, width: "100%",
+          maxHeight: "calc(100vh - 32px)", display: "flex", flexDirection: "column",
+        }}>
+        <div style={{ padding: "20px 24px 14px", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+            <h2 className="h2" style={{ margin: 0 }}>Edit Job</h2>
+            <span className={`badge badge-${job.zone}`}>{job.zone}</span>
+          </div>
+          <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+            {job.shop_name} · Booking #{job.id.slice(0, 8).toUpperCase()}
+          </div>
         </div>
 
+        <div style={{ padding: "16px 24px", overflowY: "auto", flex: 1 }}>
         <Section title="Customer & Vehicle">
           <Grid cols={2}>
             <Field label="Customer last name">
@@ -205,15 +211,21 @@ export default function JobEditModal({ open, job, onClose, onSaved }) {
             {error}
           </div>
         )}
+        </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 20, justifyContent: "flex-end" }}>
+        <div style={{
+          display: "flex", gap: 8, justifyContent: "flex-end",
+          padding: "14px 24px", borderTop: "1px solid var(--border)",
+          background: "var(--bg-elevated)",
+        }}>
           <button className="btn btn-ghost" onClick={onClose} data-testid="job-edit-cancel">Cancel</button>
           <button className="btn btn-primary" onClick={save} disabled={busy} data-testid="job-edit-save">
             {busy ? "Saving…" : "Save Changes"}
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

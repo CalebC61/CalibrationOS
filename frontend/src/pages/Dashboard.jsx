@@ -7,12 +7,6 @@ import RescheduleCancelModal from "../components/RescheduleCancelModal";
 import JobEditModal from "../components/JobEditModal";
 import TomorrowStrip from "../components/TomorrowStrip";
 
-const STATUS_FLOW = {
-  booked: { next: "driving", label: "Start Driving" },
-  driving: { next: "on_site", label: "I've Arrived" },
-  on_site: { next: "complete", label: "Complete Job" },
-};
-
 export default function Dashboard() {
   const [date, setDate] = useState(todayStr());
   const [jobs, setJobs] = useState([]);
@@ -45,16 +39,6 @@ export default function Dashboard() {
     await api.post("/notifications/mark-seen");
     setAlerts({ count: 0, alerts: [] });
     setAlertsOpen(false);
-  }
-  async function setStatus(jobId, status) {
-    if (status === "complete") {
-      const ok = window.confirm("Complete this job? This will generate a draft Xero invoice (mocked).");
-      if (!ok) return;
-      await api.post(`/jobs/${jobId}/complete`, { result: "pass", notes: null });
-    } else {
-      await api.post(`/jobs/${jobId}/status`, { status });
-    }
-    load();
   }
   async function manualRespond(offerId, accept) {
     await api.post(`/contractor-offers/${offerId}/respond`, { accept });
@@ -210,14 +194,14 @@ export default function Dashboard() {
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16, marginBottom: 20 }}>
-        <ZonePanel title="West Valley" subtitle="8:00 AM – 2:00 PM" zone="west" jobs={west} onStatus={setStatus}
+        <ZonePanel title="West Valley" subtitle="8:00 AM – 2:00 PM" zone="west" jobs={west}
           headerClass="zone-header-west" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
           onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
           onEdit={setEditTarget}
           dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop}
           dragging={dragging} setDragging={setDragging} />
-        <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east} onStatus={setStatus}
+        <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east}
           headerClass="zone-header-east" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
           onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
@@ -251,7 +235,7 @@ function Metric({ label, value, highlight }) {
   );
 }
 
-function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobIds, offerByJob,
+function ZonePanel({ title, subtitle, zone, jobs, headerClass, newJobIds, offerByJob,
                     onDispatch, onRespond, onReschedule, onEdit, dragOver, setDragOver, onDrop, dragging, setDragging }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
@@ -264,7 +248,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobI
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {jobs.map((j, idx) => (
-          <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
+          <JobCard key={j.id} job={j} index={idx + 1}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
             onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule}
             onEdit={onEdit}
@@ -301,10 +285,9 @@ function OfferCountdown({ expiresAt }) {
   return <span className="font-mono">{min}:{String(sec).padStart(2, "0")}</span>;
 }
 
-function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule, onEdit,
+function JobCard({ job, index, isNew, offer, onDispatch, onRespond, onReschedule, onEdit,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop,
                    onDragStartHandler, onDragEndHandler }) {
-  const flow = STATUS_FLOW[job.status];
   const isLocked = job.status === "complete" || job.status === "cancelled";
   const openEdit = () => { if (!isLocked && onEdit) onEdit(job); };
   return (
@@ -367,26 +350,22 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-        {flow && (
-          <button className="btn btn-primary" onClick={() => onStatus(job.id, flow.next)}
-            data-testid={`job-action-${job.id}`}>{flow.label}</button>
-        )}
         {job.status === "booked" && (
           <>
-            <button className="btn btn-ghost" onClick={() => onDispatch(job)}
+            <button className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); onDispatch(job); }}
               data-testid={`job-dispatch-${job.id}`}>Dispatch to Contractor</button>
-            <button className="btn btn-ghost" onClick={() => onReschedule(job, "reschedule")}
+            <button className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); onReschedule(job, "reschedule"); }}
               data-testid={`job-reschedule-${job.id}`}>Reschedule</button>
-            <button className="btn btn-ghost" onClick={() => onReschedule(job, "cancel")}
+            <button className="btn btn-ghost" onClick={(e) => { e.stopPropagation(); onReschedule(job, "cancel"); }}
               data-testid={`job-cancel-${job.id}`}>Cancel</button>
           </>
         )}
         {offer && (
           <>
             <button className="btn btn-ghost" style={{ borderColor: "rgba(16,185,129,0.4)", color: "var(--green)" }}
-              onClick={() => onRespond(offer.id, true)} data-testid={`offer-accept-${offer.id}`}>Mark Accepted</button>
+              onClick={(e) => { e.stopPropagation(); onRespond(offer.id, true); }} data-testid={`offer-accept-${offer.id}`}>Mark Accepted</button>
             <button className="btn btn-ghost" style={{ borderColor: "rgba(239,68,68,0.4)", color: "var(--red)" }}
-              onClick={() => onRespond(offer.id, false)} data-testid={`offer-decline-${offer.id}`}>Mark Declined</button>
+              onClick={(e) => { e.stopPropagation(); onRespond(offer.id, false); }} data-testid={`offer-decline-${offer.id}`}>Mark Declined</button>
           </>
         )}
       </div>

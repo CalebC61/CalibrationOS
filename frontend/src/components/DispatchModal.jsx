@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, formatTime } from "../lib/api";
 
 export default function DispatchModal({ open, job, onClose, onDone }) {
@@ -29,7 +30,7 @@ export default function DispatchModal({ open, job, onClose, onDone }) {
     } finally { setSubmitting(false); }
   }
 
-  return (
+  return createPortal(
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
       display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16,
@@ -60,6 +61,7 @@ export default function DispatchModal({ open, job, onClose, onDone }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
