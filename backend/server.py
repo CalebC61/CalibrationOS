@@ -833,7 +833,12 @@ async def public_book(data: BookingIn):
             await mock_send_sms(owner["phone"], owner_msg, kind="owner_new_booking", job_id=job["id"])
 
     return {"job_id": job["id"], "booking_reference": job["id"][:8].upper(),
-            "scheduled_start": job["scheduled_start"], "zone": zone, "price": price}
+            "scheduled_start": job["scheduled_start"], "zone": zone, "price": price,
+            "job_type": job["job_type"],
+            "insurance_approved_amount": job.get("insurance_approved_amount"),
+            "stripe_auth_intent_id": job.get("stripe_auth_intent_id"),
+            "stripe_auth_status": job.get("stripe_auth_status"),
+            "stripe_auth_error": job.get("stripe_auth_error")}
 
 # ---------- Jobs (dispatcher + field) ----------
 def annotate_at_risk(jobs: List[dict]) -> List[dict]:
