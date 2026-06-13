@@ -16,6 +16,7 @@ import Invites from "@/pages/Invites";
 import ChargeQueue from "@/pages/ChargeQueue";
 import PortalLogin from "@/pages/PortalLogin";
 import PortalRegister from "@/pages/PortalRegister";
+import PortalSelfRegister from "@/pages/PortalSelfRegister";
 import PortalSetupReturn from "@/pages/PortalSetupReturn";
 import PortalDashboard from "@/pages/PortalDashboard";
 import PortalJobsList from "@/pages/PortalJobsList";
@@ -54,6 +55,7 @@ function App() {
 
           {/* Portal (shop user) */}
           <Route path="/portal/login" element={<PortalLogin />} />
+          <Route path="/portal/register" element={<PortalSelfRegister />} />
           <Route path="/portal/invite/:token" element={<PortalRegister />} />
           <Route path="/portal/setup-return" element={<PortalProtected><PortalSetupReturn /></PortalProtected>} />
           <Route path="/portal" element={<PortalProtected><PortalDashboard /></PortalProtected>} />
@@ -61,6 +63,10 @@ function App() {
           <Route path="/portal/jobs/:id" element={<PortalProtected><PortalJobDetail /></PortalProtected>} />
           <Route path="/portal/book" element={<PortalProtected><PortalBook /></PortalProtected>} />
           <Route path="/portal/settings" element={<PortalProtected><PortalSettings /></PortalProtected>} />
+
+          {/* Legacy public booking URLs → redirect to portal sign-in with register CTA */}
+          <Route path="/book" element={<Navigate to="/portal/login?register=1" replace />} />
+          <Route path="/book/:token" element={<Navigate to="/portal/login?register=1" replace />} />
 
           {/* Owner dashboard */}
           <Route path="/dashboard" element={<Protected ownerOnly><Dashboard /></Protected>} />

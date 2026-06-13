@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 5 — Customer-facing B2B booking v1 (3-step self-register, T&A versioning, job_type + insurance, Stripe auth-hold + capture, hold release on cancel). Backend pytest 11/11 PASS. Frontend register flow + /book redirect + portal book wizard Step 1 verified via Playwright; Steps 2-6 testids + AuthorizationModal + portal-confirm verified in JSX source.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/portal/book", "issue": "Response payload returns only {job_id, booking_reference, scheduled_start, zone, price} — missing job_type/insurance_approved_amount/stripe_auth_intent_id from the body. Frontend must do a follow-up GET /portal/jobs/{id} to read those. Not breaking, but useful to include for fewer round-trips."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5_portal_v1.py",
+    "/app/test_reports/pytest/iteration5_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: enrich POST /api/portal/book response with job_type, insurance_approved_amount, stripe_auth_intent_id and stripe_auth_status (currently frontend must GET the job after booking to read these). Low priority — flow works end-to-end."
+  ],
+  "critical_code_review_comments": [
+    "server.py public_book lines ~770-801: auth-hold is wrapped in a single try/except Exception — correctly never blocks booking. Good. Logs stripe_auth_error to job (truncated to 300 chars) — good observability.",
+    "server.py charge_job lines 2037-2057: captures `requires_capture` paymentintent via stripe.PaymentIntent.capture and sets used_capture=True. On capture failure, falls back to fresh PI — defensive and correct.",
+    "server.py portal_self_register: creates Shop + ShopUser + Stripe Customer + Checkout Setup Session atomically (best-effort). If Stripe is the placeholder _emergent key, returns stripe_checkout_url=null and stripe_unavailable=true — graceful.",
+    "PortalSelfRegister.jsx: terms scroll-gate verified live — signature input is HTMLDisabled before scrollBottom and enables after. Good UX.",
+    "PortalBook.jsx line 137 + 314: 'Card charge on completion' shows flatFee(calType), not approved_amount. Flat-fee invariant correctly enforced in UI as well as backend.",
+    "server.py is now 2410 lines — refactor to modular routers (portal, jobs, billing, public, owner) is overdue."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5_portal_v1.py",
+    "/app/test_reports/iteration_5.json",
+    "/app/test_reports/pytest/iteration5_results.xml"
+  ],
+  "success_rate": {"backend": "100% (11/11 pytest cases)", "frontend": "Verified: registration 3-step wizard + scroll-gate, /book and /book/:token redirects with register-banner + register-cta, /portal/book Step 1 all 6 testids. Steps 2-6 (b-cal-*, b-job-cash/insurance, b-approved-amount, b-date, b-slot-*, Confirm Booking, portal-confirm, AuthorizationModal: auth-popup/auth-accept/auth-cancel/auth-dont-show) confirmed present in PortalBook.jsx source."},
+  "test_credentials": "Portal user reset to: live-test-1781157576@thecalibrationcrew.us / TestPass123! (already has pm_card_visa attached; shop is Safelite — Gilbert, active). Owner: caleb@thecalibrationcrew.us / Owner123!. Each pytest run creates one fresh self-register account (selftest-{ts}@example.com / Passw0rd!) and 4 TEST_-prefixed jobs (cash, insurance, hold, cancelled-hold).",
+  "seed_data_creation": "Backend tests leave behind 1 TEST_Selfreg shop per run and up to 4 TEST_-prefixed jobs against Safelite — Gilbert. Stripe customer + checkout session created via real Stripe test key. The cancel-hold test cancels a real Stripe PaymentIntent.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with: pytest /app/backend/tests/test_iteration5_portal_v1.py -v. Note: portal user password was reset to 'TestPass123!' on 2026-06-13 — if main agent reseeds the live-test user, update fixture or re-reset via direct bcrypt write. All availability slot lookups use POST /api/public/availability with {booking_token, job_address, date} — slots returned are already filtered to available; there is no 'available' boolean flag on each slot (any slot in the response IS open). Booking response is intentionally minimal; tests fetch /portal/jobs/{id} to read job_type/insurance_approved_amount/stripe_auth_* fields.",
+  "rca of the issue": "N/A — all test cases pass. Two minor test-script bugs were self-fixed during the run: (a) /public/availability is POST not GET (corrected to POST with booking_token+job_address+date payload); (b) POST /portal/book returns a minimal body — corrected to fetch the full job via GET /portal/jobs/{id}; (c) JobComplete model field is `result` not `calibration_result`."
+}

@@ -1,6 +1,6 @@
 """CalibrationOS Backend — Phase 1 MVP (Path B: revenue path with mocked integrations)."""
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
-from fastapi.responses import Response
+from fastapi.responses import Response, RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -378,6 +378,26 @@ class BookingIn(BaseModel):
     calibration_type: Literal["static", "dynamic", "dual", "triple", "tesla"]
     notification_phone: Optional[str] = None
     notification_email: Optional[str] = None
+    # v1 customer-facing flow additions:
+    job_type: Optional[Literal["cash", "insurance"]] = "cash"
+    insurance_approved_amount: Optional[float] = None
+
+class ShopSelfRegisterIn(BaseModel):
+    # Step 1: Business Info
+    shop_legal_name: str
+    shop_display_name: str
+    contact_full_name: str
+    email: EmailStr
+    password: str
+    contact_phone: str
+    shop_address: str
+    shop_city: Optional[str] = None
+    shop_state: str = "AZ"
+    shop_zip: Optional[str] = None
+
+class TermsAcceptanceIn(BaseModel):
+    terms_version: str
+    signature_full_name: str
 
 class JobStatusUpdate(BaseModel):
     status: Literal["driving", "on_site", "complete", "cancelled"]
@@ -699,8 +719,16 @@ async def public_book(data: BookingIn):
     }
     await db.vehicles.insert_one(vehicle.copy())
 
-    # Determine price from shop rate card
+    # Determine price from shop rate card (the Flat Calibration Fee)
     price = shop_price_for(shop, data.calibration_type)
+
+    # Validate job type / insurance approved amount
+    job_type = data.job_type or "cash"
+    insurance_approved_amount = None
+    if job_type == "insurance":
+        if data.insurance_approved_amount is None or data.insurance_approved_amount <= 0:
+            raise HTTPException(400, "Insurance jobs require an approved amount greater than $0")
+        insurance_approved_amount = float(data.insurance_approved_amount)
 
     # Compute sequence_order: count of existing non-cancelled jobs on this day in this zone + 1
     seq_count = await db.jobs.count_documents({
@@ -726,7 +754,9 @@ async def public_book(data: BookingIn):
         "drive_time_minutes": dm["duration_minutes"],
         "actual_arrival": None, "actual_completion": None,
         "result": None, "notes": None,
-        "price": price,
+        "price": price,  # Flat Calibration Fee (always what we charge)
+        "job_type": job_type,
+        "insurance_approved_amount": insurance_approved_amount,
         "invoice_id": None, "invoice_status": "pending",
         "google_calendar_event_id": None,
         "sequence_order": seq_count + 1,
@@ -736,6 +766,40 @@ async def public_book(data: BookingIn):
         "vehicle_year": data.year, "vehicle_make": data.make, "vehicle_model": data.model, "vehicle_vin": data.vin,
         "created_at": iso(now_utc()), "updated_at": iso(now_utc()),
     }
+
+    # Stripe auth-hold for bookings ≤ 6 days out (Stripe holds expire at 7 days).
+    # Looks up the shop_user for this shop. If no card or out of window, skip silently.
+    try:
+        days_out = (start_dt.date() - now_utc().date()).days
+        if 0 <= days_out <= 6 and stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent"):
+            shop_user = await db.shop_users.find_one({
+                "shop_id": shop["id"],
+                "stripe_payment_method_id": {"$ne": None},
+            })
+            if shop_user:
+                amount_cents = int(round(price * 100))
+                hold = await asyncio.to_thread(
+                    stripe_sdk.PaymentIntent.create,
+                    amount=amount_cents,
+                    currency="usd",
+                    customer=shop_user["stripe_customer_id"],
+                    payment_method=shop_user["stripe_payment_method_id"],
+                    off_session=True,
+                    confirm=True,
+                    capture_method="manual",   # ← hold; we capture on completion
+                    description=f"Auth hold — {STANDARD_PRICING[data.calibration_type]['label']}",
+                    metadata={"job_id": job["id"], "shop_id": shop["id"]},
+                )
+                job["stripe_auth_intent_id"] = hold["id"]
+                job["stripe_auth_status"] = hold["status"]  # 'requires_capture' on success
+                job["stripe_auth_amount_cents"] = amount_cents
+                job["stripe_auth_placed_at"] = iso(now_utc())
+                logger.info(f"[STRIPE] Auth hold placed for job {job['id']} → PI {hold['id']} ({hold['status']})")
+    except Exception as e:
+        # Auth hold is best-effort; never block a booking on it.
+        logger.warning(f"[STRIPE] Auth hold skipped for job {job['id']}: {e}")
+        job["stripe_auth_error"] = str(e)[:300]
+
     await db.jobs.insert_one(job.copy())
 
     # Mock confirmation SMS
@@ -923,16 +987,17 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
         await mock_send_sms(job["notification_phone"], msg, kind="completed", job_id=job_id)
 
     # Admin email (mocked as log entry)
+    inv_display = invoice_update.get("invoice_id") or invoice_update.get("xero_invoice_number") or "—"
     await db.admin_notifications.insert_one({
         "id": gen_id(),
         "subject": f"New Invoice Created — {shop['name']} — {job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}",
-        "body": f"Invoice {invoice['invoice_id']} created for {shop['name']} — ${job['price']}.",
+        "body": f"Invoice {inv_display} created for {shop['name']} — ${job['price']}.",
         "to": os.environ.get("ADMIN_EMAIL", "admin@thecalibrationcrew.us"),
         "sent_at": iso(now_utc()),
     })
 
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-    return {"job": fresh, "invoice": invoice, "document": doc}
+    return {"job": fresh, "invoice": invoice_update, "document": doc}
 
 # ---------- Dashboard summary ----------
 @api.get("/dashboard/summary")
@@ -1001,6 +1066,16 @@ async def cancel_job(job_id: str, body: CancelIn, tech=Depends(require_owner)):
         raise HTTPException(404, "Job not found")
     if job["status"] in ("complete", "cancelled"):
         raise HTTPException(400, f"Already {job['status']}")
+    # Release any uncaptured Stripe auth hold so funds return to the shop's card.
+    auth_pi = job.get("stripe_auth_intent_id")
+    if auth_pi and stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent"):
+        try:
+            existing = await asyncio.to_thread(stripe_sdk.PaymentIntent.retrieve, auth_pi)
+            if existing.get("status") == "requires_capture":
+                await asyncio.to_thread(stripe_sdk.PaymentIntent.cancel, auth_pi)
+                logger.info(f"[STRIPE] Released auth hold {auth_pi} on cancellation of job {job_id}")
+        except Exception as e:
+            logger.warning(f"[STRIPE] Could not release hold {auth_pi}: {e}")
     await db.jobs.update_one({"id": job_id}, {"$set": {
         "status": "cancelled",
         "cancellation_reason": body.reason,
@@ -1553,6 +1628,164 @@ async def public_invite_lookup(token: str):
         {"_id": 0, "name": 1, "address": 1, "contact_phone": 1})
     return {**inv, "shop": shop}
 
+# ---------- Customer-facing v1: terms, self-registration, auth modal ----------
+import terms_service  # noqa: E402
+
+@api.get("/portal/terms/current")
+async def get_current_terms():
+    """Returns the current published T&A. Public — no auth needed (shown pre-registration)."""
+    doc = await db.terms_versions.find_one({"is_current": True}, {"_id": 0})
+    if not doc:
+        return terms_service.current_terms()
+    return doc
+
+@api.post("/portal/self-register")
+async def portal_self_register(body: ShopSelfRegisterIn, request: Request):
+    """Open shop self-registration. Creates the Shop (status=pending) and ShopUser,
+    then returns a Stripe Checkout setup URL so the shop can save their card.
+    Account flips to active once both Terms are accepted AND card is on file."""
+    email = body.email.lower()
+    if await db.shop_users.find_one({"email": email}):
+        raise HTTPException(400, "An account already exists for this email")
+
+    # Geocode the address to drop the shop into the metro
+    geo = mock_geocode(body.shop_address)
+    if not geo["in_metro"]:
+        raise HTTPException(400, "Shop address is outside the Phoenix metro service area")
+    zone = detect_zone(geo["lng"])
+
+    shop_id = gen_id()
+    shop_doc = {
+        "id": shop_id,
+        "name": body.shop_display_name,
+        "legal_name": body.shop_legal_name,
+        "contact_name": body.contact_full_name,
+        "contact_phone": body.contact_phone,
+        "contact_email": email,
+        "address": body.shop_address,
+        "city": body.shop_city,
+        "state": body.shop_state,
+        "zip": body.shop_zip,
+        "lat": geo["lat"], "lng": geo["lng"],
+        "zone": zone,
+        "pricing_tier": "standard",
+        "status": "pending",
+        "booking_link_token": gen_id(),
+        "onboarding": {"business_info": True, "terms_signed": False, "card_on_file": False},
+        "created_via": "self_register",
+        "created_at": iso(now_utc()),
+        "updated_at": iso(now_utc()),
+    }
+    await db.shops.insert_one(shop_doc.copy())
+
+    # Stripe customer + checkout setup session (best-effort if Stripe configured)
+    stripe_customer_id = None
+    checkout_url = None
+    stripe_error = None
+    if stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent"):
+        try:
+            cust = await asyncio.to_thread(stripe_sdk.Customer.create,
+                email=email, name=body.contact_full_name,
+                metadata={"shop_id": shop_id, "source": "self_register"})
+            stripe_customer_id = cust["id"]
+        except Exception as e:
+            stripe_error = str(e)
+            logger.warning(f"[STRIPE] Customer create failed: {e}")
+
+    user_id = gen_id()
+    user_doc = {
+        "id": user_id,
+        "email": email,
+        "full_name": body.contact_full_name,
+        "password_hash": hash_password(body.password),
+        "shop_id": shop_id,
+        "shop_name": body.shop_display_name,
+        "stripe_customer_id": stripe_customer_id,
+        "stripe_payment_method_id": None,
+        "card_brand": None, "card_last4": None, "card_exp_month": None, "card_exp_year": None,
+        "auth_popup_dismissed": False,
+        "is_active": True,
+        "created_at": iso(now_utc()),
+    }
+    await db.shop_users.insert_one(user_doc.copy())
+
+    # Stripe Checkout Session in setup mode (returns hosted URL)
+    origin = (os.environ.get("FRONTEND_APP_URL") or str(request.base_url)).rstrip("/")
+    if stripe_customer_id:
+        try:
+            session = await asyncio.to_thread(stripe_sdk.checkout.Session.create,
+                mode="setup", payment_method_types=["card"],
+                customer=stripe_customer_id,
+                success_url=f"{origin}/portal/setup-return?session_id={{CHECKOUT_SESSION_ID}}",
+                cancel_url=f"{origin}/portal/setup-return?cancelled=1",
+                metadata={"shop_user_id": user_id, "shop_id": shop_id})
+            checkout_url = session["url"]
+        except Exception as e:
+            stripe_error = str(e)
+            logger.warning(f"[STRIPE] Checkout setup failed: {e}")
+
+    portal_token = make_portal_token(user_id)
+    return {
+        "shop_user_id": user_id,
+        "shop_id": shop_id,
+        "token": portal_token,
+        "stripe_checkout_url": checkout_url,
+        "stripe_unavailable": checkout_url is None,
+        "stripe_error": stripe_error,
+    }
+
+@api.post("/portal/accept-terms")
+async def accept_terms(body: TermsAcceptanceIn, request: Request, su=Depends(get_current_shop_user)):
+    if not body.signature_full_name.strip():
+        raise HTTPException(400, "Signature is required")
+    terms = await db.terms_versions.find_one({"version": body.terms_version, "is_current": True})
+    if not terms:
+        raise HTTPException(400, "Terms version is not current — please refresh and re-accept")
+    record = {
+        "id": gen_id(),
+        "shop_user_id": su["id"],
+        "shop_id": su["shop_id"],
+        "terms_version": body.terms_version,
+        "signature_full_name": body.signature_full_name.strip(),
+        "signed_at": iso(now_utc()),
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
+    await db.terms_acceptances.insert_one(record.copy())
+    await db.shop_users.update_one({"id": su["id"]}, {"$set": {
+        "terms_signature": body.signature_full_name.strip(),
+        "terms_signed_at": record["signed_at"],
+        "terms_version_signed": body.terms_version,
+    }})
+    await db.shops.update_one({"id": su["shop_id"]}, {"$set": {
+        "onboarding.terms_signed": True,
+        "updated_at": iso(now_utc()),
+    }})
+    await _maybe_activate_shop(su["shop_id"])
+    return {"accepted": True, "version": body.terms_version}
+
+@api.post("/portal/dismiss-auth-popup")
+async def dismiss_auth_popup(su=Depends(get_current_shop_user)):
+    await db.shop_users.update_one({"id": su["id"]}, {"$set": {
+        "auth_popup_dismissed": True,
+        "auth_popup_dismissed_at": iso(now_utc()),
+    }})
+    return {"dismissed": True}
+
+async def _maybe_activate_shop(shop_id: str) -> None:
+    """Flip shop status to 'active' when all onboarding steps are complete."""
+    shop = await db.shops.find_one({"id": shop_id})
+    if not shop or shop.get("status") == "active":
+        return
+    ob = shop.get("onboarding") or {}
+    if ob.get("business_info") and ob.get("terms_signed") and ob.get("card_on_file"):
+        await db.shops.update_one({"id": shop_id}, {"$set": {
+            "status": "active",
+            "activated_at": iso(now_utc()),
+        }})
+        logger.info(f"[ONBOARD] Shop {shop_id} activated")
+
+
 @api.post("/public/invites/{token}/register")
 async def register_shop_user(token: str, body: ShopUserRegisterIn):
     if not body.terms_agreed:
@@ -1646,6 +1879,11 @@ async def portal_stripe_setup_status(session_id: str, su=Depends(get_current_sho
         "card_exp_month": card.get("exp_month"), "card_exp_year": card.get("exp_year"),
         "updated_at": iso(now_utc()),
     }})
+    await db.shops.update_one({"id": su["shop_id"]}, {"$set": {
+        "onboarding.card_on_file": True,
+        "updated_at": iso(now_utc()),
+    }})
+    await _maybe_activate_shop(su["shop_id"])
     fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
     return {"status": "complete", "shop_user": fresh}
 
@@ -1656,10 +1894,14 @@ async def portal_login(body: ShopUserLoginIn):
         raise HTTPException(401, "Invalid email or password")
     if not su.get("is_active", True):
         raise HTTPException(403, "Account disabled")
+    shop = await db.shops.find_one({"id": su["shop_id"]})
     token = make_portal_token(su["id"])
     return {"token": token, "shop_user_id": su["id"], "full_name": su["full_name"],
             "shop_name": su["shop_name"], "shop_id": su["shop_id"],
-            "has_payment_method": bool(su.get("stripe_payment_method_id"))}
+            "has_payment_method": bool(su.get("stripe_payment_method_id")),
+            "auth_popup_dismissed": bool(su.get("auth_popup_dismissed", False)),
+            "shop_status": (shop or {}).get("status", "pending"),
+            "onboarding": (shop or {}).get("onboarding", {})}
 
 @api.get("/portal/me")
 async def portal_me(su=Depends(get_current_shop_user)):
@@ -1790,39 +2032,64 @@ async def charge_job(job_id: str, tech=Depends(require_owner)):
     if amount_cents <= 0:
         raise HTTPException(400, "Job price must be greater than zero")
 
-    try:
-        intent = await asyncio.to_thread(
-            stripe_sdk.PaymentIntent.create,
-            amount=amount_cents,
-            currency="usd",
-            customer=shop_user["stripe_customer_id"],
-            payment_method=shop_user["stripe_payment_method_id"],
-            off_session=True,
-            confirm=True,
-            description=f"Calibration {job.get('calibration_label','')} — {job.get('vehicle_year','')} {job.get('vehicle_make','')} {job.get('vehicle_model','')}",
-            metadata={
-                "job_id": job_id,
-                "shop_id": job["shop_id"],
-                "shop_name": job.get("shop_name", ""),
-                "invoice_id": job.get("invoice_id") or "",
-            },
-        )
-    except stripe_sdk.error.CardError as e:
-        err = e.error or {}
-        decline_code = getattr(err, "decline_code", None) or err.get("decline_code") if isinstance(err, dict) else None
-        message = getattr(err, "message", None) or str(e)
-        await db.jobs.update_one({"id": job_id}, {"$set": {
-            "last_charge_error": message,
-            "last_charge_attempt_at": iso(now_utc()),
-        }})
-        raise HTTPException(402, f"Card declined: {message}{f' ({decline_code})' if decline_code else ''}")
-    except stripe_sdk.error.StripeError as e:
-        message = getattr(e, "user_message", None) or str(e)
-        await db.jobs.update_one({"id": job_id}, {"$set": {
-            "last_charge_error": message,
-            "last_charge_attempt_at": iso(now_utc()),
-        }})
-        raise HTTPException(502, f"Stripe error: {message}")
+    # If we placed an auth hold at booking and it's still capturable, capture it.
+    # Otherwise fall back to creating a fresh PaymentIntent.
+    auth_pi_id = job.get("stripe_auth_intent_id")
+    used_capture = False
+    intent = None
+    if auth_pi_id:
+        try:
+            existing = await asyncio.to_thread(stripe_sdk.PaymentIntent.retrieve, auth_pi_id)
+            if existing.get("status") == "requires_capture":
+                # Capture (full or partial if price changed)
+                cap_amount = min(amount_cents, existing.get("amount_capturable") or existing.get("amount") or amount_cents)
+                intent = await asyncio.to_thread(
+                    stripe_sdk.PaymentIntent.capture, auth_pi_id,
+                    amount_to_capture=cap_amount,
+                )
+                used_capture = True
+                logger.info(f"[STRIPE] Captured auth hold {auth_pi_id} for job {job_id}")
+            elif existing.get("status") == "succeeded":
+                # Already captured (defensive)
+                intent = existing
+                used_capture = True
+        except stripe_sdk.error.StripeError as e:
+            logger.warning(f"[STRIPE] Auth hold capture failed for {auth_pi_id}: {e}; will create fresh PI")
+
+    if intent is None:
+        try:
+            intent = await asyncio.to_thread(
+                stripe_sdk.PaymentIntent.create,
+                amount=amount_cents,
+                currency="usd",
+                customer=shop_user["stripe_customer_id"],
+                payment_method=shop_user["stripe_payment_method_id"],
+                off_session=True,
+                confirm=True,
+                description=f"Calibration {job.get('calibration_label','')} — {job.get('vehicle_year','')} {job.get('vehicle_make','')} {job.get('vehicle_model','')}",
+                metadata={
+                    "job_id": job_id,
+                    "shop_id": job["shop_id"],
+                    "shop_name": job.get("shop_name", ""),
+                    "invoice_id": job.get("invoice_id") or "",
+                },
+            )
+        except stripe_sdk.error.CardError as e:
+            err = e.error or {}
+            decline_code = getattr(err, "decline_code", None) or err.get("decline_code") if isinstance(err, dict) else None
+            message = getattr(err, "message", None) or str(e)
+            await db.jobs.update_one({"id": job_id}, {"$set": {
+                "last_charge_error": message,
+                "last_charge_attempt_at": iso(now_utc()),
+            }})
+            raise HTTPException(402, f"Card declined: {message}{f' ({decline_code})' if decline_code else ''}")
+        except stripe_sdk.error.StripeError as e:
+            message = getattr(e, "user_message", None) or str(e)
+            await db.jobs.update_one({"id": job_id}, {"$set": {
+                "last_charge_error": message,
+                "last_charge_attempt_at": iso(now_utc()),
+            }})
+            raise HTTPException(502, f"Stripe error: {message}")
 
     status = intent.get("status")
     if status != "succeeded":
@@ -1844,6 +2111,7 @@ async def charge_job(job_id: str, tech=Depends(require_owner)):
         "charge_card_brand": shop_user.get("card_brand"),
         "charge_card_last4": shop_user.get("card_last4"),
         "charged_by": tech["id"],
+        "charge_via": "auth_capture" if used_capture else "off_session_pi",
         "updated_at": iso(now_utc()),
     }
     # Clear any previous error
@@ -1852,8 +2120,8 @@ async def charge_job(job_id: str, tech=Depends(require_owner)):
         "$unset": {"last_charge_error": "", "last_charge_attempt_at": ""},
     })
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-    logger.info(f"[STRIPE] Charged ${job['price']} for job {job_id} → PI {intent['id']}")
-    return {"job": fresh, "payment_intent_id": intent["id"], "amount_cents": amount_cents}
+    logger.info(f"[STRIPE] Charged ${job['price']} for job {job_id} → PI {intent['id']} (capture={used_capture})")
+    return {"job": fresh, "payment_intent_id": intent["id"], "amount_cents": amount_cents, "captured_from_hold": used_capture}
 
 @api.post("/jobs/{job_id}/skip-charge")
 async def skip_charge_job(job_id: str, tech=Depends(require_owner)):
@@ -2123,6 +2391,8 @@ async def seed_data():
 async def startup():
     await seed_data()
     await load_settings()
+    import terms_service
+    await terms_service.ensure_terms_seeded(db)
 
 # Include router
 app.include_router(api)
