@@ -191,21 +191,93 @@ function ContractorTab() {
 }
 
 function IntegrationsTab() {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [banner, setBanner] = useState(null);
+
+  async function load() {
+    try {
+      const { data } = await api.get("/integrations/status");
+      setStatus(data);
+    } catch { /* leave status null → shows "Loading…" */ }
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const x = params.get("xero");
+    if (x === "connected") setBanner({ ok: true, msg: "Xero connected. Completed jobs will now create real draft invoices." });
+    else if (x === "error") setBanner({ ok: false, msg: "Xero connection failed. Please try connecting again." });
+    if (x) window.history.replaceState({}, "", window.location.pathname);
+    load();
+  }, []);
+
+  async function connectXero() {
+    setBusy(true);
+    try {
+      const { data } = await api.get("/auth/xero/connect");
+      window.location.href = data.authorize_url;
+    } catch (e) {
+      setBanner({ ok: false, msg: e.response?.data?.detail || "Xero is not configured yet." });
+      setBusy(false);
+    }
+  }
+
+  async function disconnectXero() {
+    if (!window.confirm("Disconnect Xero? New invoices will fall back to mock mode until reconnected.")) return;
+    setBusy(true);
+    try { await api.post("/auth/xero/disconnect"); await load(); }
+    catch (e) { setBanner({ ok: false, msg: "Disconnect failed." }); }
+    finally { setBusy(false); }
+  }
+
+  const xero = status?.xero;
+  const others = [
+    { name: "Google Maps", status: "Mock — keyword-based geocoding", color: "var(--yellow)" },
+    { name: "Twilio SMS", status: "Mock — messages logged in app", color: "var(--yellow)" },
+    { name: "Google Calendar", status: "Deferred to next iteration", color: "var(--text-muted)" },
+  ];
+
   return (
     <div className="surface" style={{ padding: 20, maxWidth: 560 }} data-testid="integrations-tab">
-      {[
-        { name: "Xero", status: "Mock — invoices simulated", color: "var(--yellow)" },
-        { name: "Google Maps", status: "Mock — keyword-based geocoding", color: "var(--yellow)" },
-        { name: "Twilio SMS", status: "Mock — messages logged in app", color: "var(--yellow)" },
-        { name: "Google Calendar", status: "Deferred to next iteration", color: "var(--text-muted)" },
-      ].map(i => (
+      {banner && (
+        <div data-testid="xero-banner" style={{
+          padding: "10px 12px", borderRadius: 8, marginBottom: 14, fontSize: 13,
+          background: banner.ok ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
+          color: banner.ok ? "var(--green)" : "var(--red)",
+        }}>{banner.msg}</div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>Xero</div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            {!xero ? "Loading…"
+              : xero.connected ? `Connected${xero.org_name ? " — " + xero.org_name : ""}`
+              : xero.configured ? "Configured — not connected"
+              : "Not configured — set XERO_CLIENT_ID / SECRET / REDIRECT_URI (mock mode active)"}
+          </div>
+        </div>
+        <div>
+          {xero && xero.connected && (
+            <button className="btn btn-danger" onClick={disconnectXero} disabled={busy} data-testid="xero-disconnect">Disconnect</button>
+          )}
+          {xero && !xero.connected && xero.configured && (
+            <button className="btn btn-primary" onClick={connectXero} disabled={busy} data-testid="xero-connect">{busy ? "Opening…" : "Connect Xero"}</button>
+          )}
+          {xero && !xero.configured && (
+            <span style={{ color: "var(--yellow)", fontSize: 13 }}>Mock mode</span>
+          )}
+        </div>
+      </div>
+
+      {others.map(i => (
         <div key={i.name} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
           <span style={{ fontWeight: 600 }}>{i.name}</span>
           <span style={{ color: i.color, fontSize: 13 }}>{i.status}</span>
         </div>
       ))}
       <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>
-        When you&apos;re ready, provide your API keys and we&apos;ll wire real integrations.
+        Xero invoicing is live once connected; the remaining integrations stay mocked until later steps.
       </div>
     </div>
   );
