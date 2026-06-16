@@ -172,6 +172,16 @@ All other spec items (zones, pricing, invoice format, dark theme, fonts, busines
 3. Decide on contractor dispatch UI priority vs route map priority for iteration 2.
 
 ## Changelog
+- 2026-02-11: **Field PWA v2 — Route-oriented technician/owner tool.** Rebuilt `/field` from drill-down model into a one-screen route tool:
+  - Compact Leaflet route map at top showing today's stops as numbered pins
+  - Chronological job list (active → booked → complete) with each card showing time, stop #, status badge, CASH/INS·$X badge, shop, customer last name + vehicle + VIN, address, calibration label + $price, drive time, last-ETA-sent timestamp
+  - Per-card 3-button row: **🚗 Drive** (sets status=driving + opens Apple/Google Maps native), **📱 ETA** (one-tap SMS), **✓ Done** (slide-up sheet)
+  - Done sheet: PASS/FAIL toggle + notes + "✓ Complete & Charge $XXX.XX" button
+  - On completion: backend auto-pushes Xero invoice AND auto-charges the shop's card on file (captures pre-auth hold if present, else fresh off-session PaymentIntent). Failure logged on job but never blocks completion.
+  - **New endpoints:** `POST /api/field/jobs/{id}/send-eta` (computes ETA = now + drive_time, rounds to 5 min, sends SMS), and updated `POST /api/jobs/{id}/complete` with auto-charge logic.
+  - **Maps detection:** iOS UA → `maps://?daddr=...` (Apple Maps); else → `https://www.google.com/maps/dir/?api=1&destination=...`.
+  - **Owner access:** new "Field" link in owner nav (between Dispatch and Shops) and ← Admin back-link in the PWA header for fast toggling between admin and field views.
+  - Backend pytest 5/5 PASS; frontend Playwright PASS (Drive → maps popup, ETA → flash banner, Done sheet → $125 charged via VISA ****4242, card transforms to green COMPLETE with "✓ Charged" line).
 - 2026-02-11: **Owner Shops Admin (Settings → Shops).** New tab with search-as-you-type (matches name, legal_name, contact, email, phone, address, city, zip) and a one-click edit modal per shop. Modal sections: Business (name/legal/contact/status/phone/email), Location (address re-geocodes + reassigns zone on save), **Rate Card** (Standard vs Negotiated/Custom toggle — when Custom, shows all 5 calibration types side-by-side with their standard reference price + per-row override input; blank rows fall back to standard), Notes. Save → `PUT /api/shops/{id}` and the row reflects the new badge (CUSTOM vs STANDARD) immediately. Switching tier back to Standard auto-clears all custom rates. Custom prices flow into all booking surfaces (PortalBook + public booking + portal-shop endpoint).
 - 2026-02-11: **Customer-Facing v1: Self-Registration + Insurance/Cash Booking + Stripe Auth-Hold.**
   - **3-step open self-registration** (`/portal/register`) — Business Info → T&A (versioned, scroll-to-bottom gated, typed-signature stored with version pin in `terms_acceptances`) → Stripe Checkout setup session. New backend endpoints: `GET /api/portal/terms/current`, `POST /api/portal/self-register`, `POST /api/portal/accept-terms`, `POST /api/portal/dismiss-auth-popup`.
