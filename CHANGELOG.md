@@ -8,7 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ---
 
-## [Unreleased] — Claude Code session (branch `claude/gracious-meitner-ef67wz`)
+## [Unreleased]
+
+_Nothing yet._
+
+## [0.0.3] — 2026-06-16 — Claude Code session (Step 1: real Xero invoicing)
 
 ### Added
 - **Collaboration bridge docs:** `CLAUDE.md` (project constitution + Emergent runtime rules),
