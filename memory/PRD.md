@@ -172,6 +172,20 @@ All other spec items (zones, pricing, invoice format, dark theme, fonts, busines
 3. Decide on contractor dispatch UI priority vs route map priority for iteration 2.
 
 ## Changelog
+- 2026-02-11: **🏗 Backend Refactor — server.py split into FastAPI routers.** Monolithic 2503-line `server.py` collapsed to a 58-line bootstrap. New layout:
+  - `deps.py` — shared infra: db, auth deps (get_current_tech, require_owner, get_current_shop_user), JWT helpers, hash/verify, gen_id/iso/now_utc, mock_geocode + Google geocoding fallback, detect_zone, mock_distance_matrix (Google), mock_send_sms (Linqapp), send_email (Resend), mock_xero_create_invoice, shop_price_for, compute_available_slots, annotate_at_risk, _maybe_activate_shop, ZONES, STANDARD_PRICING, CALEB_HOME, PHOENIX_CITY_COORDS, load_settings, save_pricing/zones.
+  - `models.py` — all Pydantic request/response models.
+  - `seed.py` — first-boot seeding (owner + contractor + 3 demo shops).
+  - `routers/auth.py` — /auth/* + /reference/* + /geocode (5 endpoints).
+  - `routers/shops.py` — /shops CRUD + /public/shop/{token} + /public/availability + /public/book with Stripe auth-hold logic (8 endpoints).
+  - `routers/jobs.py` — /jobs list/get/status/complete (with auto-Xero-push + auto-Stripe-charge)/reschedule/cancel/edit/upload-document/list-docs/download (10 endpoints).
+  - `routers/field.py` — /field/jobs/{id}/send-eta + /jobs/{id}/dispatch + /contractor-offers/* + /contractors GET + /jobs/reorder (6 endpoints).
+  - `routers/owner.py` — /dashboard/summary + /public/shop-status/{token} + /sms-log + /email-log + /invoices + /notifications/* + /settings/pricing+zones + /contractors/{id} PUT + /invites POST+GET + /public/invites/{token} (12 endpoints).
+  - `routers/billing.py` — /charge-queue + /jobs/{id}/charge (with auth-hold capture) + /jobs/{id}/skip-charge (3 endpoints).
+  - `routers/portal.py` — /portal/* (terms/self-register/accept-terms/dismiss-popup/login/me/jobs/jobs/{id}/day-map/book/stripe-setup-status) + /public/invites/{token}/register (12 endpoints).
+  - `routers/xero.py` — /xero/* (status/auth-start/auth-callback/disconnect/push-invoice/refresh-status/refresh-all) (7 endpoints).
+  - Router mount order in server.py: `field → billing → xero → portal → owner → jobs → shops → auth` (most-specific first to resolve overlap, e.g. `/jobs/{id}/charge` in billing wins over `/jobs/{id}` in jobs).
+  - Verified: pytest 37/37 NEW regression tests + 15/16 prior iteration tests PASS (1 stale-data flake, unrelated). Frontend owner+portal smoke 0 errors. Zero behavioral regressions.
 - 2026-02-11: **Field PWA v2 — Route-oriented technician/owner tool.** Rebuilt `/field` from drill-down model into a one-screen route tool:
   - Compact Leaflet route map at top showing today's stops as numbered pins
   - Chronological job list (active → booked → complete) with each card showing time, stop #, status badge, CASH/INS·$X badge, shop, customer last name + vehicle + VIN, address, calibration label + $price, drive time, last-ETA-sent timestamp
