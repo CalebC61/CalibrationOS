@@ -1001,8 +1001,96 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
         "sent_at": iso(now_utc()),
     })
 
+    # Auto-charge the shop's card on file (best-effort; doesn't block completion).
+    charge_result = None
+    if (stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent")
+            and not job.get("charged_at")):
+        try:
+            shop_user = await db.shop_users.find_one({
+                "shop_id": job["shop_id"],
+                "stripe_payment_method_id": {"$ne": None},
+            })
+            if shop_user:
+                amount_cents = int(round(float(job["price"]) * 100))
+                auth_pi_id = job.get("stripe_auth_intent_id")
+                intent = None
+                used_capture = False
+                if auth_pi_id:
+                    try:
+                        existing = await asyncio.to_thread(stripe_sdk.PaymentIntent.retrieve, auth_pi_id)
+                        if existing.get("status") == "requires_capture":
+                            cap = min(amount_cents, existing.get("amount_capturable") or amount_cents)
+                            intent = await asyncio.to_thread(stripe_sdk.PaymentIntent.capture, auth_pi_id, amount_to_capture=cap)
+                            used_capture = True
+                        elif existing.get("status") == "succeeded":
+                            intent = existing
+                            used_capture = True
+                    except stripe_sdk.error.StripeError as e:
+                        logger.warning(f"[STRIPE] Auto-charge: hold capture failed for {auth_pi_id}: {e}")
+                if intent is None:
+                    intent = await asyncio.to_thread(
+                        stripe_sdk.PaymentIntent.create,
+                        amount=amount_cents, currency="usd",
+                        customer=shop_user["stripe_customer_id"],
+                        payment_method=shop_user["stripe_payment_method_id"],
+                        off_session=True, confirm=True,
+                        description=f"Calibration {job.get('calibration_label','')} — {job.get('vehicle_year','')} {job.get('vehicle_make','')} {job.get('vehicle_model','')}",
+                        metadata={"job_id": job_id, "shop_id": job["shop_id"], "auto_charge": "true"},
+                    )
+                if intent.get("status") == "succeeded":
+                    await db.jobs.update_one({"id": job_id}, {"$set": {
+                        "charged_at": iso(now_utc()),
+                        "charge_payment_intent_id": intent["id"],
+                        "charge_amount_cents": amount_cents,
+                        "charge_status": "succeeded",
+                        "charge_currency": "usd",
+                        "charge_card_brand": shop_user.get("card_brand"),
+                        "charge_card_last4": shop_user.get("card_last4"),
+                        "charged_by": tech["id"],
+                        "charge_via": "auto_capture" if used_capture else "auto_off_session",
+                    }})
+                    charge_result = {"succeeded": True, "amount_cents": amount_cents,
+                                     "payment_intent_id": intent["id"],
+                                     "captured_from_hold": used_capture}
+                    logger.info(f"[STRIPE] Auto-charged ${job['price']} on completion of job {job_id}")
+                else:
+                    charge_result = {"succeeded": False,
+                                     "error": f"PaymentIntent status={intent.get('status')}"}
+        except stripe_sdk.error.CardError as e:
+            charge_result = {"succeeded": False, "error": f"Card declined: {getattr(e, 'user_message', str(e))}"}
+            await db.jobs.update_one({"id": job_id}, {"$set": {
+                "last_charge_error": charge_result["error"],
+                "last_charge_attempt_at": iso(now_utc()),
+            }})
+        except Exception as e:
+            charge_result = {"succeeded": False, "error": str(e)[:300]}
+            logger.warning(f"[STRIPE] Auto-charge failed for job {job_id}: {e}")
+
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
-    return {"job": fresh, "invoice": invoice_update, "document": doc}
+    return {"job": fresh, "invoice": invoice_update, "document": doc, "charge": charge_result}
+
+# ---------- Field PWA helpers ----------
+@api.post("/field/jobs/{job_id}/send-eta")
+async def send_eta(job_id: str, tech=Depends(get_current_tech)):
+    """Send a fresh ETA SMS to the customer. ETA = NOW + drive_time_minutes (rounded up to next 5)."""
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if not job.get("notification_phone"):
+        raise HTTPException(400, "This job has no contact phone")
+    drive = int(job.get("drive_time_minutes") or 20)
+    # Round up to next 5 mins for cleanliness
+    eta_min = ((drive + 4) // 5) * 5
+    eta_dt = now_utc() + timedelta(minutes=eta_min)
+    arrival = eta_dt.strftime("%-I:%M %p") if hasattr(eta_dt, "strftime") else eta_dt.isoformat()
+    msg = (f"Your ADAS calibration technician is on the way. "
+           f"ETA ~{eta_min} minutes (around {arrival}). — The Calibration Crew")
+    await mock_send_sms(job["notification_phone"], msg, kind="eta", job_id=job_id)
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "last_eta_sent_at": iso(now_utc()),
+        "last_eta_minutes": eta_min,
+    }})
+    return {"sent": True, "eta_minutes": eta_min, "eta_at": iso(eta_dt)}
 
 # ---------- Dashboard summary ----------
 @api.get("/dashboard/summary")

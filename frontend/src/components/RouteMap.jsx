@@ -23,14 +23,14 @@ function FitBounds({ points }) {
   return null;
 }
 
-export default function RouteMap({ jobs }) {
+export default function RouteMap({ jobs, height = 520 }) {
   const valid = jobs.filter(j => j.job_lat && j.job_lng);
   const points = valid.map(j => [j.job_lat, j.job_lng]);
   const center = points[0] || [33.4484, -112.0740];
   const westLine = valid.filter(j => j.zone === "west").map(j => [j.job_lat, j.job_lng]);
   const eastLine = valid.filter(j => j.zone === "east").map(j => [j.job_lat, j.job_lng]);
   return (
-    <div style={{ height: 520, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }} data-testid="route-map">
+    <div style={{ height, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }} data-testid="route-map">
       <MapContainer center={center} zoom={10} style={{ height: "100%", width: "100%", background: "#0d1116" }}>
         <TileLayer
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"

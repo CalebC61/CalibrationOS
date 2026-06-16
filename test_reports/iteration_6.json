@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 6 — Field PWA + auto-charge on completion. Backend pytest 5/5 PASS (send-eta happy path, send-eta 400 no-phone, send-eta 404, complete auto-charges pm_card_visa with charge_via=auto_capture/auto_off_session + persists charged_at/charge_payment_intent_id/charge_status, invoice still pushed). Frontend Playwright PASS: owner can reach /field via nav-field link; CAL OS FIELD header + ← Admin button + Today's Route + Leaflet route-map + chronological field-card-<id> list; per-card drive/eta/complete buttons; Drive opens Google Maps popup AND sets job to DRIVING; ETA shows field-flash banner 'ETA sent — ~N min'; Done opens complete-sheet (PASS/FAIL + notes + ✓ Complete & Charge $XXX.XX); submitting completion flashes 'Complete · charged $125.00 · Xero XERO-...' and the card transforms to green-tinted COMPLETE with '✓ Charged · VISA ****4242' and no action buttons. INS/CASH badges visible.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6_field_pwa.py",
+    "/app/test_reports/pytest/iteration6_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py complete_job lines 1004-1067: auto-charge wrapped in broad try/except → completion NEVER blocks on charge failure. Card-decline path correctly persists last_charge_error/last_charge_attempt_at and DOES NOT set charged_at — verified by code path (CardError branch). Could not exercise live decline path because the only shop_user wired with a PM is Safelite — Gilbert with pm_card_visa and the user-supplied note explicitly advised against mutating that PM. The decline-path verification was confined to code review (lines 1059-1064).",
+    "server.py send_eta line 1085: arrival format uses Linux-only '%-I:%M %p' strftime token. On Windows this raises ValueError. Not blocking on Linux container deployments but worth noting for cross-platform CI.",
+    "Field.jsx submitCompletion lines 81-83 auto-promotes to on_site if job is still booked/driving before calling /complete — robust and matches backend expectation. Good defensive UX.",
+    "Field.jsx line 22 uses 30s polling — fine for MVP; consider websocket/SSE for multi-tech routes.",
+    "server.py is now 2504 lines — refactor into routers (field, jobs, billing, portal, public, owner) still overdue (was flagged in iteration 5 as well)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6_field_pwa.py",
+    "/app/test_reports/iteration_6.json",
+    "/app/test_reports/pytest/iteration6_results.xml"
+  ],
+  "success_rate": {"backend": "100% (5/5 pytest)", "frontend": "100% — owner login, nav-field link, /field shell (header, ← Admin, Today's Route, route-map, 5 cards), Drive popup→Google Maps + DRIVING badge, ETA flash, Complete sheet open + submit → 'charged $125.00 · Xero ...' flash + card transformed (COMPLETE + '✓ Charged · VISA ****4242', no buttons), INS · $300 / CASH badges visible"},
+  "test_credentials": "Owner caleb@thecalibrationcrew.us / Owner123! and portal user live-test-1781157576@thecalibrationcrew.us / TestPass123! both work. The portal user has pm_card_visa on file (last4=4242) which the auto-charge consumes — every completion test does a real Stripe capture in test mode.",
+  "seed_data_creation": "Backend tests created 4 fresh TEST_Field jobs against Safelite — Gilbert: 1 for send-eta happy path (no completion), 1 for send-eta no-phone (PATCH'd phone to null), and 2 for complete auto-charge. Frontend Done-flow consumed one more job for actual completion ($125 charged). Total new today's-route jobs after run: ~5.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run with: pytest /app/backend/tests/test_iteration6_field_pwa.py -v --tb=short. The portal user has only pm_card_visa attached; the card-decline path was NOT exercised at runtime per the user's explicit guidance to avoid PM swaps on the shared shop_user. If next iteration adds a second test shop_user with pm_card_chargeDeclined, add a TestCompleteChargeDeclined class that asserts: response 200, job.status='complete', charge.succeeded=False, charge.error contains 'declined', job.last_charge_error set, job.charged_at == None. /field is reachable by both contractor (default landing) and owner (via nav-field link); both rely on /jobs?date_str=YYYY-MM-DD which is contractor-scoped server-side. Map renders only when jobs.length > 0.",
+  "rca of the issue": "N/A — all tests pass. One test self-fix during run: send-eta-no-phone initially failed because /api/portal/book auto-fills notification_phone from shop.contact_phone (server.py:763). Resolved by PATCH /api/jobs/{id} {notification_phone: null} as owner before calling send-eta — matches a real owner workflow (delete a customer's contact before re-eta) and properly exercises the 400 branch."
+}
