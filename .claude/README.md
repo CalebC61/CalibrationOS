@@ -33,3 +33,33 @@ built-in commands like `/review` and `/run`. To switch to short names
 ```bash
 ~/.claude/skills/gstack/bin/gstack-config set skill_prefix false
 ```
+
+## awesome-claude-skills (curated set)
+
+[`hooks/install-awesome-skills.sh`](hooks/install-awesome-skills.sh) installs a
+curated subset of [ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills)
+and registers them as `acs-*` slash commands (e.g. `/acs-pdf`, `/acs-docx`,
+`/acs-content-research-writer`, `/acs-skill-creator`). It is wired up in
+[`settings.json`](settings.json) alongside the gstack hook.
+
+That upstream repo is a catalog of 800+ skills, but most are **Composio
+app-connectors** that each need a Composio API key. This hook installs only the
+**~28 general-purpose, key-free skills** (document handling, content/writing,
+file & invoice organizing, dev tooling like `mcp-builder`/`skill-creator`, media,
+etc.). The 832 Composio connectors are intentionally **not** installed, to keep
+the skill namespace clean and avoid skills that can't run without API setup.
+
+Source is sparse-checked-out into `~/.cache/awesome-claude-skills` (outside the
+skills dir) so the Composio connectors are never even downloaded. Each curated
+skill is copied to `~/.claude/skills/acs-<name>/` with its `name:` field patched
+to match. The hook is remote-only and idempotent (a skill already present is left
+as-is).
+
+### Runtime notes
+Registration always succeeds; these only matter when a skill actually runs:
+- `acs-webapp-testing` uses Playwright Chromium (`cdn.playwright.dev`, blocked by
+  this environment's egress policy unless allowlisted — same as gstack's browser
+  skills).
+- `acs-video-downloader`, `acs-slack-gif-creator`, `acs-image-enhancer`, and
+  `acs-canvas-design` need tools like `yt-dlp` / `ffmpeg` / Pillow, installed on
+  demand by the skill.
