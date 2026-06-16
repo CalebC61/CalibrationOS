@@ -16,12 +16,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 - **`.claude/` dev tooling** (web sessions only): SessionStart hooks that install the gstack and
   curated awesome-claude-skills packs. No effect on app runtime or Emergent hosting.
 
-### In progress
-- **Step 1 — Real Xero invoicing.** Replacing the mocked `mock_xero_create_invoice()` with a real
-  Xero OAuth 2.0 + REST API integration (contact lookup/create, ACCREC draft invoice with the
-  spec's two line items, PDF attachment, and DRAFT→AUTHORISED→PAID status sync), gated on
-  `XERO_CLIENT_ID`/`XERO_CLIENT_SECRET` with graceful fallback to the existing mock. *(Details will
-  be filled in here as the work lands.)*
+### Added — Step 1: real Xero invoicing (credential-optional)
+Real Xero OAuth 2.0 + REST API integration that mirrors the existing Stripe/Resend pattern: when
+Xero credentials are configured **and** the owner has connected, completed jobs create real **draft**
+invoices in Xero; otherwise the app falls back to the existing mock so nothing breaks without creds.
+Implemented with the already-present `requests` library wrapped in `asyncio.to_thread` (no new
+dependency), matching the existing Resend code.
+
+- **New module `backend/xero_invoice.py`** — stdlib-only, unit-testable builder for the spec's exact
+  invoice payload (Line 1 = calibration label @ rate; Line 2 = `LASTNAME / YEAR MAKE MODEL / VIN` @
+  $0.00; ACCREC, DRAFT, due +30 days). Shared by both the real and mock paths so they're identical.
+- **New endpoints** (`backend/server.py`, all under `/api`):
+  - `GET /auth/xero/connect` — returns the Xero authorize URL (owner only; signed-JWT `state`).
+  - `GET /auth/xero/callback` — exchanges the code, fetches the tenant via `/connections`, stores
+    tokens on the owner record, redirects to `/settings?xero=connected|error`.
+  - `POST /auth/xero/disconnect` — clears stored Xero tokens.
+  - `GET /integrations/status` — per-integration configured/connected/mode (backs the Settings UI).
+  - `POST /integrations/xero/poll` — polls Xero and syncs invoice status DRAFT→AUTHORISED→PAID onto
+    jobs (spec's ~4-hour poll; call on a schedule or from the dashboard).
+- **Token handling** — access/refresh tokens + expiry + tenant id + org name stored on the owner
+  `technicians` record; auto-refresh before calls, persisting Xero's rotated refresh token.
+- **Invoice creation** — `create_invoice_for_job()` dispatcher: real Contact lookup/create, ACCREC
+  draft invoice, and **PDF attachment** of the technician's uploaded calibration document when present.
+  Real invoices are also stored in a new `xero_invoices` collection; `GET /invoices` now merges real +
+  mock.
+- **Admin notification** — the invoice-created notice to `ADMIN_EMAIL` now goes through `send_email`
+  (real via Resend if configured, else logged), instead of a bare DB insert.
+- **Seed change** — the owner record now starts with `xero_connected: false` and empty token fields
+  (real connection happens via OAuth). `mock_xero_create_invoice` now reuses the shared payload
+  helpers and tags invoices `provider: "mock"`.
+- **Frontend** — Settings → Integrations now shows live Xero status with **Connect Xero / Disconnect**
+  buttons and a success/error banner after the OAuth redirect.
+- **Tests** — `backend/tests/test_xero_invoice.py` (pure, runs anywhere) asserts the spec-exact
+  invoice format, account-code configurability, and VIN/last-name fallbacks.
+
+**New environment variables** (set in Emergent env settings; never commit): `XERO_CLIENT_ID`,
+`XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, and optional `XERO_SALES_ACCOUNT_CODE` (default `200`),
+`XERO_POST_CONNECT_REDIRECT` (default `/settings`). The Xero app's redirect URI must equal
+`XERO_REDIRECT_URI` and point at `<app-domain>/api/auth/xero/callback`.
+
+### Still mocked / not yet done
+- Twilio SMS, Google Maps (geocoding + Distance Matrix), Google Calendar, and cloud document storage
+  remain mocked/deferred — these are later steps.
 
 ---
 

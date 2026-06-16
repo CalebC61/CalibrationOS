@@ -101,3 +101,82 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first."
+
+backend:
+  - task: "Xero OAuth 2.0 connect/callback/disconnect"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Added GET /api/auth/xero/connect (returns authorize URL, signed-JWT state), GET /api/auth/xero/callback (code exchange + /connections tenant + token storage, redirects to /settings?xero=connected|error), POST /api/auth/xero/disconnect. Needs live testing against Xero Demo Company once XERO_CLIENT_ID/SECRET/REDIRECT_URI are set."
+  - task: "Real Xero draft invoice on job completion (+ PDF attachment) with mock fallback"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py, backend/xero_invoice.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "create_invoice_for_job() uses real Xero when configured+connected else mock. Contact lookup/create, ACCREC DRAFT invoice (spec 2-line format via xero_invoice.py), attaches the uploaded calibration PDF. Pure payload builder unit-validated locally (format/account-code/VIN fallbacks). Live Xero call path needs testing with real creds."
+  - task: "Xero invoice status polling (DRAFT->AUTHORISED->PAID)"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "POST /api/integrations/xero/poll maps Xero statuses onto job.invoice_status. Needs live testing + a scheduled trigger (~4h)."
+  - task: "GET /api/integrations/status + merged /api/invoices (real+mock)"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Status endpoint reports configured/connected/mode per integration; /invoices now merges xero_invoices + mock_xero_invoices."
+
+frontend:
+  - task: "Settings → Integrations: Connect/Disconnect Xero + live status banner"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/Settings.jsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "IntegrationsTab loads /integrations/status, shows Connect Xero (configured) / Disconnect (connected) / Mock mode (unconfigured), and a success/error banner from ?xero= on OAuth return."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 0
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Real Xero draft invoice on job completion (+ PDF attachment) with mock fallback"
+    - "Xero OAuth 2.0 connect/callback/disconnect"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: "Step 1 (real Xero invoicing) implemented credential-optional via Claude Code. Without XERO_CLIENT_ID/SECRET/REDIRECT_URI the app still uses the mock, so existing tests should remain green. To test the real path: set the Xero env vars, connect against the Xero Demo Company from Settings → Integrations, complete a job, and confirm a DRAFT invoice with the spec's two line items + PDF attachment appears in Xero. The pure invoice-format unit tests live in backend/tests/test_xero_invoice.py."

@@ -23,14 +23,24 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 ## What changed in the latest Claude session
 See `CHANGELOG.md` → `[Unreleased]`. Summary:
 - Added the collaboration bridge docs (`CLAUDE.md`, `EMERGENT.md`, `CHANGELOG.md`).
-- Started **Step 1: real Xero invoicing** (status tracked in CHANGELOG).
+- Implemented **Step 1: real Xero invoicing** (credential-optional, mock fallback). New module
+  `backend/xero_invoice.py`; new endpoints under `/api/auth/xero/*` and `/api/integrations/*`;
+  real draft-invoice creation + PDF attachment on job completion; Settings → Integrations
+  Connect/Disconnect UI. No new Python dependency (uses `requests` + `asyncio.to_thread`).
 
 ## Environment variables (set in Emergent's env settings — never commit values)
 **Existing:** `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, `STRIPE_API_KEY`, `RESEND_API_KEY`,
 `SENDER_EMAIL`, `ADMIN_EMAIL`, `CORS_ORIGINS`, `REACT_APP_BACKEND_URL`.
-**Added for Step 1 (Xero):** `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`
-(per-technician OAuth tokens are stored in the DB, not in env). When these are absent, Xero falls
-back to the existing mock so the app keeps running.
+**Added for Step 1 (Xero):**
+- `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` — from your Xero developer app.
+- `XERO_REDIRECT_URI` — must exactly match the redirect URI registered in the Xero app, pointing at
+  `<app-domain>/api/auth/xero/callback`.
+- `XERO_SALES_ACCOUNT_CODE` *(optional, default `200`)* — sales account code for the line items.
+- `XERO_POST_CONNECT_REDIRECT` *(optional, default `/settings`)* — where the callback returns the user.
+
+Per-technician OAuth tokens (access/refresh/expiry/tenant) are stored in the DB on the owner record,
+not in env. When `XERO_CLIENT_ID/SECRET/REDIRECT_URI` are absent — or the owner hasn't connected —
+Xero gracefully falls back to the existing mock, so the app keeps running and existing tests stay green.
 
 ## Testing
 - Backend: `cd backend && pytest tests/ -v`.

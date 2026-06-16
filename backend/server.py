@@ -14,7 +14,8 @@ import secrets
 import random
 import math
 import base64
-from urllib.parse import quote
+import requests
+from urllib.parse import quote, urlencode
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Literal
@@ -37,6 +38,23 @@ RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
 if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
+
+# Xero (real-if-configured, else mock — mirrors the Stripe/Resend pattern)
+from xero_invoice import xero_invoice_body, line_two_description, due_date_string
+XERO_CLIENT_ID = os.environ.get('XERO_CLIENT_ID', '')
+XERO_CLIENT_SECRET = os.environ.get('XERO_CLIENT_SECRET', '')
+XERO_REDIRECT_URI = os.environ.get('XERO_REDIRECT_URI', '')
+XERO_SALES_ACCOUNT_CODE = os.environ.get('XERO_SALES_ACCOUNT_CODE', '200')
+XERO_POST_CONNECT_REDIRECT = os.environ.get('XERO_POST_CONNECT_REDIRECT', '/settings')
+XERO_SCOPES = "openid profile email accounting.transactions accounting.contacts offline_access"
+XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize"
+XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
+XERO_CONNECTIONS_URL = "https://api.xero.com/connections"
+XERO_API_BASE = "https://api.xero.com/api.xro/2.0"
+
+def xero_enabled() -> bool:
+    """True when Xero OAuth credentials are configured."""
+    return bool(XERO_CLIENT_ID and XERO_CLIENT_SECRET and XERO_REDIRECT_URI)
 
 app = FastAPI(title="CalibrationOS API")
 api = APIRouter(prefix="/api")
@@ -187,18 +205,17 @@ async def mock_send_sms(to: str, body: str, kind: str = "generic", job_id: Optio
 async def mock_xero_create_invoice(job: dict, shop: dict, vehicle: dict, pricing_label: str) -> dict:
     """Mock Xero invoice creation. Returns a fake invoice ID and stores the full payload."""
     invoice_id = f"XERO-{secrets.token_hex(6).upper()}"
-    vin_str = (vehicle.get("vin") or "VIN NOT PROVIDED").upper()
-    customer_last = (vehicle.get("customer_last_name") or "CUSTOMER").upper()
-    line2 = f"{customer_last} / {vehicle['year']} {vehicle['make'].upper()} {vehicle['model'].upper()} / {vin_str}"
+    line2 = line_two_description(vehicle)
     payload = {
         "invoice_id": invoice_id,
+        "provider": "mock",
         "type": "ACCREC",
         "status": "DRAFT",
         "contact_name": shop["name"],
-        "due_date": (now_utc() + timedelta(days=30)).date().isoformat(),
+        "due_date": due_date_string(now_utc()),
         "line_items": [
-            {"description": pricing_label, "quantity": 1, "unit_amount": float(job["price"]), "account_code": "200"},
-            {"description": line2, "quantity": 1, "unit_amount": 0.00, "account_code": "200"},
+            {"description": pricing_label, "quantity": 1, "unit_amount": float(job["price"]), "account_code": XERO_SALES_ACCOUNT_CODE},
+            {"description": line2, "quantity": 1, "unit_amount": 0.00, "account_code": XERO_SALES_ACCOUNT_CODE},
         ],
         "total": float(job["price"]),
         "created_at": iso(now_utc()),
@@ -207,6 +224,163 @@ async def mock_xero_create_invoice(job: dict, shop: dict, vehicle: dict, pricing
     await db.mock_xero_invoices.insert_one(payload.copy())
     logger.info(f"[MOCK XERO] Created draft invoice {invoice_id} for {shop['name']} — ${job['price']}")
     return payload
+
+# ---------- Xero real integration (used when xero_enabled() and the owner is connected) ----------
+def _xero_token_request(form: dict) -> dict:
+    """Exchange or refresh tokens at Xero's identity endpoint (Basic-auth client creds)."""
+    resp = requests.post(
+        XERO_TOKEN_URL, data=form, auth=(XERO_CLIENT_ID, XERO_CLIENT_SECRET),
+        headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def _xero_connections(access_token: str) -> list:
+    resp = requests.get(
+        XERO_CONNECTIONS_URL,
+        headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def _xero_headers(access_token: str, tenant_id: str, json_body: bool = True) -> dict:
+    h = {"Authorization": f"Bearer {access_token}", "Xero-tenant-id": tenant_id, "Accept": "application/json"}
+    if json_body:
+        h["Content-Type"] = "application/json"
+    return h
+
+def _xero_get_contact_id(access_token, tenant_id, name) -> Optional[str]:
+    safe = name.replace('"', '\\"')
+    resp = requests.get(f"{XERO_API_BASE}/Contacts", headers=_xero_headers(access_token, tenant_id),
+                        params={"where": f'Name=="{safe}"'}, timeout=30)
+    resp.raise_for_status()
+    contacts = resp.json().get("Contacts", [])
+    return contacts[0]["ContactID"] if contacts else None
+
+def _xero_create_contact(access_token, tenant_id, shop) -> str:
+    body = {"Contacts": [{
+        "Name": shop["name"],
+        "EmailAddress": shop.get("contact_email") or "",
+        "Phones": [{"PhoneType": "DEFAULT", "PhoneNumber": shop.get("contact_phone") or ""}],
+    }]}
+    resp = requests.post(f"{XERO_API_BASE}/Contacts", headers=_xero_headers(access_token, tenant_id), json=body, timeout=30)
+    resp.raise_for_status()
+    return resp.json()["Contacts"][0]["ContactID"]
+
+def _xero_post_invoice(access_token, tenant_id, invoice_body) -> dict:
+    resp = requests.post(f"{XERO_API_BASE}/Invoices", headers=_xero_headers(access_token, tenant_id),
+                         json={"Invoices": [invoice_body]}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()["Invoices"][0]
+
+def _xero_attach_pdf(access_token, tenant_id, invoice_id, filename, pdf_bytes) -> dict:
+    url = f"{XERO_API_BASE}/Invoices/{invoice_id}/Attachments/{quote(filename)}"
+    headers = {"Authorization": f"Bearer {access_token}", "Xero-tenant-id": tenant_id,
+               "Accept": "application/json", "Content-Type": "application/pdf"}
+    resp = requests.post(url, headers=headers, data=pdf_bytes, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+def _xero_get_invoice(access_token, tenant_id, invoice_id) -> Optional[dict]:
+    resp = requests.get(f"{XERO_API_BASE}/Invoices/{invoice_id}", headers=_xero_headers(access_token, tenant_id), timeout=30)
+    resp.raise_for_status()
+    invs = resp.json().get("Invoices", [])
+    return invs[0] if invs else None
+
+async def _xero_owner() -> Optional[dict]:
+    return await db.technicians.find_one({"role": "owner"})
+
+def _xero_token_expired(owner: dict) -> bool:
+    exp = owner.get("xero_token_expiry")
+    if not exp:
+        return True
+    try:
+        return datetime.fromisoformat(exp) <= now_utc() + timedelta(seconds=60)
+    except Exception:
+        return True
+
+async def _xero_store_tokens(owner_id, token, tenant_id=None, org_name=None):
+    """Persist tokens on the owner record. Xero rotates refresh tokens, so always store the new one."""
+    update = {
+        "xero_access_token": token.get("access_token"),
+        "xero_refresh_token": token.get("refresh_token"),
+        "xero_token_expiry": iso(now_utc() + timedelta(seconds=int(token.get("expires_in", 1800)))),
+        "xero_connected": True,
+        "updated_at": iso(now_utc()),
+    }
+    if tenant_id:
+        update["xero_tenant_id"] = tenant_id
+    if org_name is not None:
+        update["xero_org_name"] = org_name
+    await db.technicians.update_one({"id": owner_id}, {"$set": update})
+
+async def _xero_access_token(owner: dict) -> str:
+    """Return a valid access token, refreshing (and persisting the rotated refresh token) if expired."""
+    if _xero_token_expired(owner):
+        if not owner.get("xero_refresh_token"):
+            raise RuntimeError("Xero not connected (no refresh token)")
+        token = await asyncio.to_thread(_xero_token_request, {
+            "grant_type": "refresh_token", "refresh_token": owner["xero_refresh_token"],
+        })
+        await _xero_store_tokens(owner["id"], token)
+        return token["access_token"]
+    return owner["xero_access_token"]
+
+def xero_owner_connected(owner: Optional[dict]) -> bool:
+    return bool(owner and owner.get("xero_tenant_id") and (owner.get("xero_access_token") or owner.get("xero_refresh_token")))
+
+async def create_invoice_for_job(job, shop, vehicle, pricing_label, pdf_bytes=None, pdf_name=None) -> dict:
+    """Create an ACCREC draft invoice — real Xero when configured + connected, otherwise the mock.
+
+    Always returns a dict with at least: invoice_id, provider, status, total, line_items, job_id.
+    On any Xero error it falls back to the mock so job completion never fails on an invoicing hiccup.
+    """
+    if xero_enabled():
+        owner = await _xero_owner()
+        if xero_owner_connected(owner):
+            try:
+                access = await _xero_access_token(owner)
+                tenant = owner["xero_tenant_id"]
+                contact_id = await asyncio.to_thread(_xero_get_contact_id, access, tenant, shop["name"])
+                if not contact_id:
+                    contact_id = await asyncio.to_thread(_xero_create_contact, access, tenant, shop)
+                body = xero_invoice_body(contact_id, job["price"], pricing_label, vehicle,
+                                         XERO_SALES_ACCOUNT_CODE, now_utc())
+                inv = await asyncio.to_thread(_xero_post_invoice, access, tenant, body)
+                invoice_id = inv.get("InvoiceID")
+                attachment_added = False
+                if pdf_bytes and invoice_id:
+                    try:
+                        await asyncio.to_thread(_xero_attach_pdf, access, tenant, invoice_id,
+                                                pdf_name or "calibration.pdf", pdf_bytes)
+                        attachment_added = True
+                    except Exception as e:
+                        logger.error(f"[XERO] attachment failed for {invoice_id}: {e}")
+                due = inv.get("DueDateString") or inv.get("DueDate") or ""
+                result = {
+                    "invoice_id": invoice_id,
+                    "provider": "xero",
+                    "type": "ACCREC",
+                    "status": inv.get("Status", "DRAFT"),
+                    "contact_name": shop["name"],
+                    "due_date": (due[:10] if due else due_date_string(now_utc())),
+                    "line_items": [
+                        {"description": pricing_label, "quantity": 1, "unit_amount": float(job["price"]), "account_code": XERO_SALES_ACCOUNT_CODE},
+                        {"description": line_two_description(vehicle), "quantity": 1, "unit_amount": 0.00, "account_code": XERO_SALES_ACCOUNT_CODE},
+                    ],
+                    "total": float(inv.get("Total", job["price"])),
+                    "attachment_added": attachment_added,
+                    "invoice_number": inv.get("InvoiceNumber"),
+                    "created_at": iso(now_utc()),
+                    "job_id": job["id"],
+                }
+                await db.xero_invoices.insert_one(result.copy())
+                logger.info(f"[XERO] Created {inv.get('Status', 'DRAFT')} invoice {invoice_id} for {shop['name']} (attachment={attachment_added})")
+                return result
+            except Exception as e:
+                logger.error(f"[XERO] real invoice failed, falling back to mock: {e}")
+    return await mock_xero_create_invoice(job, shop, vehicle, pricing_label)
 
 # ---------- Constants ----------
 STANDARD_PRICING = {
@@ -782,9 +956,19 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
     }
     await db.documents.insert_one(doc.copy())
 
-    # Mock Xero invoice
+    # Create the invoice — real Xero draft if connected, else mock. Attach the
+    # technician's uploaded calibration PDF when one exists for this job.
     pricing_label = STANDARD_PRICING[job["calibration_type"]]["label"]
-    invoice = await mock_xero_create_invoice(job, shop, vehicle, pricing_label)
+    pdf_bytes = None
+    pdf_name = None
+    real_doc = await db.documents.find_one({"job_id": job_id, "data_b64": {"$exists": True}})
+    if real_doc and real_doc.get("data_b64"):
+        try:
+            pdf_bytes = base64.b64decode(real_doc["data_b64"])
+            pdf_name = real_doc.get("file_name") or file_name
+        except Exception:
+            pdf_bytes = None
+    invoice = await create_invoice_for_job(job, shop, vehicle, pricing_label, pdf_bytes=pdf_bytes, pdf_name=pdf_name)
 
     update = {
         "status": "complete",
@@ -803,14 +987,23 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
     if job.get("notification_phone"):
         await mock_send_sms(job["notification_phone"], msg, kind="completed", job_id=job_id)
 
-    # Admin email (mocked as log entry)
-    await db.admin_notifications.insert_one({
-        "id": gen_id(),
-        "subject": f"New Invoice Created — {shop['name']} — {job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}",
-        "body": f"Invoice {invoice['invoice_id']} created for {shop['name']} — ${job['price']}.",
-        "to": os.environ.get("ADMIN_EMAIL", "admin@thecalibrationcrew.us"),
-        "sent_at": iso(now_utc()),
-    })
+    # Notify admin (Maddy). Real email via Resend when configured, else logged for manual send.
+    provider = invoice.get("provider", "mock")
+    veh_str = f"{job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}"
+    admin_subject = f"New Invoice Created — {shop['name']} — {veh_str}"
+    admin_html = (
+        f"<p>A new <b>{invoice.get('status', 'DRAFT')}</b> invoice was created "
+        f"({'in Xero' if provider == 'xero' else 'in mock mode'}).</p>"
+        f"<ul><li>Invoice: {invoice.get('invoice_id')}</li>"
+        f"<li>Shop: {shop['name']}</li><li>Vehicle: {veh_str}</li>"
+        f"<li>Amount: ${job['price']}</li></ul>"
+        f"<p>Review and approve it in Xero.</p>"
+    )
+    await send_email(
+        os.environ.get("ADMIN_EMAIL", "admin@thecalibrationcrew.us"),
+        admin_subject, admin_html, kind="invoice_notification",
+        meta={"job_id": job_id, "invoice_id": invoice.get("invoice_id"), "provider": provider},
+    )
 
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     return {"job": fresh, "invoice": invoice, "document": doc}
@@ -995,8 +1188,125 @@ async def sms_log(limit: int = 50, tech=Depends(require_owner)):
 
 @api.get("/invoices")
 async def list_invoices(tech=Depends(require_owner)):
-    invs = await db.mock_xero_invoices.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return invs
+    real = await db.xero_invoices.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    mock = await db.mock_xero_invoices.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    invs = real + mock
+    invs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return invs[:200]
+
+# ---------- Xero OAuth connect / callback / disconnect + integration status & polling ----------
+def _xero_state_token(owner_id: str) -> str:
+    return jwt.encode(
+        {"sub": owner_id, "purpose": "xero_oauth",
+         "exp": datetime.now(timezone.utc) + timedelta(minutes=10)},
+        JWT_SECRET, algorithm=JWT_ALG,
+    )
+
+def _verify_xero_state(state: str) -> Optional[str]:
+    try:
+        p = jwt.decode(state, JWT_SECRET, algorithms=[JWT_ALG])
+        return p.get("sub") if p.get("purpose") == "xero_oauth" else None
+    except jwt.PyJWTError:
+        return None
+
+@api.get("/auth/xero/connect")
+async def xero_connect(tech=Depends(require_owner)):
+    """Return the Xero authorize URL for the owner to begin the OAuth flow."""
+    if not xero_enabled():
+        raise HTTPException(400, "Xero is not configured. Set XERO_CLIENT_ID, XERO_CLIENT_SECRET and XERO_REDIRECT_URI.")
+    params = {
+        "response_type": "code", "client_id": XERO_CLIENT_ID,
+        "redirect_uri": XERO_REDIRECT_URI, "scope": XERO_SCOPES,
+        "state": _xero_state_token(tech["id"]),
+    }
+    return {"authorize_url": f"{XERO_AUTH_URL}?{urlencode(params)}"}
+
+@api.get("/auth/xero/callback")
+async def xero_callback(code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
+    """OAuth redirect target. Exchanges the code, stores tokens + tenant, redirects back to the app."""
+    base = (XERO_POST_CONNECT_REDIRECT or "/settings").split("?")[0]
+
+    def _redirect(status_str):
+        return RedirectResponse(url=f"{base}?xero={status_str}", status_code=302)
+
+    if error or not code or not state:
+        return _redirect("error")
+    owner_id = _verify_xero_state(state)
+    if not owner_id:
+        return _redirect("error")
+    try:
+        token = await asyncio.to_thread(_xero_token_request, {
+            "grant_type": "authorization_code", "code": code, "redirect_uri": XERO_REDIRECT_URI,
+        })
+        conns = await asyncio.to_thread(_xero_connections, token["access_token"])
+        if not conns:
+            return _redirect("error")
+        await _xero_store_tokens(owner_id, token, tenant_id=conns[0]["tenantId"], org_name=conns[0].get("tenantName"))
+        logger.info(f"[XERO] Connected org '{conns[0].get('tenantName')}' for owner {owner_id}")
+        return _redirect("connected")
+    except Exception as e:
+        logger.error(f"[XERO] OAuth callback failed: {e}")
+        return _redirect("error")
+
+@api.post("/auth/xero/disconnect")
+async def xero_disconnect(tech=Depends(require_owner)):
+    await db.technicians.update_one({"id": tech["id"]}, {"$set": {
+        "xero_connected": False, "xero_access_token": None, "xero_refresh_token": None,
+        "xero_token_expiry": None, "xero_tenant_id": None, "xero_org_name": None,
+    }})
+    return {"ok": True}
+
+@api.get("/integrations/status")
+async def integrations_status(tech=Depends(require_owner)):
+    owner = await _xero_owner()
+    connected = xero_owner_connected(owner)
+    return {
+        "xero": {
+            "configured": xero_enabled(),
+            "connected": connected,
+            "org_name": (owner or {}).get("xero_org_name"),
+            "mode": "live" if connected else ("ready" if xero_enabled() else "mock"),
+        },
+        "google_maps": {"configured": False, "connected": False, "mode": "mock"},
+        "twilio": {"configured": False, "connected": False, "mode": "mock"},
+        "google_calendar": {"configured": False, "connected": False, "mode": "deferred"},
+    }
+
+_XERO_STATUS_MAP = {"DRAFT": "draft", "SUBMITTED": "sent", "AUTHORISED": "sent", "PAID": "paid", "VOIDED": "voided"}
+
+@api.post("/integrations/xero/poll")
+async def xero_poll(tech=Depends(require_owner)):
+    """Poll Xero for invoice status changes (DRAFT→AUTHORISED→PAID) and update jobs. Spec: every ~4h."""
+    if not xero_enabled():
+        return {"updated": 0, "detail": "Xero not configured"}
+    owner = await _xero_owner()
+    if not xero_owner_connected(owner):
+        return {"updated": 0, "detail": "Xero not connected"}
+    try:
+        access = await _xero_access_token(owner)
+    except Exception as e:
+        return {"updated": 0, "detail": f"token error: {e}"}
+    tenant = owner["xero_tenant_id"]
+    jobs = await db.jobs.find({"invoice_id": {"$nin": [None, ""]}},
+                              {"_id": 0, "id": 1, "invoice_id": 1, "invoice_status": 1}).to_list(500)
+    updated = 0
+    for j in jobs:
+        inv_id = j.get("invoice_id") or ""
+        if inv_id.startswith("XERO-"):  # mock invoice id — skip
+            continue
+        try:
+            inv = await asyncio.to_thread(_xero_get_invoice, access, tenant, inv_id)
+        except Exception as e:
+            logger.error(f"[XERO] poll failed for {inv_id}: {e}")
+            continue
+        if not inv:
+            continue
+        new_status = _XERO_STATUS_MAP.get(inv.get("Status", ""), j.get("invoice_status"))
+        if new_status and new_status != j.get("invoice_status"):
+            await db.jobs.update_one({"id": j["id"]}, {"$set": {"invoice_status": new_status, "updated_at": iso(now_utc())}})
+            await db.xero_invoices.update_one({"invoice_id": inv_id}, {"$set": {"status": inv.get("Status", "")}})
+            updated += 1
+    return {"updated": updated}
 
 # ---------- New-booking alerts ----------
 @api.get("/notifications/new-bookings")
@@ -1557,7 +1867,9 @@ async def seed_data():
             "home_lat": CALEB_HOME["lat"], "home_lng": CALEB_HOME["lng"],
             "is_active": True,
             "password_hash": hash_password("Owner123!"),
-            "xero_connected": True, "google_calendar_connected": True,  # mocked
+            "xero_connected": False, "xero_access_token": None, "xero_refresh_token": None,
+            "xero_token_expiry": None, "xero_tenant_id": None, "xero_org_name": None,
+            "google_calendar_connected": True,  # still mocked (out of scope for Step 1)
             "created_at": iso(now_utc()),
         }
         await db.technicians.insert_one(owner)
