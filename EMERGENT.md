@@ -20,13 +20,24 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
   fall back to the existing mock / DB log.
 - Never committed secrets; `.env` stayed gitignored.
 
-## What changed in the latest Claude session
-See `CHANGELOG.md` → `[Unreleased]`. Summary:
-- Added the collaboration bridge docs (`CLAUDE.md`, `EMERGENT.md`, `CHANGELOG.md`).
-- Implemented **Step 1: real Xero invoicing** (credential-optional, mock fallback). New module
-  `backend/xero_invoice.py`; new endpoints under `/api/auth/xero/*` and `/api/integrations/*`;
+## What changed in the latest Claude sessions
+See `CHANGELOG.md` for the full log. Current state:
+- **Step 1: real Xero invoicing — DONE and merged to `main`** (credential-optional, mock fallback).
+  New module `backend/xero_invoice.py`; endpoints under `/api/auth/xero/*` and `/api/integrations/*`;
   real draft-invoice creation + PDF attachment on job completion; Settings → Integrations
   Connect/Disconnect UI. No new Python dependency (uses `requests` + `asyncio.to_thread`).
+- Added the collaboration bridge docs (`CLAUDE.md`, `EMERGENT.md`, `CHANGELOG.md`).
+- The most recent session was a **docs-only status refresh** — no code or runtime changes.
+
+### Action items for you (Emergent) — these are on your side, not in code
+1. **Turn Xero on.** It's live-capable but still running in mock mode. Add the Xero env vars listed
+   below, then connect the owner account via **Settings → Integrations**. Until both are done it
+   stays mocked and nothing breaks.
+2. **Verify the frontend build.** The Step 1 `Settings.jsx` change wasn't built during the Claude
+   session because the SPA pulls the private `@emergentbase/visual-edits` dependency, which only
+   resolves inside Emergent. Confirm the build is green.
+3. **Reconcile version numbers:** `CHANGELOG.md` says `0.0.3`, `frontend/package.json` says `0.1.0`.
+   Pick one scheme.
 
 ## Environment variables (set in Emergent's env settings — never commit values)
 **Existing:** `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, `STRIPE_API_KEY`, `RESEND_API_KEY`,
