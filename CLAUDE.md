@@ -17,17 +17,29 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 3. **Update `CHANGELOG.md`** for every feature / collection / endpoint you add or change.
 4. **Never commit secrets.** `.env` files are gitignored and managed in Emergent's env settings.
 5. **Preserve Emergent artifacts:** the protected block in `test_result.md`, `.emergent/`, `memory/PRD.md`.
-6. **Active task: Step 1 — make Xero invoicing real** (OAuth + invoice + PDF attach + status poll), mirroring the existing "real-if-key-present, else mock" pattern.
+6. **Active task: Step 2 — make Twilio SMS real** (send + inbound contractor YES/NO webhook), mirroring the existing "real-if-key-present, else mock" pattern. _(Step 1 — real Xero invoicing — is **done and merged to `main`** via PR #1.)_
 
 ---
 
-## System status (as of 2026-06-16)
-- Bootstrapped and iterated (~4 iterations) by Emergent AI. It is a **functional demo**; the
-  core business logic is solid but most external integrations are mocked.
-- **Real integrations:** Stripe (card-capture/setup mode), Resend (degrades to a DB log if no key).
-- **Mocked:** Xero invoicing, Twilio SMS, Google Maps (geocoding + drive-time).
+## System status (as of 2026-07-03)
+- Bootstrapped and iterated (~4 iterations) by Emergent AI, then extended by Claude Code (Step 1).
+  Core business logic is solid; some external integrations are now real, the rest still mocked.
+- **Real integrations:** Stripe (card-capture/setup mode), Resend (degrades to a DB log if no key),
+  **Xero invoicing** (Step 1 — merged to `main` via PR #1 on 2026-06-16).
+- **Mocked:** Twilio SMS, Google Maps (geocoding + drive-time), cloud document storage (base64-in-Mongo).
 - **Missing:** Google Calendar sync (explicitly deferred).
-- **Now in progress:** Step 1 — real Xero invoicing.
+- **Next up:** Step 2 — real Twilio SMS.
+
+### Open action items from the last check-in (2026-07-03) — these live on Emergent's side, not in code
+- **Xero is live-capable but not yet live.** Set `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, and
+  `XERO_REDIRECT_URI` in Emergent's env settings (the redirect must point at
+  `<app-domain>/api/auth/xero/callback`), then connect the owner via **Settings → Integrations**.
+  Until both are done, Xero gracefully stays in mock mode. Full key list is in `EMERGENT.md`.
+- **Verify the frontend build on Emergent/Vercel.** The Step 1 `Settings.jsx` change was not built
+  during the Claude session — the SPA pulls the private `@emergentbase/visual-edits` dependency, so it
+  only builds inside Emergent.
+- **Version numbers are out of sync:** `CHANGELOG.md` is at `0.0.3` while `frontend/package.json` is at
+  `0.1.0`. Reconcile to a single scheme next time either file is touched.
 
 ## Architecture & tech stack (as-built — do NOT change without explicit approval)
 - **Backend:** FastAPI in a single module `backend/server.py`; MongoDB via Motor (async). All API

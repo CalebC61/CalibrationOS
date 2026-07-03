@@ -10,7 +10,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ## [Unreleased]
 
-_Nothing yet._
+### Docs
+- **Status check-in (2026-07-03):** refreshed `CLAUDE.md` to reflect that Step 1 (real Xero invoicing)
+  is done and merged to `main` (PR #1), moved the active task to Step 2 (real Twilio SMS), and recorded
+  the open action items on Emergent's side: (1) Xero is live-capable but not yet live — needs env vars +
+  owner connect; (2) verify the frontend build on Emergent/Vercel; (3) reconcile the version mismatch
+  between `CHANGELOG.md` (0.0.3) and `frontend/package.json` (0.1.0). No code or runtime changes.
 
 ## [0.0.3] — 2026-06-16 — Claude Code session (Step 1: real Xero invoicing)
 
