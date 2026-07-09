@@ -10,6 +10,7 @@ import ShopDetail from "@/pages/ShopDetail";
 import PublicShopStatus from "@/pages/PublicShopStatus";
 import Field from "@/pages/Field";
 import Invoices from "@/pages/Invoices";
+import Growth from "@/pages/growth/Growth";
 import Messages from "@/pages/Messages";
 import Settings from "@/pages/Settings";
 import Invites from "@/pages/Invites";
@@ -69,6 +70,7 @@ function App() {
           <Route path="/shops/:id" element={<Protected ownerOnly><ShopDetail /></Protected>} />
           <Route path="/invites" element={<Protected ownerOnly><Invites /></Protected>} />
           <Route path="/charges" element={<Protected ownerOnly><ChargeQueue /></Protected>} />
+          <Route path="/growth" element={<Protected ownerOnly><Growth /></Protected>} />
           <Route path="/invoices" element={<Protected ownerOnly><Invoices /></Protected>} />
           <Route path="/messages" element={<Protected ownerOnly><Messages /></Protected>} />
           <Route path="/settings" element={<Protected ownerOnly><Settings /></Protected>} />

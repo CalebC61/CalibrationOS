@@ -41,6 +41,9 @@ if RESEND_API_KEY:
 
 # Xero (real-if-configured, else mock — mirrors the Stripe/Resend pattern)
 from xero_invoice import xero_invoice_body, line_two_description, due_date_string
+# Module 9 — Partner Growth Engine (models only here; routes are wired conditionally near the
+# bottom of this file, only when GROWTH_MODULE_ENABLED, to avoid registering unused routes)
+from growth.models import PartnerContact, enforce_grid_caps
 XERO_CLIENT_ID = os.environ.get('XERO_CLIENT_ID', '')
 XERO_CLIENT_SECRET = os.environ.get('XERO_CLIENT_SECRET', '')
 XERO_REDIRECT_URI = os.environ.get('XERO_REDIRECT_URI', '')
@@ -55,6 +58,11 @@ XERO_API_BASE = "https://api.xero.com/api.xro/2.0"
 def xero_enabled() -> bool:
     """True when Xero OAuth credentials are configured."""
     return bool(XERO_CLIENT_ID and XERO_CLIENT_SECRET and XERO_REDIRECT_URI)
+
+# Module 9 — Partner Growth Engine (Power Connector 5+50+100 + Zeely-lite reels — reels deferred).
+# No external credentials required (dispatch reuses mock_send_sms/send_email below), so this is a
+# plain on/off switch rather than a credential-presence check like xero_enabled() above.
+GROWTH_MODULE_ENABLED = os.environ.get('GROWTH_MODULE_ENABLED', 'true').lower() == 'true'
 
 app = FastAPI(title="CalibrationOS API")
 api = APIRouter(prefix="/api")
@@ -1260,6 +1268,17 @@ async def xero_disconnect(tech=Depends(require_owner)):
 async def integrations_status(tech=Depends(require_owner)):
     owner = await _xero_owner()
     connected = xero_owner_connected(owner)
+    growth_status = {"enabled": False, "contact_count": 0, "counts_by_circle": {}}
+    if GROWTH_MODULE_ENABLED:
+        counts_by_circle = {}
+        for circle in ("top5", "key50", "vital100", "prospect"):
+            counts_by_circle[circle] = await db.partner_contacts.count_documents(
+                {"circle": circle, "is_active": True})
+        growth_status = {
+            "enabled": True,
+            "contact_count": sum(counts_by_circle.values()),
+            "counts_by_circle": counts_by_circle,
+        }
     return {
         "xero": {
             "configured": xero_enabled(),
@@ -1270,6 +1289,7 @@ async def integrations_status(tech=Depends(require_owner)):
         "google_maps": {"configured": False, "connected": False, "mode": "mock"},
         "twilio": {"configured": False, "connected": False, "mode": "mock"},
         "google_calendar": {"configured": False, "connected": False, "mode": "deferred"},
+        "growth": growth_status,
     }
 
 _XERO_STATUS_MAP = {"DRAFT": "draft", "SUBMITTED": "sent", "AUTHORISED": "sent", "PAID": "paid", "VOIDED": "voided"}
@@ -1924,12 +1944,47 @@ async def seed_data():
             await db.shops.insert_one(shop)
         logger.info(f"Seeded {len(demo_shops)} demo shops")
 
+    # Module 9 seed: partner_contacts grounded in the real demo shops + the owner — not the
+    # doc's aspirational 60-tech Phoenix list. key50/vital100 start empty; real partners get
+    # added via the Growth UI once live.
+    if GROWTH_MODULE_ENABLED:
+        if await db.partner_contacts.count_documents({}) == 0:
+            rank = 1
+            shops_for_seed = await db.shops.find({}, {"_id": 0}).to_list(10)
+            for s in shops_for_seed:
+                if not s.get("contact_name"):
+                    continue
+                contact = PartnerContact(
+                    shop_id=s["id"], first_name=s["contact_name"], last_name="(Shop Contact)",
+                    role="owner", company_name=s["name"], phone=s.get("contact_phone"),
+                    email=s.get("contact_email"), ecosystem="glass_shop",
+                    circle="top5", circle_rank=rank,
+                )
+                await db.partner_contacts.insert_one(contact.model_dump())
+                rank += 1
+            owner_tech = await db.technicians.find_one({"role": "owner"})
+            if owner_tech:
+                internal = PartnerContact(
+                    first_name=owner_tech["name"].split(" ")[0], last_name="(Owner)",
+                    role="internal", company_name="Calibration Crew", phone=owner_tech.get("phone"),
+                    email=owner_tech.get("email"), ecosystem="internal",
+                    circle="top5", circle_rank=rank,
+                )
+                await db.partner_contacts.insert_one(internal.model_dump())
+            logger.info("Seeded partner_contacts for Module 9 (Partner Growth Engine)")
+        await enforce_grid_caps(db)  # idempotent safety net, cheap to run every startup
+
 @app.on_event("startup")
 async def startup():
     await seed_data()
     await load_settings()
 
 # Include router
+if GROWTH_MODULE_ENABLED:
+    from growth.routes import build_growth_router
+    api.include_router(build_growth_router(
+        db=db, require_owner=require_owner, mock_send_sms=mock_send_sms, send_email=send_email,
+    ))
 app.include_router(api)
 
 app.add_middleware(

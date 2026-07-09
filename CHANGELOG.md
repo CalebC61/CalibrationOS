@@ -10,6 +10,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ## [Unreleased]
 
+### Added — Module 9: Partner Growth Engine v1 (2026-07-08)
+Power Connector 5+50+100 CRM + 3-D introductions, built out from the previously-inert scaffold.
+Flag now **defaults on** (`GROWTH_MODULE_ENABLED=true`, `REACT_APP_GROWTH_MODULE_ENABLED=true`).
+**Reels are explicitly deferred** — no video-generation capability exists in this environment, so
+`ReelAsset`/`POST /api/growth/reels/generate` are not implemented rather than shipped as a
+misleading stub.
+
+- **New module `backend/growth/routes.py`** — `build_growth_router(db, require_owner,
+  mock_send_sms, send_email)` factory (avoids a circular import with `server.py`), included
+  conditionally from `server.py` only when `GROWTH_MODULE_ENABLED` is true.
+- **New endpoints** (all under `/api/growth/*`, owner-only):
+  `GET/POST /contacts`, `PATCH /contacts/{id}` (circle changes cap-enforced, 409 on overflow),
+  `GET /grid`, `GET /nudges/today`, `GET /touches`, `POST /touches/{id}/approve|send`,
+  `GET/POST /intros`, `POST /intros/{id}/approve|send`.
+- **Real dispatch on send** — reuses the existing `mock_send_sms` (sms channel) and `send_email`
+  (email channel, Resend-if-configured else logged) helpers; no new outbound-comms code. Sending
+  updates the contact's `favors_given`/`favors_asked`/`last_touch_at`/`next_touch_due`.
+- **`backend/growth/models.py`** — implemented the previously-stubbed `enforce_grid_caps()`
+  (idempotent corrective sweep, demotes overflow one tier down) and `generate_daily_nudges()`
+  (deterministic, no LLM, idempotent per calendar day via a new `nudge_date` field on `Touch`).
+- **New collections:** `partner_contacts`, `touches`, `intros`, `ai_action_log` (a minimal audit
+  trail written on every approve/send — not dependent on Module 8 existing).
+- **Seed data** extended: `partner_contacts` seeded from the 3 real demo shops + the owner as
+  `top5` entries (not the doc's aspirational fake Phoenix contact list); `key50`/`vital100` start
+  empty.
+- **`GET /api/integrations/status`** gained a `growth` key (`enabled`, `contact_count`,
+  `counts_by_circle`).
+- **Frontend** — `frontend/src/pages/growth/Growth.jsx` rewritten from a static placeholder into a
+  real page: circle-grouped contact grid with an add-contact form, a Today's Nudges panel
+  (approve/send), and a 3-D intro creator/list. Routed at `/growth`, added to the owner nav
+  (`Shell.jsx`), and a status row added to Settings → Integrations. Still self-guards on
+  `REACT_APP_GROWTH_MODULE_ENABLED` so it can be flipped back to the old placeholder without a
+  redeploy.
+- **Tests** — `backend/tests/test_growth.py`: RBAC, contact CRUD, cap enforcement (409 then
+  succeeds after a demotion), nudge-generation idempotency, touch approve→send lifecycle
+  (send-before-approve rejected), intro approve→send (favor bump on both sides, email required on
+  both sides).
+
 ### Docs — context/priority sync (2026-07-08)
 Doc-only session per user request ("before we do any building... update so everything is current,
 all context is pushed and saved"). No runtime changes.

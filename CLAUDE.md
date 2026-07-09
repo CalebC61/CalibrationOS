@@ -17,11 +17,12 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 3. **Update `CHANGELOG.md`** for every feature / collection / endpoint you add or change.
 4. **Never commit secrets.** `.env` files are gitignored and managed in Emergent's env settings.
 5. **Preserve Emergent artifacts:** the protected block in `test_result.md`, `.emergent/`, `memory/PRD.md`.
-6. **Active task: Module 9 — Partner Growth Engine** (Power Connector 5+50+100 + Zeely-lite reels).
-   Scaffold is landed but feature-flagged **off** (`GROWTH_MODULE_ENABLED=false`) — see
-   `docs/module9/README.md`. Build-out is next, pending the user's go-ahead. _(Step 2 — real Twilio
-   SMS — is **on hold, not required for MVP**. Step 1 — real Xero invoicing — is **done and merged
-   to `main`** via PR #1, but see the QuickBooks note below before touching it again.)_
+6. **Active: Module 9 — Partner Growth Engine v1 is shipped** (Power Connector 5+50+100 +
+   3-D intros; reels deferred — see `docs/module9/README.md`). Flag defaults **on**
+   (`GROWTH_MODULE_ENABLED=true`). Next up after this: Module 8 design/approval, whatever the
+   user prioritizes. _(Step 2 — real Twilio SMS — is **on hold, not required for MVP**. Step 1 —
+   real Xero invoicing — is **done and merged to `main`** via PR #1, but see the QuickBooks note
+   below before touching it again.)_
 
 ---
 
@@ -44,11 +45,12 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   (`docs/module8/README.md`) — a Google ADK 2.0 / Gemini / Cloud Run / Postgres-Supabase agentic
   layer. This is a **significant stack deviation** from the as-built architecture below and needs
   its own explicit design/approval pass before implementation starts.
-- **Scaffolded, flagged off:** **Module 9 — Partner Growth Engine** (`docs/module9/README.md`,
-  `backend/growth/models.py`, `frontend/src/pages/growth/Growth.jsx`) — Judy Robinett Power
-  Connector CRM (Top 5 / Key 50 / Vital 100) + Zeely-style AI case-study reels generated from
-  completed jobs. Inert behind `GROWTH_MODULE_ENABLED=false`; not wired into `server.py` or routed
-  in the frontend yet. **User has flagged this as higher priority than Twilio/Module 8.**
+- **Shipped, flagged on:** **Module 9 — Partner Growth Engine v1** (`docs/module9/README.md`) —
+  Judy Robinett Power Connector CRM (Top 5 / Key 50 / Vital 100, cap-enforced), deterministic daily
+  nurture-touch nudges, touch/intro approve→send with real dispatch via the existing
+  `mock_send_sms`/`send_email` helpers, `/growth` owner nav page. `GROWTH_MODULE_ENABLED=true` by
+  default. **Reels are explicitly deferred** — no video-generation capability exists; the
+  `ReelAsset` model and `/api/growth/reels/generate` are not implemented.
 
 ### Open action items from the last check-in (2026-07-08) — these live on Emergent's side, not in code
 - **Xero is live-capable but not yet live**, and may be superseded by QuickBooks — see above before
@@ -83,12 +85,11 @@ Check there before starting work on either:
   second runtime/persistence layer (Google ADK 2.0 + Gemini on Cloud Run, PostgreSQL/Supabase).
   Requires an explicit approval + integration-contract pass before any scaffolding starts — see the
   doc's "Open questions" section.
-- **`docs/module9/README.md` — Partner Growth Engine.** Scaffolded and feature-flagged off
-  (`GROWTH_MODULE_ENABLED=false`): `backend/growth/models.py` (Pydantic models, matches
-  `server.py` conventions) and `frontend/src/pages/growth/Growth.jsx` (flagged placeholder page,
-  not yet routed). Nothing here is wired up or reachable at runtime — safe to build on
-  incrementally. Wiring it in means: add the `/api/growth/*` routes from the doc's API list,
-  register the frontend route, and flip `GROWTH_MODULE_ENABLED` only when the owner's ready.
+- **`docs/module9/README.md` — Partner Growth Engine.** v1 shipped and flagged **on**
+  (`GROWTH_MODULE_ENABLED=true` by default): `backend/growth/models.py` + `backend/growth/routes.py`
+  (contacts/grid/nudges/touches/intros, all real) and `frontend/src/pages/growth/Growth.jsx`
+  (routed at `/growth`, owner nav). Reels are deferred — see the doc's "Deferred" section before
+  picking that up.
 
 ## Emergent runtime rules (CRITICAL — breaking these breaks hosting)
 1. **`/api` prefix:** every backend route MUST live under `/api`. Emergent's ingress routes
