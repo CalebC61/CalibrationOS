@@ -25,8 +25,9 @@ export default function Shell({ children, hideNav }) {
                   { to: "/charges", label: "Charges" },
                   { to: "/invoices", label: "Invoices" },
                   { to: "/messages", label: "Messages" },
+                  process.env.REACT_APP_GROWTH_MODULE_ENABLED !== 'false' && { to: "/growth", label: "Growth" },
                   { to: "/settings", label: "Settings" },
-                ].map(l => (
+                ].filter(Boolean).map(l => (
                   <NavLink key={l.to} to={l.to}
                     data-testid={`nav-${l.label.toLowerCase()}`}
                     className={({ isActive }) => "tab-btn" + (isActive ? " active" : "")}

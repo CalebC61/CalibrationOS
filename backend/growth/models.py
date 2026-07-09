@@ -1,11 +1,13 @@
 # CalibrationOS – Module 9: Partner Growth Engine
 # Power Connector 5+50+100 + Zeely-lite Reels
 # FastAPI + Motor + Pydantic – matches backend/server.py
-# Feature-flagged: GROWTH_MODULE_ENABLED=false
+# Feature-flagged: GROWTH_MODULE_ENABLED (default true) – see backend/growth/routes.py
+# v1: contacts/grid/nudges/touches/intros are real. Reels (ReelAsset) are deferred — no video
+# generation capability exists yet; the model stays defined but unused/unrouted this pass.
 
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import uuid
 
 def gen_id() -> str: return str(uuid.uuid4())
@@ -64,6 +66,7 @@ class Touch(BaseModel):
     ai_action_log_id: Optional[str] = None
     external_message_id: Optional[str] = None
     error: Optional[str] = None
+    nudge_date: Optional[str] = None  # YYYY-MM-DD; set only on auto-generated touches, for idempotency
     created_at: str = Field(default_factory=lambda: iso(now_utc()))
 
 class Intro(BaseModel):
@@ -117,6 +120,113 @@ NURTURE_TEMPLATES = {
   "pc_radar_launch": {"channel":"sms","favor_delta":1,"body_template":"Heads up {first_name} – Calibration Crew front radar + BSM live Aug 1. Key partners: first cal free + on-site lunch & learn. Early access?"},
   "pc_checkin": {"channel":"sms","favor_delta":0,"body_template":"Hey {first_name} – pulse check. Glass volume? I have {open_bays} open bays {day}. Need a swing-by?"}
 }
-async def enforce_grid_caps(db): pass
-async def generate_daily_nudges(db, owner_id: str): pass
-# End Module 9 – merge into server.py – see docs/module9/README.md
+_DEMOTE_TO = {"top5": "key50", "key50": "vital100", "vital100": "prospect"}
+_WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _next_business_day_name() -> str:
+    """Next Mon-Sat day name (spec: shop is closed Sundays)."""
+    d = (now_utc() + timedelta(days=1)).date()
+    while d.weekday() == 6:
+        d += timedelta(days=1)
+    return _WEEKDAY_NAMES[d.weekday()]
+
+
+async def enforce_grid_caps(db):
+    """Idempotent corrective sweep: repairs any circle that exceeds GRID_CAPS (e.g. from a
+    direct DB edit or seed anomaly) by demoting the lowest-ranked overflow contacts one tier
+    down, then re-sequencing circle_rank within each tier. Safe to call repeatedly.
+    This is NOT the primary cap gate — routes.py rejects over-cap writes at request time so the
+    owner explicitly chooses who moves; this function only cleans up drift."""
+    for circle in ("top5", "key50", "vital100"):
+        cap = GRID_CAPS[circle]
+        docs = await db.partner_contacts.find(
+            {"circle": circle, "is_active": True}, {"_id": 0}
+        ).sort("circle_rank", 1).to_list(10000)
+        if len(docs) > cap:
+            keep, overflow = docs[:cap], docs[cap:]
+            for rank, d in enumerate(keep, start=1):
+                if d.get("circle_rank") != rank:
+                    await db.partner_contacts.update_one({"id": d["id"]}, {"$set": {"circle_rank": rank}})
+            target = _DEMOTE_TO[circle]
+            target_count = await db.partner_contacts.count_documents({"circle": target, "is_active": True})
+            for i, d in enumerate(overflow):
+                target_count += 1
+                await db.partner_contacts.update_one({"id": d["id"]}, {"$set": {
+                    "circle": target, "circle_rank": target_count, "updated_at": iso(now_utc()),
+                }})
+
+
+def _pick_template_key(contact: "PartnerContact", has_recent_job: bool, has_prior_golden_q: bool) -> str:
+    if contact.can_ask():
+        return "pc_ask"
+    if contact.favors_given == 0:
+        return "pc_favor_1_tsb" if has_recent_job else "pc_checkin"
+    if contact.favors_given == 1:
+        return "pc_favor_2_value" if has_recent_job else "pc_checkin"
+    if contact.favors_given >= 2 and not has_prior_golden_q:
+        return "pc_3_golden_q"
+    return "pc_checkin"
+
+
+async def generate_daily_nudges(db, owner_id: str) -> int:
+    """Deterministic daily nurture-touch generator (no LLM — 0 LLM deterministic enforcement per
+    docs/module9/README.md). Idempotent per calendar day via the nudge_date field: repeated calls
+    the same day produce zero new inserts for contacts already nudged. Returns count created."""
+    today_str = now_utc().date().isoformat()
+    already = set()
+    async for t in db.touches.find({"nudge_date": today_str}, {"_id": 0, "partner_contact_id": 1}):
+        already.add(t["partner_contact_id"])
+
+    contacts = await db.partner_contacts.find(
+        {"circle": {"$in": ["top5", "key50", "vital100"]}, "is_active": True}, {"_id": 0}
+    ).to_list(200)
+    day_name = _next_business_day_name()
+    created = 0
+
+    for doc in contacts:
+        if doc["id"] in already:
+            continue
+        contact = PartnerContact(**doc)
+        due = contact.last_touch_at is None
+        if not due:
+            last = datetime.fromisoformat(contact.last_touch_at)
+            due = (now_utc() - last).days >= contact.touch_cadence_days()
+        if not due:
+            continue
+
+        prior_golden_q = await db.touches.find_one(
+            {"partner_contact_id": contact.id, "template_key": "pc_3_golden_q"}, {"_id": 1})
+
+        recent_job = None
+        if contact.shop_id:
+            jobs = await db.jobs.find(
+                {"shop_id": contact.shop_id, "status": {"$ne": "cancelled"}}, {"_id": 0}
+            ).sort("scheduled_start", -1).limit(1).to_list(1)
+            recent_job = jobs[0] if jobs else None
+
+        key = _pick_template_key(contact, recent_job is not None, prior_golden_q is not None)
+        tmpl = NURTURE_TEMPLATES[key]
+        placeholders = {
+            "first_name": contact.first_name, "last_name": contact.last_name,
+            "day": day_name, "open_bays": 2,
+            "zone": (recent_job or {}).get("zone", "West/East"),
+            "make": (recent_job or {}).get("vehicle_make", "your"),
+            "model": (recent_job or {}).get("vehicle_model", "vehicle"),
+            "year": (recent_job or {}).get("vehicle_year", ""),
+            "cal_type": (recent_job or {}).get("calibration_label", "calibration"),
+        }
+        try:
+            body = tmpl["body_template"].format(**placeholders)
+        except KeyError:
+            continue  # template needs a placeholder we couldn't fill — skip this round
+
+        touch = Touch(
+            partner_contact_id=contact.id, channel=tmpl["channel"], template_key=key,
+            body=body, favor_delta=tmpl.get("favor_delta", 0), nudge_date=today_str,
+        )
+        await db.touches.insert_one(touch.model_dump())
+        created += 1
+
+    return created
+# End Module 9 – see backend/growth/routes.py for the API surface + docs/module9/README.md

@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first."
+user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first. Module 9 — build out the Partner Growth Engine (Power Connector 5+50+100 CRM + 3-D introductions) from its inert scaffold into a real, flagged-on v1; reels explicitly deferred (no video-generation capability available)."
 
 backend:
   - task: "Xero OAuth 2.0 connect/callback/disconnect"
@@ -149,6 +149,50 @@ backend:
         - working: "NA"
           agent: "main"
           comment: "Status endpoint reports configured/connected/mode per integration; /invoices now merges xero_invoices + mock_xero_invoices."
+  - task: "Module 9: Partner Growth contacts CRUD + 5/50/100 grid with cap enforcement"
+    implemented: true
+    working: "NA"
+    file: "backend/growth/routes.py, backend/growth/models.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "GET/POST /api/growth/contacts, PATCH /api/growth/contacts/{id}, GET /api/growth/grid. Circle changes are cap-enforced (409 when the target circle is already at GRID_CAPS[circle]; owner must explicitly demote someone first — no silent auto-demotion on write). enforce_grid_caps(db) is a separate idempotent corrective sweep run at startup. Covered by backend/tests/test_growth.py (RBAC, CRUD, cap enforcement)."
+  - task: "Module 9: deterministic daily nurture-touch nudges"
+    implemented: true
+    working: "NA"
+    file: "backend/growth/models.py, backend/growth/routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "GET /api/growth/nudges/today calls generate_daily_nudges() — no LLM, template picked deterministically from contact favor state, idempotent per calendar day via a new Touch.nudge_date field. Covered by backend/tests/test_growth.py (idempotency check: repeat call produces no duplicate touch for the same contact)."
+  - task: "Module 9: touch + intro approve->send with real dispatch (mock_send_sms / send_email reuse)"
+    implemented: true
+    working: "NA"
+    file: "backend/growth/routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "POST /api/growth/touches/{id}/approve|send and /api/growth/intros/{id}/approve|send. sms channel reuses mock_send_sms; email channel reuses send_email (Resend-if-configured, else logged) — no new outbound-comms integration. Sending updates the contact's favors_given/favors_asked/last_touch_at/next_touch_due. Every approve/send writes to a new ai_action_log collection. Covered by backend/tests/test_growth.py (send-before-approve rejected, touch lifecycle, intro lifecycle + favor bump, email-required-on-both-sides)."
+  - task: "Module 9: reels (ReelAsset, /api/growth/reels/generate) — explicitly deferred, not implemented"
+    implemented: false
+    working: "NA"
+    file: "backend/growth/models.py"
+    stuck_count: 0
+    priority: "low"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "No video-generation capability was available to build this, so it was left out of v1 rather than shipped as a misleading stub. ReelAsset model stays defined for whenever a video pipeline exists. See docs/module9/README.md 'Deferred' section."
 
 frontend:
   - task: "Settings → Integrations: Connect/Disconnect Xero + live status banner"
@@ -162,6 +206,17 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "IntegrationsTab loads /integrations/status, shows Connect Xero (configured) / Disconnect (connected) / Mock mode (unconfigured), and a success/error banner from ?xero= on OAuth return."
+  - task: "Module 9: Growth page (grid + nudges + intros), owner nav, Settings status row"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/growth/Growth.jsx, frontend/src/App.js, frontend/src/components/Shell.jsx, frontend/src/pages/Settings.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Growth.jsx rewritten from a static placeholder into a real page: circle-grouped contact grid + add-contact form, Today's Nudges panel with Approve/Send, a 3-D intro creator/list. Routed at /growth, added to Shell.jsx owner nav, and a Growth status row added to Settings → Integrations. Still self-guards on REACT_APP_GROWTH_MODULE_ENABLED so it degrades to the original placeholder card without a code change. Not yet visually verified in a browser — needs UI testing."
 
 metadata:
   created_by: "main_agent"
@@ -171,8 +226,10 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Real Xero draft invoice on job completion (+ PDF attachment) with mock fallback"
-    - "Xero OAuth 2.0 connect/callback/disconnect"
+    - "Module 9: Partner Growth contacts CRUD + 5/50/100 grid with cap enforcement"
+    - "Module 9: deterministic daily nurture-touch nudges"
+    - "Module 9: touch + intro approve->send with real dispatch (mock_send_sms / send_email reuse)"
+    - "Module 9: Growth page (grid + nudges + intros), owner nav, Settings status row"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -180,3 +237,5 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: "Step 1 (real Xero invoicing) implemented credential-optional via Claude Code. Without XERO_CLIENT_ID/SECRET/REDIRECT_URI the app still uses the mock, so existing tests should remain green. To test the real path: set the Xero env vars, connect against the Xero Demo Company from Settings → Integrations, complete a job, and confirm a DRAFT invoice with the spec's two line items + PDF attachment appears in Xero. The pure invoice-format unit tests live in backend/tests/test_xero_invoice.py."
+    - agent: "main"
+      message: "Module 9 (Partner Growth Engine) built out from its inert scaffold into a real v1 via Claude Code: contacts CRUD + 5/50/100 grid with cap enforcement, deterministic daily nurture-touch nudges, touch/intro approve→send with real dispatch reusing the existing mock_send_sms/send_email helpers (no new secrets/integrations), and a real Growth page routed at /growth. GROWTH_MODULE_ENABLED now defaults true (was false). Reels (ReelAsset, /api/growth/reels/generate) are explicitly NOT implemented — no video-generation capability was available; see docs/module9/README.md 'Deferred' section. backend/tests/test_growth.py covers RBAC, contact CRUD, cap enforcement, nudge idempotency, and the touch/intro approve→send lifecycles — run it as part of `cd backend && pytest tests/ -v`. The frontend Growth page has not been visually verified in a browser (this environment can't run the CRA build — it depends on the private @emergentbase/visual-edits package per CLAUDE.md); please give it a UI pass once synced to Emergent."

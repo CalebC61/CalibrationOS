@@ -270,6 +270,20 @@ function IntegrationsTab() {
         </div>
       </div>
 
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+        <div>
+          <div style={{ fontWeight: 600 }}>Partner Growth Engine</div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            {!status ? "Loading…"
+              : status.growth?.enabled ? `Enabled — ${status.growth.contact_count} contact${status.growth.contact_count === 1 ? "" : "s"}`
+              : "Disabled — set GROWTH_MODULE_ENABLED=true"}
+          </div>
+        </div>
+        {status?.growth?.enabled && (
+          <a href="/growth" className="btn btn-ghost" data-testid="growth-open-link">Open Growth</a>
+        )}
+      </div>
+
       {others.map(i => (
         <div key={i.name} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
           <span style={{ fontWeight: 600 }}>{i.name}</span>
