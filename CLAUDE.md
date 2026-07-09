@@ -17,23 +17,44 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 3. **Update `CHANGELOG.md`** for every feature / collection / endpoint you add or change.
 4. **Never commit secrets.** `.env` files are gitignored and managed in Emergent's env settings.
 5. **Preserve Emergent artifacts:** the protected block in `test_result.md`, `.emergent/`, `memory/PRD.md`.
-6. **Active task: Step 2 — make Twilio SMS real** (send + inbound contractor YES/NO webhook), mirroring the existing "real-if-key-present, else mock" pattern. _(Step 1 — real Xero invoicing — is **done and merged to `main`** via PR #1.)_
+6. **Active task: Module 9 — Partner Growth Engine** (Power Connector 5+50+100 + Zeely-lite reels).
+   Scaffold is landed but feature-flagged **off** (`GROWTH_MODULE_ENABLED=false`) — see
+   `docs/module9/README.md`. Build-out is next, pending the user's go-ahead. _(Step 2 — real Twilio
+   SMS — is **on hold, not required for MVP**. Step 1 — real Xero invoicing — is **done and merged
+   to `main`** via PR #1, but see the QuickBooks note below before touching it again.)_
 
 ---
 
-## System status (as of 2026-07-03)
-- Bootstrapped and iterated (~4 iterations) by Emergent AI, then extended by Claude Code (Step 1).
-  Core business logic is solid; some external integrations are now real, the rest still mocked.
+## System status (as of 2026-07-08)
+- Bootstrapped and iterated (~4 iterations) by Emergent AI, then extended by Claude Code (Step 1,
+  and this docs-sync session). Core business logic is solid; some external integrations are real,
+  the rest still mocked.
 - **Real integrations:** Stripe (card-capture/setup mode), Resend (degrades to a DB log if no key),
-  **Xero invoicing** (Step 1 — merged to `main` via PR #1 on 2026-06-16).
+  **Xero invoicing** (Step 1 — merged to `main` via PR #1 on 2026-06-16). **Pending decision:** the
+  business just hired a CPA who exclusively uses **QuickBooks**, so Xero may be replaced by a real
+  QuickBooks integration. Nothing has changed in code yet — Xero stays live-capable/mock-fallback as
+  documented until a QuickBooks migration is explicitly scoped and approved. Don't start that
+  migration without a go-ahead; when it comes, mirror the same "real-if-configured, else mock"
+  pattern and keep the Xero code until the swap is verified end-to-end (don't delete it preemptively).
 - **Mocked:** Twilio SMS, Google Maps (geocoding + drive-time), cloud document storage (base64-in-Mongo).
 - **Missing:** Google Calendar sync (explicitly deferred).
-- **Next up:** Step 2 — real Twilio SMS.
+- **On hold:** Twilio SMS (Step 2) — deprioritized by the user, not needed for MVP. Don't pick this
+  up unless asked.
+- **Planned (design-only, no code yet):** **Module 8 — Agentic AI Assist Engine**
+  (`docs/module8/README.md`) — a Google ADK 2.0 / Gemini / Cloud Run / Postgres-Supabase agentic
+  layer. This is a **significant stack deviation** from the as-built architecture below and needs
+  its own explicit design/approval pass before implementation starts.
+- **Scaffolded, flagged off:** **Module 9 — Partner Growth Engine** (`docs/module9/README.md`,
+  `backend/growth/models.py`, `frontend/src/pages/growth/Growth.jsx`) — Judy Robinett Power
+  Connector CRM (Top 5 / Key 50 / Vital 100) + Zeely-style AI case-study reels generated from
+  completed jobs. Inert behind `GROWTH_MODULE_ENABLED=false`; not wired into `server.py` or routed
+  in the frontend yet. **User has flagged this as higher priority than Twilio/Module 8.**
 
-### Open action items from the last check-in (2026-07-03) — these live on Emergent's side, not in code
-- **Xero is live-capable but not yet live.** Set `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, and
-  `XERO_REDIRECT_URI` in Emergent's env settings (the redirect must point at
-  `<app-domain>/api/auth/xero/callback`), then connect the owner via **Settings → Integrations**.
+### Open action items from the last check-in (2026-07-08) — these live on Emergent's side, not in code
+- **Xero is live-capable but not yet live**, and may be superseded by QuickBooks — see above before
+  investing further setup time in Xero credentials. If Xero is kept: set `XERO_CLIENT_ID`,
+  `XERO_CLIENT_SECRET`, and `XERO_REDIRECT_URI` in Emergent's env settings (the redirect must point
+  at `<app-domain>/api/auth/xero/callback`), then connect the owner via **Settings → Integrations**.
   Until both are done, Xero gracefully stays in mock mode. Full key list is in `EMERGENT.md`.
 - **Verify the frontend build on Emergent/Vercel.** The Step 1 `Settings.jsx` change was not built
   during the Claude session — the SPA pulls the private `@emergentbase/visual-edits` dependency, so it
@@ -54,6 +75,20 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   `fastapi_react_mongo_shadcn_base_image_cloud_arm`; services managed by **supervisor**.
 - The original build spec (`memory/PRD.md` references it) asked for Supabase + Expo + Vite. The
   as-built stack deliberately deviates. **Build on the as-built stack** unless told otherwise.
+
+## Modules beyond the core platform
+Larger initiatives get their own doc under `docs/moduleN/` instead of living only in this file.
+Check there before starting work on either:
+- **`docs/module8/README.md` — Agentic AI Assist Engine.** Design-only, no code. Introduces a
+  second runtime/persistence layer (Google ADK 2.0 + Gemini on Cloud Run, PostgreSQL/Supabase).
+  Requires an explicit approval + integration-contract pass before any scaffolding starts — see the
+  doc's "Open questions" section.
+- **`docs/module9/README.md` — Partner Growth Engine.** Scaffolded and feature-flagged off
+  (`GROWTH_MODULE_ENABLED=false`): `backend/growth/models.py` (Pydantic models, matches
+  `server.py` conventions) and `frontend/src/pages/growth/Growth.jsx` (flagged placeholder page,
+  not yet routed). Nothing here is wired up or reachable at runtime — safe to build on
+  incrementally. Wiring it in means: add the `/api/growth/*` routes from the doc's API list,
+  register the frontend route, and flip `GROWTH_MODULE_ENABLED` only when the owner's ready.
 
 ## Emergent runtime rules (CRITICAL — breaking these breaks hosting)
 1. **`/api` prefix:** every backend route MUST live under `/api`. Emergent's ingress routes
@@ -84,8 +119,11 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 ## Guidelines for Claude
 1. **Build on existing patterns.** Backend integrations follow a "use the real provider if its API
    key is configured, otherwise fall back to a mock/DB log" pattern (see Stripe at
-   `backend/server.py` ~L35 and Resend ~L36). Wire Xero the same way so nothing breaks without creds.
-   Frontend pages live in `frontend/src/pages`; reuse `components/ui` primitives.
+   `backend/server.py` ~L35 and Resend ~L36, and Xero at ~L42). New accounting integrations
+   (QuickBooks, if it replaces Xero) should follow the same pattern. Frontend pages live in
+   `frontend/src/pages`; reuse `components/ui` primitives. Larger, riskier initiatives (Module 9)
+   additionally use an env-driven feature flag (`GROWTH_MODULE_ENABLED`) to ship inert scaffolding
+   ahead of the UI/routes being switched on — prefer this over a long-lived unmerged branch.
 2. **Additive, not destructive.** Don't refactor whole folders or rewrite working modules unless
    explicitly asked. Never delete Emergent-generated code without approval.
 3. **Update `CHANGELOG.md`** with every change (feature, collection/schema change, endpoint).
