@@ -13,10 +13,16 @@ Built and hosted on **Emergent AI** (FastAPI + MongoDB backend, React/CRACO fron
 - **[EMERGENT.md](EMERGENT.md)** — how Emergent AI resumes after a Claude Code session.
 - **[CHANGELOG.md](CHANGELOG.md)** — what changed, session by session (the reconciliation log).
 - **[memory/PRD.md](memory/PRD.md)** — product requirements and as-built notes.
+- **[docs/module8/README.md](docs/module8/README.md)** — Module 8: Agentic AI Assist Engine
+  (design-only, no code yet).
+- **[docs/module9/README.md](docs/module9/README.md)** — Module 9: Partner Growth Engine
+  (scaffolded, feature-flagged off).
 
 ## Layout
 - `backend/` — FastAPI app (`server.py`), MongoDB via Motor, tests in `backend/tests/`.
+- `backend/growth/` — Module 9 scaffold (Pydantic models), not yet wired into `server.py`.
 - `frontend/` — React 19 SPA (Create React App + CRACO, Tailwind, yarn).
+- `docs/moduleN/` — design docs / scaffolding notes for larger initiatives beyond the core platform.
 
 ## Run
 ```bash

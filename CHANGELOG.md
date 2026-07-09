@@ -10,6 +10,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ## [Unreleased]
 
+### Docs — context/priority sync (2026-07-08)
+Doc-only session per user request ("before we do any building... update so everything is current,
+all context is pushed and saved"). No runtime changes.
+
+- **Added `docs/module8/README.md`** — the Module 8 (Agentic AI Assist Engine) system-context
+  handoff doc, which existed only outside the repo until now. Design-only spec for a Google
+  ADK 2.0 / Gemini / Cloud Run / Postgres-Supabase agentic layer (VIN-triggered OEM setup
+  checklists, dual-invoicing + compliance audit workflow, long-running ticket lifecycles with HITL
+  gates). Flagged in `CLAUDE.md` as a significant stack deviation needing its own approval pass
+  before implementation.
+- **Landed the Module 9 (Partner Growth Engine) scaffold onto `main`**, previously stranded on the
+  unmerged `feature/module9-partner-growth` branch: `backend/growth/models.py` (`PartnerContact`,
+  `Touch`, `Intro`, `ReelAsset` Pydantic models + nurture templates for the Judy Robinett Power
+  Connector 5+50+100 method), `frontend/src/pages/growth/Growth.jsx` (flagged placeholder page),
+  `docs/module9/README.md`. Everything is inert behind `GROWTH_MODULE_ENABLED=false` — not imported
+  by `server.py`, not routed in the frontend. User has flagged this module as the next build
+  priority, ahead of Twilio/Module 8.
+- **Xero → QuickBooks:** recorded that the business's newly-hired CPA uses QuickBooks exclusively,
+  so the Xero integration may be replaced. No code changed; Xero remains exactly as shipped in Step 1
+  (live-capable, mock-fallback) until a migration is explicitly scoped and approved.
+- **Twilio SMS (Step 2) deprioritized:** the user confirmed it's not required for MVP. Removed it as
+  the "active task" in `CLAUDE.md`; it's on hold, not scheduled.
+- Updated `CLAUDE.md` and `EMERGENT.md` system-status/roadmap sections accordingly, and added a
+  "Modules beyond the core platform" pointer section to `CLAUDE.md` so future sessions check
+  `docs/moduleN/` before starting related work.
+
 ### Docs
 - **Status check-in (2026-07-03):** refreshed `CLAUDE.md` to reflect that Step 1 (real Xero invoicing)
   is done and merged to `main` (PR #1), moved the active task to Step 2 (real Twilio SMS), and recorded

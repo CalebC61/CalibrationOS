@@ -27,17 +27,30 @@ See `CHANGELOG.md` for the full log. Current state:
   real draft-invoice creation + PDF attachment on job completion; Settings → Integrations
   Connect/Disconnect UI. No new Python dependency (uses `requests` + `asyncio.to_thread`).
 - Added the collaboration bridge docs (`CLAUDE.md`, `EMERGENT.md`, `CHANGELOG.md`).
-- The most recent session was a **docs-only status refresh** — no code or runtime changes.
+- One session was a **docs-only status refresh** — no code or runtime changes.
+- **Latest session (2026-07-08): docs/context consolidation, no runtime changes.**
+  - Landed the previously-unmerged `feature/module9-partner-growth` scaffold onto `main`
+    (`backend/growth/models.py`, `frontend/src/pages/growth/Growth.jsx`, `docs/module9/README.md`).
+    It is **feature-flagged off** (`GROWTH_MODULE_ENABLED=false`) and not wired into `server.py` or
+    the frontend router — purely inert until someone builds on it.
+  - Captured a previously-unsaved architecture doc as `docs/module8/README.md` (Agentic AI Assist
+    Engine — Google ADK/Gemini/Cloud Run/Postgres). Design-only, no code.
+  - Flagged that the business's new CPA uses QuickBooks exclusively, so Xero may be replaced. No
+    code changed — Xero stays exactly as documented until a migration is scoped.
+  - Deprioritized Step 2 (real Twilio SMS) — not required for MVP, on hold indefinitely.
 
 ### Action items for you (Emergent) — these are on your side, not in code
-1. **Turn Xero on.** It's live-capable but still running in mock mode. Add the Xero env vars listed
-   below, then connect the owner account via **Settings → Integrations**. Until both are done it
-   stays mocked and nothing breaks.
+1. **Xero:** still live-capable but not yet live, and may be replaced by QuickBooks — hold off on
+   spending setup time here until that's decided. If you do turn it on: add the Xero env vars listed
+   below, then connect the owner account via **Settings → Integrations**.
 2. **Verify the frontend build.** The Step 1 `Settings.jsx` change wasn't built during the Claude
    session because the SPA pulls the private `@emergentbase/visual-edits` dependency, which only
-   resolves inside Emergent. Confirm the build is green.
+   resolves inside Emergent. Confirm the build is green. This also applies to the newly-landed
+   Module 9 scaffold's `frontend/src/pages/growth/Growth.jsx` (unrouted, but should still compile).
 3. **Reconcile version numbers:** `CHANGELOG.md` says `0.0.3`, `frontend/package.json` says `0.1.0`.
    Pick one scheme.
+4. **No action needed on Module 8/9 yet** — both are inert (design doc / feature-flagged-off
+   scaffold respectively). Nothing to configure in Emergent's env settings until build-out starts.
 
 ## Environment variables (set in Emergent's env settings — never commit values)
 **Existing:** `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, `STRIPE_API_KEY`, `RESEND_API_KEY`,
@@ -58,7 +71,15 @@ Xero gracefully falls back to the existing mock, so the app keeps running and ex
 - Before delegating to the testing agent, update `test_result.md`'s data section per the protocol
   block at the top of that file.
 
-## Roadmap (post Step 1)
-Real Twilio SMS (+ inbound contractor YES/NO webhook) → real Google Maps (geocoding + Distance Matrix
-with daily caching) → Google Calendar sync → migrate documents from base64-in-Mongo to real cloud
-storage → production hardening (rotate `JWT_SECRET`, lock down CORS, monitoring, backups).
+## Roadmap (post Step 1 — reprioritized 2026-07-08)
+1. **Module 9 — Partner Growth Engine** build-out (scaffold in `docs/module9/README.md`, currently
+   flagged off) — user's stated next priority.
+2. **Module 8 — Agentic AI Assist Engine** (`docs/module8/README.md`) — design/approval pass, then
+   build. Bigger lift: new runtime, new persistence layer.
+3. Possible **Xero → QuickBooks** migration, if/when scoped.
+4. Real Google Maps (geocoding + Distance Matrix with daily caching), Google Calendar sync, migrate
+   documents from base64-in-Mongo to real cloud storage, production hardening (rotate `JWT_SECRET`,
+   lock down CORS, monitoring, backups).
+
+**On hold, not scheduled:** real Twilio SMS (+ inbound contractor YES/NO webhook) — not required for
+MVP; revisit only if asked.
