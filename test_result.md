@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first. Module 9 — build out the Partner Growth Engine (Power Connector 5+50+100 CRM + 3-D introductions) from its inert scaffold into a real, flagged-on v1; reels explicitly deferred (no video-generation capability available)."
+user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first. Module 9 — build out the Partner Growth Engine (Power Connector 5+50+100 CRM + 3-D introductions) from its inert scaffold into a real, flagged-on v1; reels explicitly deferred (no video-generation capability available). Module 8 — a natural-language AI assistant built into the admin page that can DO anything on the admin surface by plain-English prompting, with reads answering instantly and every real action gated behind an owner confirmation; scoped to in-process Gemini (google-genai) rather than the original Cloud Run/ADK/Postgres concept."
 
 backend:
   - task: "Xero OAuth 2.0 connect/callback/disconnect"
@@ -193,6 +193,39 @@ backend:
         - working: "NA"
           agent: "main"
           comment: "No video-generation capability was available to build this, so it was left out of v1 rather than shipped as a misleading stub. ReelAsset model stays defined for whenever a video pipeline exists. See docs/module9/README.md 'Deferred' section."
+  - task: "Module 8: assist message turn + safe/risky tool tier gate"
+    implemented: true
+    working: true
+    file: "backend/assist/agent.py, backend/assist/tools.py, backend/assist/routes.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "POST /api/assist/message runs a hand-rolled Gemini (google-genai) tool-calling loop over 31 tools that wrap the app's own /api/* endpoints with the owner's JWT. GET-backed tools execute inline; the first POST/PUT/PATCH-backed tool call halts the turn and creates a pending action. Verified against REAL Gemini during the build session (NL read answered inline; NL price change correctly gated). Deterministic paths covered by backend/tests/test_assist.py (13 tests, all passing)."
+  - task: "Module 8: pending action confirm/cancel/expiry state machine + ai_action_log audit"
+    implemented: true
+    working: true
+    file: "backend/assist/routes.py, backend/assist/agent.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "POST /api/assist/actions/{id}/confirm executes the proposed tool for real (verified: pricing actually changed through the real endpoint, then restored); cancel discards; expired actions rejected with 410 and nothing mutates; double-confirm/double-cancel rejected with 400. Every propose/confirm/cancel/execute writes to the shared ai_action_log collection (Module 9's audit surface, as designed)."
+  - task: "Module 8: module gating (GOOGLE_API_KEY presence + ASSIST_MODULE_ENABLED kill switch)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Verified all three states: key set → 5 /api/assist routes registered + integrations/status.assist.mode=live; no key → 0 routes (404s); key set but ASSIST_MODULE_ENABLED=false → 0 routes."
 
 frontend:
   - task: "Settings → Integrations: Connect/Disconnect Xero + live status banner"
@@ -217,6 +250,17 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "Growth.jsx rewritten from a static placeholder into a real page: circle-grouped contact grid + add-contact form, Today's Nudges panel with Approve/Send, a 3-D intro creator/list. Routed at /growth, added to Shell.jsx owner nav, and a Growth status row added to Settings → Integrations. Still self-guards on REACT_APP_GROWTH_MODULE_ENABLED so it degrades to the original placeholder card without a code change. Not yet visually verified in a browser — needs UI testing."
+  - task: "Module 8: Assist chat widget (floating bubble, confirmation cards) + Settings status row"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/Assist.jsx, frontend/src/components/Shell.jsx, frontend/src/pages/Settings.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "New Assist.jsx floating chat widget mounted in Shell.jsx for the owner role only: launcher bubble → chat panel with suggestion chips, user/assistant messages, and confirmation cards (Confirm/Cancel wired to /api/assist/actions/{id}/confirm|cancel). Hides itself entirely when integrations/status reports assist disabled or REACT_APP_ASSIST_MODULE_ENABLED=false. Assist status row added to Settings → Integrations. Backend flows fully verified over HTTP; the widget itself has not been visually verified in a browser (CRA build only resolves inside Emergent) — needs UI testing."
 
 metadata:
   created_by: "main_agent"
@@ -226,10 +270,11 @@ metadata:
 
 test_plan:
   current_focus:
+    - "Module 8: Assist chat widget (floating bubble, confirmation cards) + Settings status row"
+    - "Module 9: Growth page (grid + nudges + intros), owner nav, Settings status row"
     - "Module 9: Partner Growth contacts CRUD + 5/50/100 grid with cap enforcement"
     - "Module 9: deterministic daily nurture-touch nudges"
     - "Module 9: touch + intro approve->send with real dispatch (mock_send_sms / send_email reuse)"
-    - "Module 9: Growth page (grid + nudges + intros), owner nav, Settings status row"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -239,3 +284,5 @@ agent_communication:
       message: "Step 1 (real Xero invoicing) implemented credential-optional via Claude Code. Without XERO_CLIENT_ID/SECRET/REDIRECT_URI the app still uses the mock, so existing tests should remain green. To test the real path: set the Xero env vars, connect against the Xero Demo Company from Settings → Integrations, complete a job, and confirm a DRAFT invoice with the spec's two line items + PDF attachment appears in Xero. The pure invoice-format unit tests live in backend/tests/test_xero_invoice.py."
     - agent: "main"
       message: "Module 9 (Partner Growth Engine) built out from its inert scaffold into a real v1 via Claude Code: contacts CRUD + 5/50/100 grid with cap enforcement, deterministic daily nurture-touch nudges, touch/intro approve→send with real dispatch reusing the existing mock_send_sms/send_email helpers (no new secrets/integrations), and a real Growth page routed at /growth. GROWTH_MODULE_ENABLED now defaults true (was false). Reels (ReelAsset, /api/growth/reels/generate) are explicitly NOT implemented — no video-generation capability was available; see docs/module9/README.md 'Deferred' section. backend/tests/test_growth.py covers RBAC, contact CRUD, cap enforcement, nudge idempotency, and the touch/intro approve→send lifecycles — run it as part of `cd backend && pytest tests/ -v`. The frontend Growth page has not been visually verified in a browser (this environment can't run the CRA build — it depends on the private @emergentbase/visual-edits package per CLAUDE.md); please give it a UI pass once synced to Emergent."
+    - agent: "main"
+      message: "Module 8 (Admin Assist Engine) v1 shipped via Claude Code: natural-language admin copilot at /api/assist/* + a floating chat widget in Shell.jsx. 31 tools wrap the app's own /api/* endpoints with the owner's JWT (no direct DB access). Safety: GET-backed tools answer inline; POST/PUT/PATCH-backed tools always stop at a pending-action confirmation card (5-min expiry) — nothing mutates until the owner confirms. All propose/confirm/cancel/execute events audit to ai_action_log. Backend verified end-to-end against REAL Gemini in the build session (read answered inline; 'bump the Tesla price to $240' correctly gated, executed on confirm, price then restored). Activation: set GOOGLE_API_KEY in env — without it the module is inert and everything else runs unchanged. To test: run backend/tests/test_assist.py (needs GOOGLE_API_KEY set to anything; tests use the deterministic /run escape hatch, never the live LLM). The frontend widget needs a browser UI pass on Emergent (CRA build constraint as with Module 9)."

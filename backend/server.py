@@ -64,6 +64,13 @@ def xero_enabled() -> bool:
 # plain on/off switch rather than a credential-presence check like xero_enabled() above.
 GROWTH_MODULE_ENABLED = os.environ.get('GROWTH_MODULE_ENABLED', 'true').lower() == 'true'
 
+# Module 8 — Admin Assist Engine (natural-language admin copilot, Gemini via google-genai).
+# Real-if-configured like Stripe/Resend/Xero: needs GOOGLE_API_KEY (Google AI Studio) to activate,
+# plus an explicit kill switch. Without the key the module is inert (routes not registered).
+GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
+ASSIST_MODULE_ENABLED = bool(GOOGLE_API_KEY) and \
+    os.environ.get('ASSIST_MODULE_ENABLED', 'true').lower() == 'true'
+
 app = FastAPI(title="CalibrationOS API")
 api = APIRouter(prefix="/api")
 
@@ -1290,6 +1297,12 @@ async def integrations_status(tech=Depends(require_owner)):
         "twilio": {"configured": False, "connected": False, "mode": "mock"},
         "google_calendar": {"configured": False, "connected": False, "mode": "deferred"},
         "growth": growth_status,
+        "assist": {
+            "configured": bool(GOOGLE_API_KEY),
+            "enabled": ASSIST_MODULE_ENABLED,
+            "mode": "live" if ASSIST_MODULE_ENABLED else
+                    ("disabled" if GOOGLE_API_KEY else "unconfigured"),
+        },
     }
 
 _XERO_STATUS_MAP = {"DRAFT": "draft", "SUBMITTED": "sent", "AUTHORISED": "sent", "PAID": "paid", "VOIDED": "voided"}
@@ -1985,6 +1998,10 @@ if GROWTH_MODULE_ENABLED:
     api.include_router(build_growth_router(
         db=db, require_owner=require_owner, mock_send_sms=mock_send_sms, send_email=send_email,
     ))
+if ASSIST_MODULE_ENABLED:
+    from assist.routes import build_assist_router
+    api.include_router(build_assist_router(db=db, require_owner=require_owner))
+    logger.info("[ASSIST] Module 8 Admin Assist Engine enabled (model via GOOGLE_API_KEY)")
 app.include_router(api)
 
 app.add_middleware(

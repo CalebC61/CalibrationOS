@@ -10,6 +10,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ## [Unreleased]
 
+### Added — Module 8: Admin Assist Engine v1 (2026-07-09)
+Natural-language admin copilot built into the owner dashboard. Chat widget on every owner page;
+reads answer instantly from live data, every real action (dispatch, cancel, reschedule, pricing,
+shop edits, growth touches/intros) stops at a confirmation card the owner must approve. Activates
+when `GOOGLE_API_KEY` (Google AI Studio) is set in env; inert otherwise.
+
+- **New package `backend/assist/`**:
+  - `tools.py` — 31 tools wrapping the app's own existing `/api/*` endpoints over localhost with
+    the owner's JWT (no direct DB access; a bad LLM call fails normal request validation). Tier =
+    HTTP verb: GET → safe (inline), POST/PUT/PATCH → risky (confirm-gated).
+  - `agent.py` — hand-rolled Gemini tool-calling loop (`google-genai`, `gemini-2.5-flash`,
+    FunctionDeclarations only so the SDK can never auto-execute; max 6 tool rounds). Includes a
+    deterministic `/run <tool> {json}` escape hatch used by tests and power users.
+  - `routes.py` — `POST /api/assist/message`, `POST /api/assist/actions/{id}/confirm|cancel`
+    (5-min expiry, configurable), `GET /api/assist/conversations/{id}`, `GET /api/assist/tools`.
+    All owner-only.
+- **Deliberately NOT google-adk:** every ADK release requires `fastapi>=0.115`; this app pins
+  `fastapi==0.110.1`. The plain `google-genai` SDK has no FastAPI dependency, so the existing
+  app's framework stays untouched.
+- **New collections:** `assist_conversations` (chat history), `assist_pending_actions`
+  (propose→confirm state). **Reused:** `ai_action_log` (Module 9's audit collection — Module 8
+  now writes `assist_propose|confirm|cancel|execute` rows to it, as originally intended).
+- **`GET /api/integrations/status`** gained an `assist` key (`configured`/`enabled`/`mode`).
+- **Frontend:** new `frontend/src/components/Assist.jsx` floating chat widget mounted in
+  `Shell.jsx` (owner role only) with confirmation cards; Assist status row in
+  Settings → Integrations. Self-guards on `REACT_APP_ASSIST_MODULE_ENABLED` and on the backend
+  status flag — renders nothing when the module is off.
+- **New deps:** `google-genai`, `httpx`. **New env:** `GOOGLE_API_KEY` (required to activate),
+  `ASSIST_MODULE_ENABLED`, `ASSIST_MODEL`, `ASSIST_PENDING_TTL_SECONDS`, `ASSIST_SELF_BASE_URL`,
+  `REACT_APP_ASSIST_MODULE_ENABLED`.
+- **Tests:** `backend/tests/test_assist.py` (13 deterministic tests — RBAC, tier gate,
+  propose→confirm→execute, propose→cancel, expiry, failure surfacing, persistence). Also
+  verified end-to-end against real Gemini: NL read answered inline, NL price change gated then
+  executed on confirm, expired action rejected with 410.
+- **Fixed a race condition** in the confirm/cancel pending-action handlers (`routes.py`): the
+  status check-then-update was non-atomic, so two near-simultaneous confirm/cancel calls on the
+  same action could both pass validation. Now claimed atomically via a single `find_one_and_update`
+  filtered on `status: "pending"`, so only the first caller wins and the second gets its expected
+  400. Re-verified with a full live run (disposable MongoDB container + real `uvicorn` server, not
+  mocks): `pytest tests/test_assist.py` 13/13 pass and `pytest tests/test_growth.py` 9/9 pass
+  (Module 9 unaffected).
+- **Deferred (documented in `docs/module8/README.md`, not silently dropped):** the original
+  Cloud Run/ADK/Vertex/Postgres architecture and the VIN-OEM checklist / scan-audit / multi-day
+  workflow concepts; Invoices/Charges/Messages/Invites tools are the named fast-follow.
+
 ### Added — Module 9: Partner Growth Engine v1 (2026-07-08)
 Power Connector 5+50+100 CRM + 3-D introductions, built out from the previously-inert scaffold.
 Flag now **defaults on** (`GROWTH_MODULE_ENABLED=true`, `REACT_APP_GROWTH_MODULE_ENABLED=true`).
