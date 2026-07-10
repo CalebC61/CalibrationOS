@@ -1,6 +1,7 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { getStoredAuth, setStoredAuth } from "../lib/api";
 import Brand from "./Brand";
+import Assist from "./Assist";
 
 export default function Shell({ children, hideNav }) {
   const auth = getStoredAuth();
@@ -45,6 +46,7 @@ export default function Shell({ children, hideNav }) {
         </header>
       )}
       <main className="container-app page-fade">{children}</main>
+      {auth?.role === "owner" && <Assist />}
     </div>
   );
 }

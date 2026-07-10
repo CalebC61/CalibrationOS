@@ -17,18 +17,19 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 3. **Update `CHANGELOG.md`** for every feature / collection / endpoint you add or change.
 4. **Never commit secrets.** `.env` files are gitignored and managed in Emergent's env settings.
 5. **Preserve Emergent artifacts:** the protected block in `test_result.md`, `.emergent/`, `memory/PRD.md`.
-6. **Active: Module 9 — Partner Growth Engine v1 is shipped** (Power Connector 5+50+100 +
-   3-D intros; reels deferred — see `docs/module9/README.md`). Flag defaults **on**
-   (`GROWTH_MODULE_ENABLED=true`). Next up after this: Module 8 design/approval, whatever the
-   user prioritizes. _(Step 2 — real Twilio SMS — is **on hold, not required for MVP**. Step 1 —
-   real Xero invoicing — is **done and merged to `main`** via PR #1, but see the QuickBooks note
-   below before touching it again.)_
+6. **Active: Modules 8 and 9 are both shipped.** Module 8 — Admin Assist Engine v1 (natural-
+   language admin copilot, Gemini via `google-genai`, confirm-gated actions — see
+   `docs/module8/README.md`; needs `GOOGLE_API_KEY` in Emergent env to go live). Module 9 —
+   Partner Growth Engine v1 (reels deferred — see `docs/module9/README.md`). No single "next
+   task" is queued — await the user's priority. _(Step 2 — real Twilio SMS — is **on hold, not
+   required for MVP**. Step 1 — real Xero invoicing — is **done and merged to `main`** via
+   PR #1, but see the QuickBooks note below before touching it again.)_
 
 ---
 
-## System status (as of 2026-07-08)
+## System status (as of 2026-07-09)
 - Bootstrapped and iterated (~4 iterations) by Emergent AI, then extended by Claude Code (Step 1,
-  and this docs-sync session). Core business logic is solid; some external integrations are real,
+  Module 9, Module 8). Core business logic is solid; some external integrations are real,
   the rest still mocked.
 - **Real integrations:** Stripe (card-capture/setup mode), Resend (degrades to a DB log if no key),
   **Xero invoicing** (Step 1 — merged to `main` via PR #1 on 2026-06-16). **Pending decision:** the
@@ -41,10 +42,14 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 - **Missing:** Google Calendar sync (explicitly deferred).
 - **On hold:** Twilio SMS (Step 2) — deprioritized by the user, not needed for MVP. Don't pick this
   up unless asked.
-- **Planned (design-only, no code yet):** **Module 8 — Agentic AI Assist Engine**
-  (`docs/module8/README.md`) — a Google ADK 2.0 / Gemini / Cloud Run / Postgres-Supabase agentic
-  layer. This is a **significant stack deviation** from the as-built architecture below and needs
-  its own explicit design/approval pass before implementation starts.
+- **Shipped, credential-gated:** **Module 8 — Admin Assist Engine v1** (`docs/module8/README.md`)
+  — natural-language admin copilot in a floating chat widget on every owner page. Reads answer
+  inline; every mutating action stops at a confirmation card (propose→confirm→execute, 5-min
+  expiry, all audited to `ai_action_log`). Runs in-process on the plain Gemini SDK
+  (`google-genai`) — **deliberately not google-adk**, whose `fastapi>=0.115` floor conflicts with
+  this app's `fastapi==0.110.1` pin. Inert until `GOOGLE_API_KEY` is set in Emergent's env. The
+  original bigger concept (Cloud Run/ADK/Vertex/Postgres, VIN-OEM/scan-audit workflows) is
+  documented in the module README as not-yet-scoped.
 - **Shipped, flagged on:** **Module 9 — Partner Growth Engine v1** (`docs/module9/README.md`) —
   Judy Robinett Power Connector CRM (Top 5 / Key 50 / Vital 100, cap-enforced), deterministic daily
   nurture-touch nudges, touch/intro approve→send with real dispatch via the existing
@@ -52,7 +57,10 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   default. **Reels are explicitly deferred** — no video-generation capability exists; the
   `ReelAsset` model and `/api/growth/reels/generate` are not implemented.
 
-### Open action items from the last check-in (2026-07-08) — these live on Emergent's side, not in code
+### Open action items from the last check-in (2026-07-09) — these live on Emergent's side, not in code
+- **Turn on the Assist copilot:** set `GOOGLE_API_KEY` (Google AI Studio key from ai.google.dev)
+  in Emergent's env settings. That's the only step — the module self-activates, and the chat
+  bubble appears on every owner page.
 - **Xero is live-capable but not yet live**, and may be superseded by QuickBooks — see above before
   investing further setup time in Xero credentials. If Xero is kept: set `XERO_CLIENT_ID`,
   `XERO_CLIENT_SECRET`, and `XERO_REDIRECT_URI` in Emergent's env settings (the redirect must point
@@ -81,10 +89,12 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 ## Modules beyond the core platform
 Larger initiatives get their own doc under `docs/moduleN/` instead of living only in this file.
 Check there before starting work on either:
-- **`docs/module8/README.md` — Agentic AI Assist Engine.** Design-only, no code. Introduces a
-  second runtime/persistence layer (Google ADK 2.0 + Gemini on Cloud Run, PostgreSQL/Supabase).
-  Requires an explicit approval + integration-contract pass before any scaffolding starts — see the
-  doc's "Open questions" section.
+- **`docs/module8/README.md` — Admin Assist Engine.** v1 shipped: `backend/assist/` (tools /
+  agent loop / routes under `/api/assist`), `frontend/src/components/Assist.jsx` chat widget in
+  `Shell.jsx`. Activates when `GOOGLE_API_KEY` is set. New admin capabilities should be added as
+  tools in `backend/assist/tools.py` (tier = HTTP verb of the endpoint wrapped). The original
+  larger concept (second runtime, ADK/Vertex, Postgres, VIN/OEM + scan-audit workflows) is
+  parked in the doc's final section — do not start it without explicit scoping.
 - **`docs/module9/README.md` — Partner Growth Engine.** v1 shipped and flagged **on**
   (`GROWTH_MODULE_ENABLED=true` by default): `backend/growth/models.py` + `backend/growth/routes.py`
   (contacts/grid/nudges/touches/intros, all real) and `frontend/src/pages/growth/Growth.jsx`

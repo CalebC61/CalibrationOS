@@ -35,6 +35,21 @@ See `CHANGELOG.md` for the full log. Current state:
   - Flagged that the business's new CPA uses QuickBooks exclusively, so Xero may be replaced. No
     code changed — Xero stays exactly as documented until a migration is scoped.
   - Deprioritized Step 2 (real Twilio SMS) — not required for MVP, on hold indefinitely.
+- **Session (2026-07-09): Module 8 — Admin Assist Engine v1 shipped.**
+  - Natural-language admin copilot: floating chat widget on every owner page
+    (`frontend/src/components/Assist.jsx`), backed by `backend/assist/` under `/api/assist/*`.
+  - Safety model: read tools execute inline; every mutating tool stops at a confirmation card
+    (propose → owner confirms → execute; 5-minute expiry; everything audited to `ai_action_log`).
+  - Built on the plain Gemini SDK (`google-genai`) — **not google-adk**, whose minimum
+    `fastapi>=0.115` conflicts with the app's pinned `fastapi==0.110.1`. Your FastAPI version is
+    untouched.
+  - New collections: `assist_conversations`, `assist_pending_actions`. New deps: `google-genai`,
+    `httpx` (added to `backend/requirements.txt`).
+  - Inert until `GOOGLE_API_KEY` is set (see env list below). Verified end-to-end against real
+    Gemini during the session; `backend/tests/test_assist.py` covers the deterministic paths.
+  - A late fix closed a race condition in the confirm/cancel handlers (atomic status claim via
+    `find_one_and_update`). Re-verified with a full live run — disposable MongoDB + real `uvicorn`
+    server, not mocks: `test_assist.py` 13/13 and `test_growth.py` 9/9 both pass.
 - **Session (2026-07-08b): Module 9 — Partner Growth Engine v1 shipped.**
   - New `backend/growth/routes.py` (`/api/growth/*`: contacts CRUD + cap enforcement, grid, daily
     nudge generation, touch/intro approve→send), wired into `server.py` behind
@@ -49,6 +64,10 @@ See `CHANGELOG.md` for the full log. Current state:
   - New tests: `backend/tests/test_growth.py`.
 
 ### Action items for you (Emergent) — these are on your side, not in code
+0. **Turn on the Assist copilot (Module 8):** set `GOOGLE_API_KEY` in Emergent's env settings
+   (Google AI Studio key from ai.google.dev — free tier exists; no GCP project needed). That's
+   the only step: the backend self-activates and the chat bubble appears on every owner page.
+   Also confirm the frontend build is green (new `Assist.jsx` component in `Shell.jsx`).
 1. **Xero:** still live-capable but not yet live, and may be replaced by QuickBooks — hold off on
    spending setup time here until that's decided. If you do turn it on: add the Xero env vars listed
    below, then connect the owner account via **Settings → Integrations**.
@@ -62,7 +81,11 @@ See `CHANGELOG.md` for the full log. Current state:
    helpers). If you want it off for any reason, set `GROWTH_MODULE_ENABLED=false` and
    `REACT_APP_GROWTH_MODULE_ENABLED=false` — the backend routes 404 and the frontend falls back to
    its placeholder card, no redeploy of app logic needed either way.
-5. **Module 8 is still design-only** — nothing to configure, no code exists yet.
+5. **Neither module's frontend has been visually verified yet.** Both `Assist.jsx` (Module 8) and
+   `Growth.jsx` (Module 9) were built and backend-tested outside Emergent — the CRA build depends
+   on the private `@emergentbase/visual-edits` package, which only resolves inside Emergent. Give
+   both a real browser pass (chat widget open/close, a full propose→confirm round-trip; the Growth
+   grid/nudges/intros panels) before calling either done.
 
 ## Environment variables (set in Emergent's env settings — never commit values)
 **Existing:** `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, `STRIPE_API_KEY`, `RESEND_API_KEY`,
@@ -84,20 +107,34 @@ Xero gracefully falls back to the existing mock, so the app keeps running and ex
 - `REACT_APP_GROWTH_MODULE_ENABLED` *(optional, default `true`)* — frontend counterpart; set to
   `false` to fall back to the inert placeholder card without a code change.
 
+**Added for Module 8 (Admin Assist Engine):**
+- `GOOGLE_API_KEY` *(required to activate)* — Google AI Studio key (ai.google.dev). The only new
+  secret; without it the module is fully inert (routes not registered, widget hidden).
+- `ASSIST_MODULE_ENABLED` *(optional, default `true`)* / `REACT_APP_ASSIST_MODULE_ENABLED`
+  *(optional, default on; set `false` to hide the widget)* — kill switches.
+- `ASSIST_MODEL` *(optional, default `gemini-2.5-flash`)* — Gemini model id.
+- `ASSIST_PENDING_TTL_SECONDS` *(optional, default `300`)* — how long a proposed action stays
+  confirmable.
+- `ASSIST_SELF_BASE_URL` *(optional, default `http://127.0.0.1:8001`)* — where the assistant's
+  tools reach the app's own API; the default matches the backend's port on your runtime, leave
+  it alone in production.
+
 ## Testing
 - Backend: `cd backend && pytest tests/ -v`.
 - Before delegating to the testing agent, update `test_result.md`'s data section per the protocol
   block at the top of that file.
 
-## Roadmap (reprioritized 2026-07-08)
+## Roadmap (updated 2026-07-09)
 1. ~~**Module 9 — Partner Growth Engine** build-out~~ — **v1 shipped 2026-07-08** (reels deferred).
-2. **Module 8 — Agentic AI Assist Engine** (`docs/module8/README.md`) — design/approval pass, then
-   build. Bigger lift: new runtime, new persistence layer.
+2. ~~**Module 8 — Admin Assist Engine**~~ — **v1 shipped 2026-07-09** (in-process copilot; the
+   original Cloud Run/ADK/Postgres concept is parked in `docs/module8/README.md`, not scoped).
 3. Possible **Xero → QuickBooks** migration, if/when scoped.
-4. Real Google Maps (geocoding + Distance Matrix with daily caching), Google Calendar sync, migrate
+4. Module 8 fast-follows: Invoices/Charges/Messages/Invites tools for the assistant; assistant in
+   the `/field` PWA.
+5. Real Google Maps (geocoding + Distance Matrix with daily caching), Google Calendar sync, migrate
    documents from base64-in-Mongo to real cloud storage, production hardening (rotate `JWT_SECRET`,
    lock down CORS, monitoring, backups).
-5. Module 9 reels (AI-generated case-study video) — needs a video-generation pipeline first; not
+6. Module 9 reels (AI-generated case-study video) — needs a video-generation pipeline first; not
    started.
 
 **On hold, not scheduled:** real Twilio SMS (+ inbound contractor YES/NO webhook) — not required for

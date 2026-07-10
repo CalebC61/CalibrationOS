@@ -284,6 +284,21 @@ function IntegrationsTab() {
         )}
       </div>
 
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border)" }} data-testid="assist-status-row">
+        <div>
+          <div style={{ fontWeight: 600 }}>Assist (AI copilot)</div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            {!status ? "Loading…"
+              : status.assist?.enabled ? "Live — chat bubble on every admin page; actions require your confirmation"
+              : status.assist?.configured ? "Disabled — set ASSIST_MODULE_ENABLED=true"
+              : "Not configured — set GOOGLE_API_KEY (Google AI Studio)"}
+          </div>
+        </div>
+        {status && !status.assist?.enabled && (
+          <span style={{ color: "var(--yellow)", fontSize: 13 }}>Off</span>
+        )}
+      </div>
+
       {others.map(i => (
         <div key={i.name} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
           <span style={{ fontWeight: 600 }}>{i.name}</span>
