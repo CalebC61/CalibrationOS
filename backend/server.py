@@ -41,6 +41,8 @@ if RESEND_API_KEY:
 
 # Xero (real-if-configured, else mock — mirrors the Stripe/Resend pattern)
 from xero_invoice import xero_invoice_body, line_two_description, due_date_string
+# Card charging (real-if-Stripe-configured — see /charge-queue/{job_id}/charge)
+from charging import cents, chargeable_reason, interpret_payment_intent, decline_message
 # Google Maps (real-if-configured, else mock — same pattern; see geocode_address()/get_drive_time())
 from google_maps import (
     GEOCODE_URL, DISTANCE_MATRIX_URL, GoogleMapsError,
@@ -638,6 +640,9 @@ class RescheduleIn(BaseModel):
     reason: Optional[str] = None
 
 class CancelIn(BaseModel):
+    reason: Optional[str] = None
+
+class SkipChargeIn(BaseModel):
     reason: Optional[str] = None
 
 class InviteCreateIn(BaseModel):
@@ -1974,6 +1979,97 @@ async def charge_queue(tech=Depends(require_owner)):
             "shop_user_email": u.get("email"),
         })
     return enriched
+
+@api.post("/charge-queue/{job_id}/charge")
+async def charge_job(job_id: str, tech=Depends(require_owner)):
+    """Charge a completed job's card on file — off-session, idempotent per job.
+
+    Falls back to a clear error (never a silent failure) when Stripe isn't configured, the shop
+    has no card on file, or the card is declined. Never fails a booking flow — this is an
+    owner-initiated action from the Charge Queue, not something automatic.
+    """
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    shop_user = await db.shop_users.find_one({"shop_id": job["shop_id"]}, {"_id": 0})
+    reason = chargeable_reason(job, shop_user)
+    if reason:
+        raise HTTPException(400, reason)
+    if not (stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent")):
+        raise HTTPException(400, "Stripe is not configured yet (set STRIPE_API_KEY).")
+
+    try:
+        pi = await asyncio.to_thread(
+            stripe_sdk.PaymentIntent.create,
+            amount=cents(job["price"]), currency="usd",
+            customer=shop_user["stripe_customer_id"],
+            payment_method=shop_user["stripe_payment_method_id"],
+            off_session=True, confirm=True,
+            description=(f"CalibrationOS — {job.get('calibration_label', 'ADAS Calibration')} — "
+                         f"{job.get('vehicle_year')} {job.get('vehicle_make')} {job.get('vehicle_model')}"),
+            receipt_email=shop_user.get("email"),
+            metadata={"job_id": job_id, "shop_id": job["shop_id"]},
+            # Stable per job so a double-click or a retried request can't double-charge — Stripe
+            # serializes/dedupes concurrent requests sharing an idempotency key on its own.
+            idempotency_key=f"charge-job-{job_id}",
+        )
+    except stripe_sdk.error.CardError as e:
+        # decline_code lives on the nested error object (e.error), not on the exception itself
+        decline_code = getattr(e.error, "decline_code", None) if e.error else None
+        msg = decline_message(e.code, decline_code)
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "charge_error": msg, "charge_error_at": iso(now_utc()),
+        }})
+        logger.warning(f"[CHARGE] job {job_id} declined: {msg}")
+        raise HTTPException(402, msg)
+    except stripe_sdk.error.StripeError as e:
+        msg = f"Stripe error: {getattr(e, 'user_message', None) or str(e)}"
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "charge_error": msg, "charge_error_at": iso(now_utc()),
+        }})
+        logger.error(f"[CHARGE] job {job_id} failed: {msg}")
+        raise HTTPException(502, msg)
+
+    result = interpret_payment_intent(pi)
+    if result["outcome"] != "succeeded":
+        msg = result.get("message", "Charge did not complete.")
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "charge_error": msg, "charge_error_at": iso(now_utc()),
+        }})
+        logger.warning(f"[CHARGE] job {job_id} not completed: {result}")
+        raise HTTPException(402, msg)
+
+    await db.jobs.update_one({"id": job_id}, {
+        "$set": {
+            "charged_at": iso(now_utc()),
+            "charge_method": "stripe",
+            "stripe_payment_intent_id": result["payment_intent_id"],
+            "charged_amount": job["price"],
+        },
+        "$unset": {"charge_error": "", "charge_error_at": ""},
+    })
+    logger.info(f"[CHARGE] job {job_id} charged {result['payment_intent_id']} for ${job['price']}")
+    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    return {"status": "charged", "job": fresh}
+
+@api.post("/charge-queue/{job_id}/skip")
+async def skip_charge(job_id: str, body: SkipChargeIn, tech=Depends(require_owner)):
+    """Mark a completed job as billed outside Stripe (e.g. invoiced manually) — leaves the queue."""
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("charged_at"):
+        raise HTTPException(400, "Job has already been charged or resolved.")
+    await db.jobs.update_one({"id": job_id}, {
+        "$set": {
+            "charged_at": iso(now_utc()),
+            "charge_method": "manual",
+            "skip_reason": body.reason,
+        },
+        "$unset": {"charge_error": "", "charge_error_at": ""},
+    })
+    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    return {"status": "skipped", "job": fresh}
 
 # ---------- Email log ----------
 @api.get("/email-log")
