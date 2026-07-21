@@ -57,6 +57,15 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   default. **Reels are explicitly deferred** — no video-generation capability exists; the
   `ReelAsset` model and `/api/growth/reels/generate` are not implemented.
 
+### Production hardening (2026-07-21) — required before launch, set on Emergent's side
+- The app now has a production mode. To go live: set `APP_ENV=production`, a strong random
+  `JWT_SECRET`, `OWNER_PASSWORD` (retires the old `Owner123!` default — rotates on restart), and
+  `CORS_ORIGINS` to the real domain. In production the backend **refuses to boot on the default
+  `JWT_SECRET`** and does not seed demo data. Full list + steps in `EMERGENT.md`. Behavior is
+  unchanged until `APP_ENV=production` is set, so tests and the preview deployment are unaffected.
+- Still-open launch blockers (code, next passes): live Stripe key + actual card-charging is not wired
+  (charge queue lists jobs but nothing bills the card); Google Maps drive-times are still mocked.
+
 ### Open action items from the last check-in (2026-07-09) — these live on Emergent's side, not in code
 - **Turn on the Assist copilot:** set `GOOGLE_API_KEY` (Google AI Studio key from ai.google.dev)
   in Emergent's env settings. That's the only step — the module self-activates, and the chat
