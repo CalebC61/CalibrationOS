@@ -90,6 +90,24 @@ See `CHANGELOG.md` for the full log. Current state:
 ## Environment variables (set in Emergent's env settings — never commit values)
 **Existing:** `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, `STRIPE_API_KEY`, `RESEND_API_KEY`,
 `SENDER_EMAIL`, `ADMIN_EMAIL`, `CORS_ORIGINS`, `REACT_APP_BACKEND_URL`.
+
+**Added for production hardening (2026-07-21) — set these before going live:**
+- `APP_ENV` — set to `production` to turn on the hardening checks. Leave unset/`development` for
+  local + Emergent preview (behaves exactly as before). **When `production`, the app refuses to boot
+  if `JWT_SECRET` is still the built-in dev default** — this is intentional (fail closed).
+- `JWT_SECRET` *(already existed; now enforced)* — a long random string. This signs login tokens; the
+  repo's default is public, so a real deployment MUST override it.
+- `OWNER_PASSWORD` — the owner login password. Set this and restart; on an existing DB the stored
+  owner password is rotated to match (this is how you retire the old `Owner123!` default).
+- `CONTRACTOR_PASSWORD` *(optional)* — same idea for the starter contractor account.
+- `OWNER_EMAIL` / `CONTRACTOR_EMAIL` *(optional, default to the existing seeded emails)*.
+- `SEED_DEMO_DATA` *(optional; default `true` in dev, `false` in production)* — whether to seed the
+  3 demo shops + demo partner contacts. Off in production so a real deployment starts clean.
+  *(Note: this only stops NEW demo data from seeding; any demo shops already in the live DB should be
+  deleted via the UI.)*
+- `CORS_ORIGINS` *(already existed; now checked)* — set to your real app domain(s), comma-separated,
+  instead of the `*` default.
+
 **Added for Step 1 (Xero):**
 - `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` — from your Xero developer app.
 - `XERO_REDIRECT_URI` — must exactly match the redirect URI registered in the Xero app, pointing at

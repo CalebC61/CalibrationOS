@@ -77,8 +77,34 @@ api = APIRouter(prefix="/api")
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
+# ---------- Security / deployment posture ----------
+# APP_ENV gates production hardening. It defaults to "development" so local runs and the test
+# suite (which log in with the seeded dev credentials) behave exactly as before. Set
+# APP_ENV=production in Emergent to enforce the checks in security_self_check().
+APP_ENV = os.environ.get("APP_ENV", "development").strip().lower()
+IS_PRODUCTION = APP_ENV in ("production", "prod")
+
+# Seed credentials are env-driven so no real password ships in the repo. When an env password
+# is set it is also the source of truth: security-hardened seed_data() rotates an already-seeded
+# account whose stored password no longer matches, so the historically-exposed default can be
+# fixed by setting OWNER_PASSWORD / CONTRACTOR_PASSWORD in Emergent and restarting.
+SEED_OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "caleb@thecalibrationcrew.us").strip()
+SEED_OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD", "")
+SEED_CONTRACTOR_EMAIL = os.environ.get("CONTRACTOR_EMAIL", "contractor@thecalibrationcrew.us").strip()
+SEED_CONTRACTOR_PASSWORD = os.environ.get("CONTRACTOR_PASSWORD", "")
+# Dev-only fallback passwords: used only outside production when no env password is given, so the
+# local dev flow and the existing test suite are unchanged.
+_DEV_OWNER_PASSWORD = "Owner123!"
+_DEV_CONTRACTOR_PASSWORD = "Contractor123!"
+
+# Demo shops / partner-contacts seed in development by default, never in production unless asked.
+SEED_DEMO_DATA = os.environ.get(
+    "SEED_DEMO_DATA", "false" if IS_PRODUCTION else "true"
+).strip().lower() == "true"
+
 # ---------- Auth helpers ----------
-JWT_SECRET = os.environ.get('JWT_SECRET', 'calibrationos-dev-secret-change-me')
+_DEV_JWT_SECRET = "calibrationos-dev-secret-change-me"
+JWT_SECRET = os.environ.get('JWT_SECRET', _DEV_JWT_SECRET)
 JWT_ALG = "HS256"
 JWT_EXP_HOURS = 24 * 7
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -1889,42 +1915,66 @@ async def email_log(tech=Depends(require_owner)):
 
 # ---------- Seed ----------
 async def seed_data():
-    # Owner
-    owner_email = "caleb@thecalibrationcrew.us"
+    # Owner — password comes from OWNER_PASSWORD (env). Outside production it falls back to a
+    # known dev default so local runs and tests are unchanged; in production it is required.
+    # The password is never written to the logs.
+    owner_email = SEED_OWNER_EMAIL
+    owner_pw = SEED_OWNER_PASSWORD or (None if IS_PRODUCTION else _DEV_OWNER_PASSWORD)
     existing = await db.technicians.find_one({"email": owner_email})
     if not existing:
-        owner = {
-            "id": gen_id(), "name": "Caleb (Owner)", "email": owner_email,
-            "phone": "+16025550101", "role": "owner",
-            "home_zone": "east", "home_address": "Gilbert, AZ",
-            "home_lat": CALEB_HOME["lat"], "home_lng": CALEB_HOME["lng"],
-            "is_active": True,
-            "password_hash": hash_password("Owner123!"),
-            "xero_connected": False, "xero_access_token": None, "xero_refresh_token": None,
-            "xero_token_expiry": None, "xero_tenant_id": None, "xero_org_name": None,
-            "google_calendar_connected": True,  # still mocked (out of scope for Step 1)
-            "created_at": iso(now_utc()),
-        }
-        await db.technicians.insert_one(owner)
-        logger.info(f"Seeded owner: {owner_email} / Owner123!")
-    contractor_email = "contractor@thecalibrationcrew.us"
+        if owner_pw is None:
+            logger.error(
+                "[SECURITY] OWNER_PASSWORD is not set and APP_ENV=production — the owner account "
+                "was NOT seeded. Set OWNER_PASSWORD in Emergent env and restart to create it."
+            )
+        else:
+            owner = {
+                "id": gen_id(), "name": "Caleb (Owner)", "email": owner_email,
+                "phone": "+16025550101", "role": "owner",
+                "home_zone": "east", "home_address": "Gilbert, AZ",
+                "home_lat": CALEB_HOME["lat"], "home_lng": CALEB_HOME["lng"],
+                "is_active": True,
+                "password_hash": hash_password(owner_pw),
+                "xero_connected": False, "xero_access_token": None, "xero_refresh_token": None,
+                "xero_token_expiry": None, "xero_tenant_id": None, "xero_org_name": None,
+                "google_calendar_connected": True,  # still mocked (out of scope for Step 1)
+                "created_at": iso(now_utc()),
+            }
+            await db.technicians.insert_one(owner)
+            logger.info(f"Seeded owner account: {owner_email}")
+    elif SEED_OWNER_PASSWORD and not verify_password(SEED_OWNER_PASSWORD, existing.get("password_hash", "")):
+        await db.technicians.update_one(
+            {"id": existing["id"]}, {"$set": {"password_hash": hash_password(SEED_OWNER_PASSWORD)}}
+        )
+        logger.warning(f"[SECURITY] Rotated owner password to match OWNER_PASSWORD env for {owner_email}.")
+
+    # Contractor — demo/starter account. Seeds with CONTRACTOR_PASSWORD when set (any env), or the
+    # dev default when demo data is enabled; skipped in production if neither applies.
+    contractor_email = SEED_CONTRACTOR_EMAIL
+    contractor_pw = SEED_CONTRACTOR_PASSWORD or (_DEV_CONTRACTOR_PASSWORD if SEED_DEMO_DATA else None)
     existing_c = await db.technicians.find_one({"email": contractor_email})
     if not existing_c:
-        contractor = {
-            "id": gen_id(), "name": "West-Side Contractor", "email": contractor_email,
-            "phone": "+16025550199", "role": "contractor",
-            "home_zone": "west", "home_address": "Goodyear, AZ",
-            "home_lat": 33.4353, "home_lng": -112.3576,
-            "is_active": True,
-            "password_hash": hash_password("Contractor123!"),
-            "created_at": iso(now_utc()),
-        }
-        await db.technicians.insert_one(contractor)
-        logger.info(f"Seeded contractor: {contractor_email} / Contractor123!")
+        if contractor_pw is not None:
+            contractor = {
+                "id": gen_id(), "name": "West-Side Contractor", "email": contractor_email,
+                "phone": "+16025550199", "role": "contractor",
+                "home_zone": "west", "home_address": "Goodyear, AZ",
+                "home_lat": 33.4353, "home_lng": -112.3576,
+                "is_active": True,
+                "password_hash": hash_password(contractor_pw),
+                "created_at": iso(now_utc()),
+            }
+            await db.technicians.insert_one(contractor)
+            logger.info(f"Seeded contractor account: {contractor_email}")
+    elif SEED_CONTRACTOR_PASSWORD and not verify_password(SEED_CONTRACTOR_PASSWORD, existing_c.get("password_hash", "")):
+        await db.technicians.update_one(
+            {"id": existing_c["id"]}, {"$set": {"password_hash": hash_password(SEED_CONTRACTOR_PASSWORD)}}
+        )
+        logger.warning(f"[SECURITY] Rotated contractor password to match CONTRACTOR_PASSWORD env for {contractor_email}.")
 
-    # Demo shops
+    # Demo shops (gated: on in dev, off in production unless SEED_DEMO_DATA=true)
     shop_count = await db.shops.count_documents({})
-    if shop_count == 0:
+    if SEED_DEMO_DATA and shop_count == 0:
         demo_shops = [
             {"name": "Safelite — Gilbert", "address": "1234 E Williams Field Rd, Gilbert, AZ",
              "contact_name": "Dana", "contact_phone": "+16025550102", "contact_email": "gilbert@safelite.demo"},
@@ -1987,8 +2037,36 @@ async def seed_data():
             logger.info("Seeded partner_contacts for Module 9 (Partner Growth Engine)")
         await enforce_grid_caps(db)  # idempotent safety net, cheap to run every startup
 
+def security_self_check():
+    """Log deployment security posture at startup; fail closed in production on an unsafe secret."""
+    warnings = []
+    if JWT_SECRET == _DEV_JWT_SECRET:
+        warnings.append("JWT_SECRET is the public dev default — set a strong random JWT_SECRET.")
+    if not (stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent")):
+        warnings.append("STRIPE_API_KEY is the placeholder — real card charges stay disabled until a live key is set.")
+    if os.environ.get("CORS_ORIGINS", "*").strip() == "*":
+        warnings.append("CORS_ORIGINS is '*' (any site) — set it to your app domain(s).")
+    if IS_PRODUCTION and not SEED_OWNER_PASSWORD:
+        warnings.append("OWNER_PASSWORD is not set — the owner login has no env-managed password.")
+
+    if not warnings:
+        logger.info("[SECURITY] Startup posture OK (env=%s).", APP_ENV)
+    else:
+        for w in warnings:
+            logger.warning("[SECURITY] %s", w)
+        # Refuse to expose a production deployment that is still signing tokens with the public
+        # dev secret — anyone reading the repo could forge a login. Only trips once APP_ENV is
+        # explicitly set to production, so development and CI are never affected.
+        if IS_PRODUCTION and JWT_SECRET == _DEV_JWT_SECRET:
+            raise RuntimeError(
+                "Refusing to start in production with the default JWT_SECRET. "
+                "Set JWT_SECRET (and OWNER_PASSWORD, CORS_ORIGINS) in the environment first."
+            )
+
+
 @app.on_event("startup")
 async def startup():
+    security_self_check()
     await seed_data()
     await load_settings()
 

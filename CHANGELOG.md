@@ -10,6 +10,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ## [Unreleased]
 
+### Security — Production hardening pass, part 1 (2026-07-21)
+First launch-blocker cleanup: get the app out of its "demo defaults" configuration so it's safe to
+expose to real shops. **Fully backward-compatible** — everything is gated on a new `APP_ENV` flag
+that defaults to `development`, so local runs, CI, and the current Emergent deployment behave exactly
+as before until `APP_ENV=production` is set. No route, schema, or data-model changes.
+
+- **Env-driven seed credentials (`backend/server.py`).** The owner/contractor accounts no longer ship
+  a hardcoded password. Owner password now comes from `OWNER_PASSWORD` (contractor from
+  `CONTRACTOR_PASSWORD`); outside production they fall back to the previous dev defaults so tests are
+  unchanged. **The seeded password is no longer written to the logs.**
+- **Password rotation on mismatch.** If `OWNER_PASSWORD` / `CONTRACTOR_PASSWORD` is set and an account
+  already exists with a different password, startup rotates the stored hash to match. This is how the
+  historically-exposed default gets fixed on the existing production DB: set the env var, restart.
+- **Demo data gated.** The three demo shops (and the demo-derived Module 9 partner contacts) seed only
+  when `SEED_DEMO_DATA=true`, which defaults on in development and **off in production** — so a real
+  deployment starts clean instead of pre-populated with Safelite/AutoGlassNow/Glass Doctor fakes.
+- **Startup security self-check (`security_self_check()`).** Logs a clear posture report and warns on
+  the public dev `JWT_SECRET`, the placeholder `STRIPE_API_KEY`, wildcard `CORS_ORIGINS`, and a
+  missing `OWNER_PASSWORD`. In production only, it **fails closed** (refuses to boot) if `JWT_SECRET`
+  is still the public dev default — so the app can't be launched signing tokens with a known secret.
+- **New env vars:** `APP_ENV`, `OWNER_PASSWORD`, `CONTRACTOR_PASSWORD`, `OWNER_EMAIL`,
+  `CONTRACTOR_EMAIL`, `SEED_DEMO_DATA`. Existing `JWT_SECRET`, `STRIPE_API_KEY`, `CORS_ORIGINS` are
+  now checked at startup. Full list + launch steps in `EMERGENT.md`.
+- **Not yet addressed (still open launch blockers):** live Stripe key + actual card-charging code is
+  still not wired (the charge queue lists jobs but nothing bills the card), and Google Maps drive-times
+  are still mocked. Tracked for the next passes.
+
 ### Added — Module 8: Admin Assist Engine v1 (2026-07-09)
 Natural-language admin copilot built into the owner dashboard. Chat widget on every owner page;
 reads answer instantly from live data, every real action (dispatch, cancel, reschedule, pricing,
