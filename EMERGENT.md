@@ -22,6 +22,17 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-07-21b): real Google Maps (geocoding + drive time) — credential-optional,
+  same real-if-key-present-else-mock pattern.** New module `backend/google_maps.py`; new
+  `geocode_address()`/`get_drive_time()` wrappers in `server.py` replace every mock call site;
+  drive times are daily-cached (new `drive_time_cache` collection, TTL-indexed) since the
+  shop-portal day map calls drive-time in a loop. `GET /api/integrations/status` and the Settings →
+  Integrations Google Maps row now reflect real status instead of a hardcoded "Mock" label. New env
+  var: `GOOGLE_MAPS_API_KEY`. This was the last of the three originally-mocked integrations that
+  were launch blockers — Twilio SMS remains on hold (not required for MVP, see below).
+- **Session (2026-07-21a): production hardening pass 1** (security — env-driven seed credentials,
+  demo data gated off in production, startup self-check that fails closed on the default
+  `JWT_SECRET` in production). Fully backward-compatible, gated on `APP_ENV`. See env vars below.
 - **Step 1: real Xero invoicing — DONE and merged to `main`** (credential-optional, mock fallback).
   New module `backend/xero_invoice.py`; endpoints under `/api/auth/xero/*` and `/api/integrations/*`;
   real draft-invoice creation + PDF attachment on job completion; Settings → Integrations
@@ -64,28 +75,39 @@ See `CHANGELOG.md` for the full log. Current state:
   - New tests: `backend/tests/test_growth.py`.
 
 ### Action items for you (Emergent) — these are on your side, not in code
-0. **Turn on the Assist copilot (Module 8):** set `GOOGLE_API_KEY` in Emergent's env settings
+0. **Turn on real Google Maps:** set `GOOGLE_MAPS_API_KEY` in Emergent's env settings (a Google
+   Cloud API key with the **Geocoding API** and **Distance Matrix API** enabled + billing on the
+   project — this is a paid API past its free tier, budget accordingly). That's the only step: the
+   backend self-activates (geocoding + drive times go real, daily-cached) and Settings →
+   Integrations reflects it. No key = mock exactly as before, nothing breaks either way. Also
+   confirm the frontend build is green — `Settings.jsx`'s Google Maps row changed again (now reads
+   live status instead of a hardcoded label).
+1. **Turn on the Assist copilot (Module 8):** set `GOOGLE_API_KEY` in Emergent's env settings
    (Google AI Studio key from ai.google.dev — free tier exists; no GCP project needed). That's
    the only step: the backend self-activates and the chat bubble appears on every owner page.
    Also confirm the frontend build is green (new `Assist.jsx` component in `Shell.jsx`).
-1. **Xero:** still live-capable but not yet live, and may be replaced by QuickBooks — hold off on
+2. **Xero:** still live-capable but not yet live, and may be replaced by QuickBooks — hold off on
    spending setup time here until that's decided. If you do turn it on: add the Xero env vars listed
    below, then connect the owner account via **Settings → Integrations**.
-2. **Verify the frontend build.** The Step 1 `Settings.jsx` change wasn't built during the Claude
+3. **Verify the frontend build.** The Step 1 `Settings.jsx` change wasn't built during the Claude
    session because the SPA pulls the private `@emergentbase/visual-edits` dependency, which only
    resolves inside Emergent. Confirm the build is green — this now matters more, since the Module 9
-   Growth page is live in the nav, not just an inert placeholder.
-3. **Reconcile version numbers:** `CHANGELOG.md` says `0.0.3`, `frontend/package.json` says `0.1.0`.
+   Growth page is live in the nav, not just an inert placeholder, and `Settings.jsx` has since
+   changed twice more (Module 8's Assist row, now the Google Maps row).
+4. **Reconcile version numbers:** `CHANGELOG.md` says `0.0.3`, `frontend/package.json` says `0.1.0`.
    Pick one scheme.
-4. **Module 9 is live** — no external credentials needed (dispatch reuses existing SMS/email
+5. **Module 9 is live** — no external credentials needed (dispatch reuses existing SMS/email
    helpers). If you want it off for any reason, set `GROWTH_MODULE_ENABLED=false` and
    `REACT_APP_GROWTH_MODULE_ENABLED=false` — the backend routes 404 and the frontend falls back to
    its placeholder card, no redeploy of app logic needed either way.
-5. **Neither module's frontend has been visually verified yet.** Both `Assist.jsx` (Module 8) and
-   `Growth.jsx` (Module 9) were built and backend-tested outside Emergent — the CRA build depends
-   on the private `@emergentbase/visual-edits` package, which only resolves inside Emergent. Give
-   both a real browser pass (chat widget open/close, a full propose→confirm round-trip; the Growth
-   grid/nudges/intros panels) before calling either done.
+6. **Neither Module 8 nor Module 9's frontend has been visually verified yet.** Both `Assist.jsx`
+   (Module 8) and `Growth.jsx` (Module 9) were built and backend-tested outside Emergent — the CRA
+   build depends on the private `@emergentbase/visual-edits` package, which only resolves inside
+   Emergent. Give both a real browser pass (chat widget open/close, a full propose→confirm
+   round-trip; the Growth grid/nudges/intros panels) before calling either done.
+7. **Production hardening (2026-07-21) is in place but off by default** — set `APP_ENV=production`
+   plus `JWT_SECRET`/`OWNER_PASSWORD`/`CORS_ORIGINS` when actually ready to launch. See the env var
+   list below. Nothing changes until `APP_ENV=production` is set.
 
 ## Environment variables (set in Emergent's env settings — never commit values)
 **Existing:** `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, `STRIPE_API_KEY`, `RESEND_API_KEY`,
@@ -107,6 +129,11 @@ See `CHANGELOG.md` for the full log. Current state:
   deleted via the UI.)*
 - `CORS_ORIGINS` *(already existed; now checked)* — set to your real app domain(s), comma-separated,
   instead of the `*` default.
+
+**Added for real Google Maps (2026-07-21):**
+- `GOOGLE_MAPS_API_KEY` — a Google Cloud API key with the **Geocoding API** and **Distance Matrix
+  API** enabled and billing active on the project. Without it, geocoding and drive-time stay on the
+  existing mock exactly as before — the app never fails to start or run over this.
 
 **Added for Step 1 (Xero):**
 - `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` — from your Xero developer app.

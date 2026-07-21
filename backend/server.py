@@ -41,6 +41,13 @@ if RESEND_API_KEY:
 
 # Xero (real-if-configured, else mock — mirrors the Stripe/Resend pattern)
 from xero_invoice import xero_invoice_body, line_two_description, due_date_string
+# Google Maps (real-if-configured, else mock — same pattern; see geocode_address()/get_drive_time())
+from google_maps import (
+    GEOCODE_URL, DISTANCE_MATRIX_URL, GoogleMapsError,
+    geocode_request_params, distance_matrix_request_params,
+    parse_geocode_response, parse_distance_matrix_response, drive_time_cache_key,
+    METRO_LAT_MIN, METRO_LAT_MAX, METRO_LNG_MIN, METRO_LNG_MAX,
+)
 # Module 9 — Partner Growth Engine (models only here; routes are wired conditionally near the
 # bottom of this file, only when GROWTH_MODULE_ENABLED, to avoid registering unused routes)
 from growth.models import PartnerContact, enforce_grid_caps
@@ -54,6 +61,11 @@ XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
 XERO_CONNECTIONS_URL = "https://api.xero.com/connections"
 XERO_API_BASE = "https://api.xero.com/api.xro/2.0"
+
+GOOGLE_MAPS_API_KEY = os.environ.get('GOOGLE_MAPS_API_KEY', '')
+
+def google_maps_enabled() -> bool:
+    return bool(GOOGLE_MAPS_API_KEY)
 
 def xero_enabled() -> bool:
     """True when Xero OAuth credentials are configured."""
@@ -212,7 +224,9 @@ def mock_geocode(address: str) -> dict:
     rng = random.Random(seed)
     lat = base[0] + rng.uniform(-0.04, 0.04)
     lng = base[1] + rng.uniform(-0.04, 0.04)
-    in_metro = 32.9 < lat < 33.9 and -112.9 < lng < -111.4
+    # Same bounding box the real geocoder uses (google_maps.py), so mock and live agree on
+    # which addresses are in the service area.
+    in_metro = METRO_LAT_MIN < lat < METRO_LAT_MAX and METRO_LNG_MIN < lng < METRO_LNG_MAX
     return {"lat": round(lat, 6), "lng": round(lng, 6), "formatted_address": address, "in_metro": in_metro}
 
 def detect_zone(lng: float) -> str:
@@ -232,6 +246,59 @@ def mock_distance_matrix(o_lat, o_lng, d_lat, d_lng) -> dict:
     miles = haversine_miles(o_lat, o_lng, d_lat, d_lng)
     minutes = max(10, int(miles * 2.2 + 5))
     return {"distance_miles": round(miles, 1), "duration_minutes": minutes}
+
+# ---------- Google Maps real integration (used when google_maps_enabled()) ----------
+def _google_geocode_request(address: str) -> dict:
+    resp = requests.get(GEOCODE_URL, params=geocode_request_params(address, GOOGLE_MAPS_API_KEY), timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+def _google_distance_matrix_request(o_lat, o_lng, d_lat, d_lng) -> dict:
+    resp = requests.get(
+        DISTANCE_MATRIX_URL,
+        params=distance_matrix_request_params(o_lat, o_lng, d_lat, d_lng, GOOGLE_MAPS_API_KEY),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+async def geocode_address(address: str) -> dict:
+    """Geocode an address — real Google Geocoding API when configured, otherwise the mock.
+
+    Falls back to the mock on any error (bad address, quota, network) so booking/shop/contractor
+    flows never fail on a geocoding hiccup, mirroring the Xero invoice fallback pattern.
+    """
+    if google_maps_enabled():
+        try:
+            data = await asyncio.to_thread(_google_geocode_request, address)
+            return parse_geocode_response(data, address)
+        except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
+            logger.error(f"[MAPS] geocode failed, falling back to mock: {e}")
+    return mock_geocode(address)
+
+async def get_drive_time(o_lat, o_lng, d_lat, d_lng) -> dict:
+    """Drive time between two points — real Google Distance Matrix when configured, else mock.
+
+    Real lookups are cached per calendar day (rounded coordinates) in `drive_time_cache` — the
+    scheduling/dispatch/portal-map code calls this in loops over a day's jobs, so caching keeps
+    API spend and request latency bounded. Falls back to the mock on any error.
+    """
+    if not google_maps_enabled():
+        return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
+    key = drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, now_utc().date().isoformat())
+    cached = await db.drive_time_cache.find_one({"_id": key})
+    if cached:
+        return {"distance_miles": cached["distance_miles"], "duration_minutes": cached["duration_minutes"]}
+    try:
+        data = await asyncio.to_thread(_google_distance_matrix_request, o_lat, o_lng, d_lat, d_lng)
+        result = parse_distance_matrix_response(data)
+        await db.drive_time_cache.update_one(
+            {"_id": key}, {"$set": {**result, "cached_at": now_utc()}}, upsert=True
+        )
+        return result
+    except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
+        logger.error(f"[MAPS] distance matrix failed, falling back to mock: {e}")
+        return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
 
 async def mock_send_sms(to: str, body: str, kind: str = "generic", job_id: Optional[str] = None):
     """Mock Twilio. Logs to sms_log collection so we can show it in UI."""
@@ -618,7 +685,7 @@ async def get_pricing():
 @api.post("/geocode")
 async def geocode(payload: dict):
     addr = payload.get("address", "")
-    geo = mock_geocode(addr)
+    geo = await geocode_address(addr)
     zone = detect_zone(geo["lng"]) if geo["in_metro"] else None
     return {**geo, "zone": zone}
 
@@ -630,7 +697,7 @@ async def list_shops(tech=Depends(require_owner)):
 
 @api.post("/shops")
 async def create_shop(data: ShopIn, tech=Depends(require_owner)):
-    geo = mock_geocode(data.address)
+    geo = await geocode_address(data.address)
     zone = detect_zone(geo["lng"])
     shop = {
         "id": gen_id(),
@@ -660,7 +727,7 @@ async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner
         raise HTTPException(404, "Shop not found")
     update = data.model_dump(exclude_unset=True)
     if "address" in update and update["address"] != shop["address"]:
-        geo = mock_geocode(update["address"])
+        geo = await geocode_address(update["address"])
         update["lat"] = geo["lat"]; update["lng"] = geo["lng"]
         update["zone"] = detect_zone(geo["lng"])
     update["updated_at"] = iso(now_utc())
@@ -727,7 +794,7 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
         origin = (CALEB_HOME["lat"], CALEB_HOME["lng"])
 
     # Drive time from origin to new job
-    dm = mock_distance_matrix(origin[0], origin[1], job_lat, job_lng)
+    dm = await get_drive_time(origin[0], origin[1], job_lat, job_lng)
     drive_min = dm["duration_minutes"]
 
     # Earliest start = anchor + drive, rounded up to next 15-min boundary
@@ -763,7 +830,7 @@ async def public_availability(query: SlotQuery):
     if not shop:
         raise HTTPException(404, "Invalid booking link")
     # Geocode job address
-    geo = mock_geocode(query.job_address)
+    geo = await geocode_address(query.job_address)
     if not geo["in_metro"]:
         return {"zone": None, "in_metro": False, "slots": [],
                 "message": "This address is outside our current service area."}
@@ -789,7 +856,7 @@ async def public_book(data: BookingIn):
     shop = await db.shops.find_one({"booking_link_token": data.booking_token, "status": "active"})
     if not shop:
         raise HTTPException(404, "Invalid booking link")
-    geo = mock_geocode(data.job_address)
+    geo = await geocode_address(data.job_address)
     if not geo["in_metro"]:
         raise HTTPException(400, "Address outside service area")
     zone = detect_zone(geo["lng"])
@@ -816,7 +883,7 @@ async def public_book(data: BookingIn):
         origin = (prev[0]["job_lat"], prev[0]["job_lng"])
     else:
         origin = (CALEB_HOME["lat"], CALEB_HOME["lng"])
-    dm = mock_distance_matrix(origin[0], origin[1], geo["lat"], geo["lng"])
+    dm = await get_drive_time(origin[0], origin[1], geo["lat"], geo["lng"])
 
     # Find owner technician
     owner = await db.technicians.find_one({"role": "owner"})
@@ -1319,7 +1386,11 @@ async def integrations_status(tech=Depends(require_owner)):
             "org_name": (owner or {}).get("xero_org_name"),
             "mode": "live" if connected else ("ready" if xero_enabled() else "mock"),
         },
-        "google_maps": {"configured": False, "connected": False, "mode": "mock"},
+        "google_maps": {
+            "configured": google_maps_enabled(),
+            "connected": google_maps_enabled(),  # API key only — no separate OAuth connect step
+            "mode": "live" if google_maps_enabled() else "mock",
+        },
         "twilio": {"configured": False, "connected": False, "mode": "mock"},
         "google_calendar": {"configured": False, "connected": False, "mode": "deferred"},
         "growth": growth_status,
@@ -1525,7 +1596,7 @@ async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
     updates = []
     for seq, jid in enumerate(data.ordered_job_ids, start=1):
         j = by_id[jid]
-        dm = mock_distance_matrix(origin[0], origin[1], j["job_lat"], j["job_lng"])
+        dm = await get_drive_time(origin[0], origin[1], j["job_lat"], j["job_lng"])
         # Earliest start = cursor + drive, rounded up to next 15-min boundary
         earliest = cursor + timedelta(minutes=dm["duration_minutes"])
         minute = (earliest.minute // 15) * 15
@@ -1586,7 +1657,7 @@ async def update_contractor(contractor_id: str, body: ContractorUpdate, tech=Dep
         raise HTTPException(404, "Contractor not found")
     update = body.model_dump(exclude_unset=True)
     if "home_address" in update and update["home_address"]:
-        geo = mock_geocode(update["home_address"])
+        geo = await geocode_address(update["home_address"])
         update["home_lat"] = geo["lat"]
         update["home_lng"] = geo["lng"]
     update["updated_at"] = iso(now_utc())
@@ -1856,7 +1927,7 @@ async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_
             own.append(j)
         else:
             # Drive estimate from THIS shop to that pin
-            dm = mock_distance_matrix(origin_lat, origin_lng, j["job_lat"], j["job_lng"])
+            dm = await get_drive_time(origin_lat, origin_lng, j["job_lat"], j["job_lng"])
             others.append({
                 "id": j["id"],
                 "scheduled_start": j["scheduled_start"],
@@ -1985,6 +2056,8 @@ async def seed_data():
              "contact_name": "Priya", "contact_phone": "+16025550104", "contact_email": "mesa@glassdoc.demo"},
         ]
         for s in demo_shops:
+            # Deliberately mock, not geocode_address(): these are fake demo addresses (gated off
+            # in production by SEED_DEMO_DATA) — no reason to spend a real Maps API call on them.
             geo = mock_geocode(s["address"])
             zone = detect_zone(geo["lng"])
             shop = {
@@ -2069,6 +2142,9 @@ async def startup():
     security_self_check()
     await seed_data()
     await load_settings()
+    # Auto-expire cached real-Maps drive times after 2 days (keys are per-calendar-day already,
+    # so this just caps the collection's size — a no-op cost/storage safety net, not correctness).
+    await db.drive_time_cache.create_index("cached_at", expireAfterSeconds=172800)
 
 # Include router
 if GROWTH_MODULE_ENABLED:
