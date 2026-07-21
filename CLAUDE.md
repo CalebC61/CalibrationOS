@@ -17,28 +17,30 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 3. **Update `CHANGELOG.md`** for every feature / collection / endpoint you add or change.
 4. **Never commit secrets.** `.env` files are gitignored and managed in Emergent's env settings.
 5. **Preserve Emergent artifacts:** the protected block in `test_result.md`, `.emergent/`, `memory/PRD.md`.
-6. **Active: Modules 8 and 9 are both shipped.** Module 8 — Admin Assist Engine v1 (natural-
-   language admin copilot, Gemini via `google-genai`, confirm-gated actions — see
-   `docs/module8/README.md`; needs `GOOGLE_API_KEY` in Emergent env to go live). Module 9 —
-   Partner Growth Engine v1 (reels deferred — see `docs/module9/README.md`). No single "next
-   task" is queued — await the user's priority. _(Step 2 — real Twilio SMS — is **on hold, not
-   required for MVP**. Step 1 — real Xero invoicing — is **done and merged to `main`** via
-   PR #1, but see the QuickBooks note below before touching it again.)_
+6. **Active: launch push (target end of week, 2026-07-21).** Security hardening (pass 1) and
+   real Google Maps (geocoding + drive-time) are both **done**. Modules 8 and 9 are both shipped
+   (Module 8 needs `GOOGLE_API_KEY` to go live; Module 9 is on by default). **The one remaining
+   code launch-blocker is real card-charging** — the charge queue lists completed jobs with a card
+   on file, but nothing actually bills the card yet; that's the next task unless the user redirects.
+   _(Step 2 — real Twilio SMS — is **on hold, not required for MVP**. Step 1 — real Xero invoicing —
+   is **done and merged to `main`** via PR #1, but see the QuickBooks note below before touching it
+   again.)_
 
 ---
 
-## System status (as of 2026-07-09)
+## System status (as of 2026-07-21)
 - Bootstrapped and iterated (~4 iterations) by Emergent AI, then extended by Claude Code (Step 1,
-  Module 9, Module 8). Core business logic is solid; some external integrations are real,
-  the rest still mocked.
+  Module 9, Module 8, security hardening, Google Maps). Core business logic is solid; most external
+  integrations are now real, credential-optional (real-if-key-present, else mock).
 - **Real integrations:** Stripe (card-capture/setup mode), Resend (degrades to a DB log if no key),
-  **Xero invoicing** (Step 1 — merged to `main` via PR #1 on 2026-06-16). **Pending decision:** the
-  business just hired a CPA who exclusively uses **QuickBooks**, so Xero may be replaced by a real
-  QuickBooks integration. Nothing has changed in code yet — Xero stays live-capable/mock-fallback as
-  documented until a QuickBooks migration is explicitly scoped and approved. Don't start that
+  **Xero invoicing** (Step 1 — merged to `main` via PR #1 on 2026-06-16), **Google Maps**
+  (geocoding + drive-time, 2026-07-21 — daily-cached; `GOOGLE_MAPS_API_KEY`). **Pending decision:**
+  the business just hired a CPA who exclusively uses **QuickBooks**, so Xero may be replaced by a
+  real QuickBooks integration. Nothing has changed in code yet — Xero stays live-capable/mock-fallback
+  as documented until a QuickBooks migration is explicitly scoped and approved. Don't start that
   migration without a go-ahead; when it comes, mirror the same "real-if-configured, else mock"
   pattern and keep the Xero code until the swap is verified end-to-end (don't delete it preemptively).
-- **Mocked:** Twilio SMS, Google Maps (geocoding + drive-time), cloud document storage (base64-in-Mongo).
+- **Mocked:** Twilio SMS, cloud document storage (base64-in-Mongo).
 - **Missing:** Google Calendar sync (explicitly deferred).
 - **On hold:** Twilio SMS (Step 2) — deprioritized by the user, not needed for MVP. Don't pick this
   up unless asked.
@@ -63,8 +65,15 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   `CORS_ORIGINS` to the real domain. In production the backend **refuses to boot on the default
   `JWT_SECRET`** and does not seed demo data. Full list + steps in `EMERGENT.md`. Behavior is
   unchanged until `APP_ENV=production` is set, so tests and the preview deployment are unaffected.
-- Still-open launch blockers (code, next passes): live Stripe key + actual card-charging is not wired
-  (charge queue lists jobs but nothing bills the card); Google Maps drive-times are still mocked.
+- Still-open launch blocker (code): live Stripe key + **actual card-charging is not wired** (charge
+  queue lists jobs but nothing bills the card yet). This is the last code item before launch.
+
+### Google Maps (2026-07-21) — done, credential-optional, set on Emergent's side
+- Real geocoding + drive-time via `GOOGLE_MAPS_API_KEY` (Geocoding API + Distance Matrix API, both
+  need billing enabled on the Google Cloud project). No key = mock exactly as before. Drive times
+  are daily-cached (`drive_time_cache`, TTL-indexed) since the shop-portal day map computes drive
+  time in a loop over every other shop's jobs — see `backend/google_maps.py` and
+  `geocode_address()`/`get_drive_time()` in `server.py`. Full detail in `CHANGELOG.md`.
 
 ### Open action items from the last check-in (2026-07-09) — these live on Emergent's side, not in code
 - **Turn on the Assist copilot:** set `GOOGLE_API_KEY` (Google AI Studio key from ai.google.dev)

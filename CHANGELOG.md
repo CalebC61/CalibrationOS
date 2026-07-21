@@ -10,6 +10,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ## [Unreleased]
 
+### Added — Real Google Maps (geocoding + drive time), credential-optional (2026-07-21)
+Mirrors the existing Stripe/Resend/Xero "real-if-key-present, else mock" pattern: when
+`GOOGLE_MAPS_API_KEY` is set, addresses are geocoded and drive times computed via the real Google
+Geocoding + Distance Matrix APIs; otherwise the app falls back to the existing mock exactly as
+before, so nothing breaks without a key. This was the last of the three launch-blocking mocks
+(Stripe/Resend/Xero already real; Twilio is on hold, not required for MVP).
+
+- **New module `backend/google_maps.py`** — stdlib-only, unit-tested request-param builders +
+  response parsers for both APIs, shared by the real path (server.py has no parsing logic of its
+  own). Uses the same Phoenix-metro bounding box the mock always used (now imported from this
+  module into `mock_geocode` too, so real and mock never disagree on what's "in service area").
+- **`geocode_address()` / `get_drive_time()`** (`backend/server.py`) replace all 10 real call
+  sites (`mock_geocode`/`mock_distance_matrix` calls in shop create/edit, public booking
+  availability + booking, contractor home-address edit, dispatch reorder, and the shop-portal day
+  map). Both fall back to the mock on any error (bad address, quota, network) so a Maps hiccup
+  never fails a booking — same resilience pattern as Xero invoice creation. The demo-shop seeder
+  deliberately keeps calling the mock directly (fake addresses, no reason to spend a real API call).
+- **Daily-cached drive times** (`drive_time_cache` collection, new) — `portal_day_map` calls
+  `get_drive_time` once per other-shop job in a loop, so repeated calls for the same
+  origin/destination/day are served from cache instead of re-hitting the API on every page load.
+  Cache key rounds coordinates to ~11m precision and includes the calendar day; a TTL index
+  (`cached_at`, 2 days) auto-expires old entries so the collection self-bounds. This is the "daily
+  caching" the roadmap already called for.
+- **`GET /api/integrations/status`** — `google_maps` now reports real `configured`/`connected`/
+  `mode` instead of the hardcoded `false`/`mock` stub.
+- **Frontend** — Settings → Integrations' Google Maps row is now driven by live status (previously
+  a hardcoded "Mock" label, unlike Xero/Growth/Assist which were already dynamic).
+- **New env var:** `GOOGLE_MAPS_API_KEY`. No new Python dependency (`requests` already present,
+  same as Xero).
+- **Tests:** `backend/tests/test_google_maps.py` (15 pure tests — geocode/distance-matrix parsing,
+  error statuses, the metro bounding box, and cache-key rounding/day-rollover). Backend integration
+  tests (`backend/tests/test_*.py` that hit a live server) were not run in this environment — they
+  exercise these code paths in mock mode only (no `GOOGLE_MAPS_API_KEY` set), which is unchanged.
+- **Not addressed here:** real-time traffic (Distance Matrix `departure_time`) — the scheduling
+  algorithm doesn't model time-of-day traffic today, mock or real; out of scope for this pass.
+
 ### Security — Production hardening pass, part 1 (2026-07-21)
 First launch-blocker cleanup: get the app out of its "demo defaults" configuration so it's safe to
 expose to real shops. **Fully backward-compatible** — everything is gated on a new `APP_ENV` flag

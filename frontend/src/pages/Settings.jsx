@@ -231,8 +231,8 @@ function IntegrationsTab() {
   }
 
   const xero = status?.xero;
+  const maps = status?.google_maps;
   const others = [
-    { name: "Google Maps", status: "Mock — keyword-based geocoding", color: "var(--yellow)" },
     { name: "Twilio SMS", status: "Mock — messages logged in app", color: "var(--yellow)" },
     { name: "Google Calendar", status: "Deferred to next iteration", color: "var(--text-muted)" },
   ];
@@ -299,6 +299,20 @@ function IntegrationsTab() {
         )}
       </div>
 
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid var(--border)" }} data-testid="maps-status-row">
+        <div>
+          <div style={{ fontWeight: 600 }}>Google Maps</div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            {!status ? "Loading…"
+              : maps?.mode === "live" ? "Live — real geocoding + drive times (Distance Matrix, daily-cached)"
+              : "Not configured — set GOOGLE_MAPS_API_KEY (mock geocoding/drive-time active)"}
+          </div>
+        </div>
+        {status && maps?.mode !== "live" && (
+          <span style={{ color: "var(--yellow)", fontSize: 13 }}>Mock mode</span>
+        )}
+      </div>
+
       {others.map(i => (
         <div key={i.name} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
           <span style={{ fontWeight: 600 }}>{i.name}</span>
@@ -306,7 +320,8 @@ function IntegrationsTab() {
         </div>
       ))}
       <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>
-        Xero invoicing is live once connected; the remaining integrations stay mocked until later steps.
+        Xero and Google Maps go live automatically once their credentials are set (Xero also needs
+        Connect); the remaining integrations stay mocked until later steps.
       </div>
     </div>
   );
