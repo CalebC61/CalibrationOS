@@ -17,14 +17,14 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 3. **Update `CHANGELOG.md`** for every feature / collection / endpoint you add or change.
 4. **Never commit secrets.** `.env` files are gitignored and managed in Emergent's env settings.
 5. **Preserve Emergent artifacts:** the protected block in `test_result.md`, `.emergent/`, `memory/PRD.md`.
-6. **Active: launch push (target end of week, 2026-07-21).** Security hardening (pass 1) and
-   real Google Maps (geocoding + drive-time) are both **done**. Modules 8 and 9 are both shipped
-   (Module 8 needs `GOOGLE_API_KEY` to go live; Module 9 is on by default). **The one remaining
-   code launch-blocker is real card-charging** — the charge queue lists completed jobs with a card
-   on file, but nothing actually bills the card yet; that's the next task unless the user redirects.
-   _(Step 2 — real Twilio SMS — is **on hold, not required for MVP**. Step 1 — real Xero invoicing —
-   is **done and merged to `main`** via PR #1, but see the QuickBooks note below before touching it
-   again.)_
+6. **Active: launch push (target end of week, 2026-07-21). All code launch-blockers are now
+   closed.** Security hardening (pass 1), real Google Maps (geocoding + drive-time), and real card
+   charging (Stripe, off-session via the Charge Queue) are all **done**. Modules 8 and 9 are both
+   shipped (Module 8 needs `GOOGLE_API_KEY` to go live; Module 9 is on by default). **What's left
+   to actually launch is credentials/config on Emergent's side, not more code** — see "Open action
+   items" below. No task is queued in code unless the user redirects. _(Step 2 — real Twilio SMS —
+   is **on hold, not required for MVP**. Step 1 — real Xero invoicing — is **done and merged to
+   `main`** via PR #1, but see the QuickBooks note below before touching it again.)_
 
 ---
 
@@ -32,9 +32,10 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 - Bootstrapped and iterated (~4 iterations) by Emergent AI, then extended by Claude Code (Step 1,
   Module 9, Module 8, security hardening, Google Maps). Core business logic is solid; most external
   integrations are now real, credential-optional (real-if-key-present, else mock).
-- **Real integrations:** Stripe (card-capture/setup mode), Resend (degrades to a DB log if no key),
-  **Xero invoicing** (Step 1 — merged to `main` via PR #1 on 2026-06-16), **Google Maps**
-  (geocoding + drive-time, 2026-07-21 — daily-cached; `GOOGLE_MAPS_API_KEY`). **Pending decision:**
+- **Real integrations:** Stripe (card-capture/setup mode **+ off-session charging** via the Charge
+  Queue, 2026-07-21), Resend (degrades to a DB log if no key), **Xero invoicing** (Step 1 — merged
+  to `main` via PR #1 on 2026-06-16), **Google Maps** (geocoding + drive-time, 2026-07-21 —
+  daily-cached; `GOOGLE_MAPS_API_KEY`). **Pending decision:**
   the business just hired a CPA who exclusively uses **QuickBooks**, so Xero may be replaced by a
   real QuickBooks integration. Nothing has changed in code yet — Xero stays live-capable/mock-fallback
   as documented until a QuickBooks migration is explicitly scoped and approved. Don't start that
@@ -65,8 +66,20 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   `CORS_ORIGINS` to the real domain. In production the backend **refuses to boot on the default
   `JWT_SECRET`** and does not seed demo data. Full list + steps in `EMERGENT.md`. Behavior is
   unchanged until `APP_ENV=production` is set, so tests and the preview deployment are unaffected.
-- Still-open launch blocker (code): live Stripe key + **actual card-charging is not wired** (charge
-  queue lists jobs but nothing bills the card yet). This is the last code item before launch.
+- **No code launch-blockers remain.** What's left is a live `STRIPE_API_KEY` (see the Stripe
+  section below) plus the other credential/env items already tracked in "Open action items."
+
+### Card charging (2026-07-21) — done, reuses the existing STRIPE_API_KEY, set on Emergent's side
+- `POST /api/charge-queue/{job_id}/charge` (owner-only, from the Charge Queue page) charges a
+  completed job's card on file — off-session, idempotent per job. `POST
+  /api/charge-queue/{job_id}/skip` marks a job billed outside Stripe instead. See
+  `backend/charging.py` + `CHANGELOG.md` for the full design (decline/requires_action handling,
+  why nothing auto-charges). **Gated by the same `STRIPE_API_KEY` placeholder-check already used
+  for card capture** — no new env var. Once a **live** Stripe key is set, charging goes live
+  automatically; no separate toggle.
+- Recommended before trusting this with real money: run one charge through Stripe **test mode**
+  first (`sk_test_...` key + card `4242 4242 4242 4242`, any future expiry/CVC) to see the full
+  setup→charge cycle succeed before switching to a live key.
 
 ### Google Maps (2026-07-21) — done, credential-optional, set on Emergent's side
 - Real geocoding + drive-time via `GOOGLE_MAPS_API_KEY` (Geocoding API + Distance Matrix API, both

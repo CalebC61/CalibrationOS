@@ -22,6 +22,14 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-07-21c): real card charging via Stripe — the Charge Queue is now wired up.**
+  `POST /api/charge-queue/{job_id}/charge` (off-session PaymentIntent against the shop's stored
+  card, idempotent per job — a double-click or retry can't double-charge) and `POST
+  /api/charge-queue/{job_id}/skip` (bill outside Stripe instead). Both were already stubbed in the
+  frontend (`ChargeQueue.jsx`'s "Charge Now" button said "next iteration") — now wired end to end.
+  New pure module `backend/charging.py` (14 unit tests). **No new env var** — reuses the existing
+  `STRIPE_API_KEY`. **This was the last open code launch-blocker.** See the "Stripe go-live
+  checklist" below for exactly what to do on your side — that's what's actually left before launch.
 - **Session (2026-07-21b): real Google Maps (geocoding + drive time) — credential-optional,
   same real-if-key-present-else-mock pattern.** New module `backend/google_maps.py`; new
   `geocode_address()`/`get_drive_time()` wrappers in `server.py` replace every mock call site;
@@ -74,38 +82,63 @@ See `CHANGELOG.md` for the full log. Current state:
     `/api/growth/reels/generate` are not implemented (see `docs/module9/README.md`).
   - New tests: `backend/tests/test_growth.py`.
 
-### Action items for you (Emergent) — these are on your side, not in code
-0. **Turn on real Google Maps:** set `GOOGLE_MAPS_API_KEY` in Emergent's env settings (a Google
+### Stripe go-live checklist (2026-07-21) — this is what's actually left before launch
+Card charging is fully built (see above) and reuses the **existing** `STRIPE_API_KEY` — there's no
+new integration to wire up, only account setup:
+
+1. **Activate the Stripe account for live payments.** If the business's Stripe account hasn't
+   completed onboarding yet, do that first in the Stripe Dashboard (legal business details + a
+   bank account for payouts). Until "Activate your account" is complete, the account can only run
+   in test mode — no real money moves, which is fine for step 2 below but not for launch.
+2. **Test the full cycle before using real money.** In the Stripe Dashboard, grab a **test** secret
+   key (`sk_test_...`) from Developers → API keys and set it as `STRIPE_API_KEY` temporarily. Have
+   a shop go through portal registration and card setup using Stripe's test card
+   `4242 4242 4242 4242` (any future expiry, any 3-digit CVC), complete a job, then click
+   **Charge Now** in the owner's Charge Queue. Confirm it shows as a successful test payment in the
+   Stripe Dashboard. This costs nothing and proves the whole flow works end to end.
+3. **Switch to the live key.** Once step 2 looks right, replace `STRIPE_API_KEY` with the **live**
+   secret key (`sk_live_...`) from the same Dashboard page. Real charges go live immediately — no
+   redeploy, no other toggle.
+4. **Nothing else is required** — no webhook, no separate "enable charging" flag, no new env var.
+   A statement descriptor (what shows on the shop's card statement) and payout schedule are
+   account-level Stripe Dashboard settings, not required to start charging; set them whenever
+   convenient.
+
+### Action items for you (Emergent) — everything else, in rough priority order
+1. **Turn on real Google Maps:** set `GOOGLE_MAPS_API_KEY` in Emergent's env settings (a Google
    Cloud API key with the **Geocoding API** and **Distance Matrix API** enabled + billing on the
    project — this is a paid API past its free tier, budget accordingly). That's the only step: the
    backend self-activates (geocoding + drive times go real, daily-cached) and Settings →
    Integrations reflects it. No key = mock exactly as before, nothing breaks either way. Also
    confirm the frontend build is green — `Settings.jsx`'s Google Maps row changed again (now reads
    live status instead of a hardcoded label).
-1. **Turn on the Assist copilot (Module 8):** set `GOOGLE_API_KEY` in Emergent's env settings
+2. **Turn on the Assist copilot (Module 8):** set `GOOGLE_API_KEY` in Emergent's env settings
    (Google AI Studio key from ai.google.dev — free tier exists; no GCP project needed). That's
    the only step: the backend self-activates and the chat bubble appears on every owner page.
    Also confirm the frontend build is green (new `Assist.jsx` component in `Shell.jsx`).
-2. **Xero:** still live-capable but not yet live, and may be replaced by QuickBooks — hold off on
+3. **Xero:** still live-capable but not yet live, and may be replaced by QuickBooks — hold off on
    spending setup time here until that's decided. If you do turn it on: add the Xero env vars listed
    below, then connect the owner account via **Settings → Integrations**.
-3. **Verify the frontend build.** The Step 1 `Settings.jsx` change wasn't built during the Claude
+4. **Verify the frontend build.** The Step 1 `Settings.jsx` change wasn't built during the Claude
    session because the SPA pulls the private `@emergentbase/visual-edits` dependency, which only
    resolves inside Emergent. Confirm the build is green — this now matters more, since the Module 9
-   Growth page is live in the nav, not just an inert placeholder, and `Settings.jsx` has since
-   changed twice more (Module 8's Assist row, now the Google Maps row).
-4. **Reconcile version numbers:** `CHANGELOG.md` says `0.0.3`, `frontend/package.json` says `0.1.0`.
+   Growth page is live in the nav, not just an inert placeholder, `Settings.jsx` has since changed
+   twice more (Module 8's Assist row, then the Google Maps row), and `ChargeQueue.jsx`'s buttons
+   are now live (previously a permanently-disabled "next iteration" button — verify **Charge Now**
+   and **Skip / Bill Manually** both render and work against Stripe test mode, per the checklist
+   above, before flipping to a live key).
+5. **Reconcile version numbers:** `CHANGELOG.md` says `0.0.3`, `frontend/package.json` says `0.1.0`.
    Pick one scheme.
-5. **Module 9 is live** — no external credentials needed (dispatch reuses existing SMS/email
+6. **Module 9 is live** — no external credentials needed (dispatch reuses existing SMS/email
    helpers). If you want it off for any reason, set `GROWTH_MODULE_ENABLED=false` and
    `REACT_APP_GROWTH_MODULE_ENABLED=false` — the backend routes 404 and the frontend falls back to
    its placeholder card, no redeploy of app logic needed either way.
-6. **Neither Module 8 nor Module 9's frontend has been visually verified yet.** Both `Assist.jsx`
+7. **Neither Module 8 nor Module 9's frontend has been visually verified yet.** Both `Assist.jsx`
    (Module 8) and `Growth.jsx` (Module 9) were built and backend-tested outside Emergent — the CRA
    build depends on the private `@emergentbase/visual-edits` package, which only resolves inside
    Emergent. Give both a real browser pass (chat widget open/close, a full propose→confirm
    round-trip; the Growth grid/nudges/intros panels) before calling either done.
-7. **Production hardening (2026-07-21) is in place but off by default** — set `APP_ENV=production`
+8. **Production hardening (2026-07-21) is in place but off by default** — set `APP_ENV=production`
    plus `JWT_SECRET`/`OWNER_PASSWORD`/`CORS_ORIGINS` when actually ready to launch. See the env var
    list below. Nothing changes until `APP_ENV=production` is set.
 

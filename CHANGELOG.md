@@ -10,6 +10,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ## [Unreleased]
 
+### Added — Real card charging via Stripe (2026-07-21)
+Wires up the Charge Queue, which previously listed completed jobs with a card on file but had no
+way to actually bill them — the "Charge Now" button existed in the UI but was disabled
+("next iteration"). This was the last open code launch-blocker.
+
+- **New module `backend/charging.py`** — pure, stdlib-only, unit-tested: `cents()` (dollar→cent
+  conversion, handles float noise like `0.1+0.2`), `chargeable_reason()` (centralized eligibility
+  check — job complete, not already charged, shop has a Stripe customer + card on file),
+  `interpret_payment_intent()` (classifies a PaymentIntent's status into succeeded /
+  requires_action / other), `decline_message()` (formats a card decline for the owner).
+- **`POST /api/charge-queue/{job_id}/charge`** (owner-only) — creates and confirms an off-session
+  Stripe `PaymentIntent` for the job's price against the shop's stored `stripe_customer_id` +
+  `stripe_payment_method_id`. **Idempotent per job** (`idempotency_key=f"charge-job-{job_id}"`) so
+  a double-click or retried request can never double-charge — Stripe dedupes concurrent requests
+  sharing a key on its own. On success: sets `charged_at`, `charge_method: "stripe"`,
+  `stripe_payment_intent_id`, `charged_amount` on the job (removing it from the queue, whose query
+  already filters on `charged_at` not existing). On a card decline (`CardError`) or a stuck
+  `requires_action` state (rare — issuer wants authentication the app can't complete without the
+  shop present): the job is **not** marked charged, a `charge_error`/`charge_error_at` is recorded
+  and returned to the owner, and the job stays in the queue for a retry. Never fails a booking flow
+  — this is an owner-initiated action, not automatic.
+  - Fixed while wiring this up: `stripe.error.CardError`'s `decline_code` is **not** a direct
+    attribute of the exception — it lives on the nested `e.error` object
+    (`e.error.decline_code`). Verified against the installed `stripe` package source directly
+    rather than assumed.
+- **`POST /api/charge-queue/{job_id}/skip`** (owner-only, optional `reason`) — the "Skip / Bill
+  Manually" escape hatch already stubbed in the UI. Marks the job `charge_method: "manual"` and
+  sets `charged_at` (leaves the queue) without touching Stripe — for jobs the owner wants to
+  invoice outside the app.
+- **Frontend** (`frontend/src/pages/ChargeQueue.jsx`) — both buttons wired: per-row busy state,
+  inline decline/error messages (from the request and, on reload, from the persisted
+  `charge_error` field so a prior failure is still visible after a page refresh), confirmation
+  dialog before skipping.
+- **Tests:** `backend/tests/test_charging.py` (14 pure tests) — cent conversion incl. float-noise
+  cases, every eligibility-rejection reason, PaymentIntent status interpretation, decline-message
+  formatting. No live Stripe call is testable/mocked in this pass (consistent with how the Xero
+  and Google Maps integrations were tested — pure logic only; no CI or Stripe test key available
+  in this environment). **Recommended before relying on this in production:** run one real charge
+  through Stripe **test mode** (`sk_test_...` key + card `4242 4242 4242 4242`) end-to-end.
+- **No new env var** — reuses the existing `STRIPE_API_KEY` (already required for card capture).
+  Charging is only guarded by the same "is this the placeholder key" check already used elsewhere.
+- **Deliberately not built here:** automatic charge-on-completion (this stays a reviewed,
+  owner-triggered action from the queue, matching the page's own original design intent), and
+  webhook-based handling of `requires_action` (would need `STRIPE_WEBHOOK_SECRET` + a registered
+  endpoint — out of scope for a Friday launch; the rare stuck case is surfaced to the owner
+  instead of silently retried).
+
 ### Added — Real Google Maps (geocoding + drive time), credential-optional (2026-07-21)
 Mirrors the existing Stripe/Resend/Xero "real-if-key-present, else mock" pattern: when
 `GOOGLE_MAPS_API_KEY` is set, addresses are geocoded and drive times computed via the real Google
