@@ -33,5 +33,5 @@ export default function Invoices() {
     </Shell>
   );
 }
-const Th = ({ children }) => <th style={{ padding: "10px 14px", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", fontWeight: 600 }}>{children}</th>;
+const Th = ({ children }) => <th style={{ padding: "10px 14px", fontSize: 12, color: "var(--text-muted)", fontWeight: 600 }}>{children}</th>;
 const Td = ({ children, colSpan, style, className }) => <td colSpan={colSpan} className={className} style={{ padding: "12px 14px", fontSize: 14, ...(style || {}) }}>{children}</td>;

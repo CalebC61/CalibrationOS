@@ -6,7 +6,7 @@ import L from "leaflet";
 function makeIcon(num, color) {
   return L.divIcon({
     className: "route-pin",
-    html: `<div style="background:${color};color:#fff;border-radius:999px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:2px solid #111;box-shadow:0 2px 8px rgba(0,0,0,0.6);font-family:'JetBrains Mono',monospace;">${num}</div>`,
+    html: `<div style="background:${color};color:#fff;border-radius:999px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:2px solid #111;box-shadow:0 2px 8px rgba(0,0,0,0.6);font-family:'DM Sans',sans-serif;">${num}</div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
   });
@@ -37,10 +37,10 @@ export default function RouteMap({ jobs }) {
           attribution='&copy; OpenStreetMap &copy; CARTO'
         />
         {westLine.length > 1 && <Polyline positions={westLine} pathOptions={{ color: "#F97316", weight: 3, opacity: 0.7 }} />}
-        {eastLine.length > 1 && <Polyline positions={eastLine} pathOptions={{ color: "#3B82F6", weight: 3, opacity: 0.7 }} />}
+        {eastLine.length > 1 && <Polyline positions={eastLine} pathOptions={{ color: "#0EA5E9", weight: 3, opacity: 0.7 }} />}
         {valid.map((j, idx) => (
           <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-            icon={makeIcon(idx + 1, j.zone === "west" ? "#F97316" : "#3B82F6")}>
+            icon={makeIcon(idx + 1, j.zone === "west" ? "#F97316" : "#0EA5E9")}>
             <Tooltip direction="top" offset={[0, -10]}>
               <div style={{ fontSize: 12 }}>
                 <b>#{idx + 1} · {j.shop_name}</b><br />

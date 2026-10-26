@@ -127,7 +127,7 @@ export default function Dashboard() {
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>
         <div>
-          <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase" }}>Dispatch board</div>
+          <div className="muted" style={{ fontSize: 12 }}>Dispatch board</div>
           <h1 className="h1" style={{ margin: "4px 0" }}>
             {new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
           </h1>
@@ -187,7 +187,7 @@ function Metric({ label, value, highlight }) {
       borderColor: highlight === "red" ? "var(--red)" : "var(--border)",
       boxShadow: highlight === "red" ? "0 0 18px rgba(239,68,68,0.18)" : undefined,
     }}>
-      <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>{label}</div>
+      <div className="muted" style={{ fontSize: 12 }}>{label}</div>
       <div className="font-display" style={{ fontSize: 22, fontWeight: 700, color: highlight === "red" ? "var(--red)" : undefined }}>{value}</div>
     </div>
   );

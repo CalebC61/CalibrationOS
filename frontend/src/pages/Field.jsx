@@ -157,7 +157,7 @@ export default function Field() {
     <Phone>
       <Header name={auth?.name} onLogout={logout} />
       <div style={{ padding: 12 }}>
-        <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4 }}>Today</div>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Today</div>
         <h1 className="h1" style={{ marginBottom: 12, fontSize: 28 }}>
           {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
         </h1>

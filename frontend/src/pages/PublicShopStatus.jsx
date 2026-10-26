@@ -23,7 +23,7 @@ export default function PublicShopStatus() {
         <div style={{ textAlign: "center", marginBottom: 4 }}>
           <Brand size={26} />
         </div>
-        <div className="muted" style={{ textAlign: "center", fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 24 }}>Shop Scorecard</div>
+        <div className="muted" style={{ textAlign: "center", fontSize: 12, marginBottom: 24 }}>Shop Scorecard</div>
 
         <div className="surface" style={{ padding: 20, marginBottom: 20 }}>
           <div className="h2" style={{ marginBottom: 6 }}>{data.shop_name}</div>
@@ -98,7 +98,7 @@ const Center = ({ children }) => (
 );
 const Stat = ({ label, value }) => (
   <div className="surface" style={{ padding: 14, textAlign: "center" }}>
-    <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>{label}</div>
+    <div className="muted" style={{ fontSize: 12 }}>{label}</div>
     <div className="font-display" style={{ fontSize: 26, fontWeight: 700, marginTop: 2 }}>{value}</div>
   </div>
 );
