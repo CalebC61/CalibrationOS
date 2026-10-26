@@ -2242,6 +2242,12 @@ async def startup():
     # so this just caps the collection's size — a no-op cost/storage safety net, not correctness).
     await db.drive_time_cache.create_index("cached_at", expireAfterSeconds=172800)
 
+@api.get("/health")
+async def health():
+    """Unauthenticated liveness probe for Render / uptime checks."""
+    return {"status": "ok"}
+
+
 # Include router
 if GROWTH_MODULE_ENABLED:
     from growth.routes import build_growth_router

@@ -1,0 +1,41 @@
+services:
+  - type: web
+    name: calibrationos-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: DB_NAME
+        value: calibrationos
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GROWTH_MODULE_ENABLED
+        value: "true"
+      - key: ASSIST_MODULE_ENABLED
+        value: "true"
+      # Set these in the Render dashboard (sync: false = prompt, never committed)
+      - { key: MONGO_URL, sync: false }
+      - { key: CORS_ORIGINS, sync: false }
+      - { key: OWNER_EMAIL, sync: false }
+      - { key: OWNER_PASSWORD, sync: false }
+      - { key: ADMIN_EMAIL, sync: false }
+      - { key: CONTRACTOR_EMAIL, sync: false }
+      - { key: CONTRACTOR_PASSWORD, sync: false }
+      - { key: RESEND_API_KEY, sync: false }
+      - { key: SENDER_EMAIL, sync: false }
+      - { key: STRIPE_API_KEY, sync: false }
+      - { key: GOOGLE_MAPS_API_KEY, sync: false }
+      - { key: XERO_CLIENT_ID, sync: false }
+      - { key: XERO_CLIENT_SECRET, sync: false }
+      - { key: XERO_REDIRECT_URI, sync: false }
+      - { key: XERO_POST_CONNECT_REDIRECT, sync: false }
+      - { key: XERO_SALES_ACCOUNT_CODE, sync: false }
+      - { key: GOOGLE_API_KEY, sync: false }
+      - { key: ASSIST_MODEL, sync: false }
+      - { key: ASSIST_SELF_BASE_URL, sync: false }

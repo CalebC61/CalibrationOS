@@ -71,7 +71,7 @@ export default function ChargeQueue() {
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div className="font-mono" style={{ fontSize: 18, fontWeight: 700 }}>${j.price.toFixed(2)}</div>
-                    <div className="muted" style={{ fontSize: 12, marginTop: 4, textTransform: "uppercase" }}>
+                    <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                       {j.card_brand} •••• {j.card_last4}
                     </div>
                   </div>
@@ -102,7 +102,7 @@ export default function ChargeQueue() {
 }
 const Metric = ({ label, value }) => (
   <div>
-    <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>{label}</div>
+    <div className="muted" style={{ fontSize: 12 }}>{label}</div>
     <div className="font-display" style={{ fontSize: 22, fontWeight: 700 }}>{value}</div>
   </div>
 );

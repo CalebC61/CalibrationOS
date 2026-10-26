@@ -60,6 +60,6 @@ export default function ShopsList() {
   );
 }
 
-const Th = ({ children }) => <th style={{ padding: "10px 14px", fontSize: 11, textTransform: "uppercase",
+const Th = ({ children }) => <th style={{ padding: "10px 14px", fontSize: 12,
   letterSpacing: "0.08em", color: "var(--text-muted)", fontWeight: 600 }}>{children}</th>;
 const Td = ({ children, colSpan, style }) => <td colSpan={colSpan} style={{ padding: "12px 14px", fontSize: 14, ...(style || {}) }}>{children}</td>;

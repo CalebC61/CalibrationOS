@@ -62,7 +62,7 @@ export default function PortalRegister() {
         <div style={{ textAlign: "center", marginBottom: 6 }}>
           <Brand size={28} />
         </div>
-        <div className="muted" style={{ textAlign: "center", fontSize: 12, letterSpacing: "0.16em", textTransform: "uppercase", marginBottom: 8 }}>Shop Portal Registration</div>
+        <div className="muted" style={{ textAlign: "center", fontSize: 12, marginBottom: 8 }}>Shop Portal Registration</div>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           Welcome, <b>{invite.shop_name}</b>
         </div>

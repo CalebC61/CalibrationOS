@@ -111,7 +111,7 @@ export default function Assist() {
             display: "flex", justifyContent: "space-between", alignItems: "center",
             background: "var(--bg-elevated)",
           }}>
-            <div style={{ fontFamily: "'Saira Stencil One', sans-serif", letterSpacing: "0.04em" }}>
+            <div style={{ fontFamily: "'Barlow Semi Condensed', sans-serif", fontWeight: 600 }}>
               <span className="accent">ASSIST</span>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
