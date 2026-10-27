@@ -28,9 +28,12 @@ Job queries treated a calendar date as UTC midnight-to-midnight and defaulted "t
 - **Not changed:** zone start/end clocks (`08:00`–`19:00`) are still combined as UTC wall times.
   Those slots are 1:00 AM–12:00 PM Phoenix, so they stay on the same civil date. Reinterpreting
   them as Phoenix local time would shift every existing appointment by 7 hours.
-- **Not changed:** the portal page still seeds its date picker from `toISOString()` (a UTC date)
-  and always sends `date_str`. An omitted `date_str` is today's Phoenix date; a client that sends
-  the UTC date during Phoenix evening still asks for the wrong civil date.
+- **Portal date pickers** (`frontend/src/lib/api.js` `phoenixTodayStr`, `Intl` `America/Phoenix`,
+  no new dependency). The day map's initial date and the portal booking date input's min/max were
+  `toISOString().slice(0, 10)` (the UTC date). They now use today's Phoenix date. Booking's max is
+  that date plus 21 days (Phoenix has no DST, so 21×24h lands on the same civil date). Owner
+  dashboard, field app, and public booking already used the browser's local calendar date
+  (`todayStr` / `dateStr`), not a UTC timestamp, and were left as they are.
 - **Drive times:** `get_drive_time` already cached real Distance Matrix results in `drive_time_cache`
   (rounded coordinates, TTL index left at 2 days). The cache day was the UTC date, so it rolled at
   5 PM Phoenix. It now uses the Phoenix date. No second cache. `GET /portal/day-map` runs the

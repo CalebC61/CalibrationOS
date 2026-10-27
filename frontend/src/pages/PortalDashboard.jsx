@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { MapContainer, TileLayer, Marker, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
+import { phoenixTodayStr } from "../lib/api";
 import { portalApi, getPortalAuth } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
@@ -28,7 +29,7 @@ const fmt = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeri
 export default function PortalDashboard() {
   const auth = getPortalAuth();
   const [data, setData] = useState(null);
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => phoenixTodayStr());
 
   useEffect(() => {
     portalApi.get(`/portal/day-map?date_str=${date}`).then(r => setData(r.data));
