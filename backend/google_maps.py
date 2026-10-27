@@ -85,7 +85,7 @@ def drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, day_iso: str) -> str:
     Coordinates are rounded so nearby-but-not-identical floats (e.g. re-geocoding the same
     address) still hit the cache. Keying on the calendar day matches the "daily caching" the
     project's own roadmap called for — bounds real API spend without a separate TTL sweep needed
-    to keep results fresh.
+    to keep results fresh. Callers pass an America/Phoenix date (`business_date()`), not the UTC date.
     """
     return (f"{round(o_lat, 4)},{round(o_lng, 4)}|"
             f"{round(d_lat, 4)},{round(d_lng, 4)}|{day_iso}")

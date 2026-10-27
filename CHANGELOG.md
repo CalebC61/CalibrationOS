@@ -10,6 +10,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ## [Unreleased]
 
+### Fixed — Phoenix day boundaries for the shop day map (and the same date window elsewhere) (2026-10-27)
+Job queries treated a calendar date as UTC midnight-to-midnight and defaulted "today" to
+`now_utc().date()`. The shop is in America/Phoenix (UTC−7, no DST), so a 6 PM Phoenix job is
+01:00 UTC the next day and was missing from that Phoenix date. From 5 PM to midnight Phoenix,
+"today" was already tomorrow.
+
+- **New `backend/business_time.py`** (stdlib `zoneinfo` only). `business_date()` is the Phoenix
+  civil date of an instant (default: now). `business_day_bounds()` is that day's half-open window
+  as UTC datetimes (07:00 UTC through 07:00 UTC next day). Naive datetimes are UTC, same as the
+  rest of the backend.
+- **Query windows and default dates** now use that helper: `GET /portal/day-map`, `GET /jobs`,
+  `GET /dashboard/summary`, `POST /jobs/reorder`, `compute_available_slots` (availability),
+  `POST /public/book` (previous-job drive time and `sequence_order`, using the Phoenix date of
+  the start instant), and `POST /public/availability` ("today" for the past / 21-day checks).
+  Assist tools that call `/jobs` and `/dashboard/summary` pick this up with no tool changes.
+- **Not changed:** zone start/end clocks (`08:00`–`19:00`) are still combined as UTC wall times.
+  Those slots are 1:00 AM–12:00 PM Phoenix, so they stay on the same civil date. Reinterpreting
+  them as Phoenix local time would shift every existing appointment by 7 hours.
+- **Not changed:** the portal page still seeds its date picker from `toISOString()` (a UTC date)
+  and always sends `date_str`. An omitted `date_str` is today's Phoenix date; a client that sends
+  the UTC date during Phoenix evening still asks for the wrong civil date.
+- **Drive times:** `get_drive_time` already cached real Distance Matrix results in `drive_time_cache`
+  (rounded coordinates, TTL index left at 2 days). The cache day was the UTC date, so it rolled at
+  5 PM Phoenix. It now uses the Phoenix date. No second cache. `GET /portal/day-map` runs the
+  per-other-shop lookup concurrently (`asyncio.gather`, order preserved). The mock path stays
+  uncached. No new dependency.
+- **Tests:** `backend/tests/test_business_time.py`. A 6 PM Phoenix instant on 2026-10-27 is inside
+  that Phoenix day's bounds (and its ISO string sorts inside them) and outside the old UTC-midnight
+  window. January and July offsets are both −07:00. Existing 08:00–19:00 UTC slot clocks stay on
+  the labeled day.
+
 ### Added — Real card charging via Stripe (2026-07-21)
 Wires up the Charge Queue, which previously listed completed jobs with a card on file but had no
 way to actually bill them — the "Charge Now" button existed in the UI but was disabled

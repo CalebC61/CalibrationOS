@@ -84,9 +84,10 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 ### Google Maps (2026-07-21) — done, credential-optional, set on Emergent's side
 - Real geocoding + drive-time via `GOOGLE_MAPS_API_KEY` (Geocoding API + Distance Matrix API, both
   need billing enabled on the Google Cloud project). No key = mock exactly as before. Drive times
-  are daily-cached (`drive_time_cache`, TTL-indexed) since the shop-portal day map computes drive
-  time in a loop over every other shop's jobs — see `backend/google_maps.py` and
-  `geocode_address()`/`get_drive_time()` in `server.py`. Full detail in `CHANGELOG.md`.
+  are daily-cached (`drive_time_cache`, TTL-indexed, Phoenix calendar day) since the shop-portal
+  day map computes drive time across other shops' jobs — see `backend/google_maps.py` and
+  `geocode_address()`/`get_drive_time()` in `server.py`. Job-by-date queries use America/Phoenix
+  day bounds (`backend/business_time.py`). Full detail in `CHANGELOG.md`.
 
 ### Open action items from the last check-in (2026-07-09) — these live on Emergent's side, not in code
 - **Turn on the Assist copilot:** set `GOOGLE_API_KEY` (Google AI Studio key from ai.google.dev)

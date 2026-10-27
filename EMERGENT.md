@@ -22,6 +22,11 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-10-27): Phoenix day boundaries.** Job-by-date queries (`/portal/day-map`, `/jobs`,
+  `/dashboard/summary`, reorder, availability, public booking) use America/Phoenix midnight converted
+  to UTC, not UTC midnight. Default "today" is the Phoenix date. The existing `drive_time_cache` day
+  bucket follows Phoenix too, and the day map fetches other-shop drive times concurrently. Zone
+  clock times (08:00–19:00) are still UTC wall times. Details in `CHANGELOG.md`.
 - **Session (2026-07-21c): real card charging via Stripe — the Charge Queue is now wired up.**
   `POST /api/charge-queue/{job_id}/charge` (off-session PaymentIntent against the shop's stored
   card, idempotent per job — a double-click or retry can't double-charge) and `POST
