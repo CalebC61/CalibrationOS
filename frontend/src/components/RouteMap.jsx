@@ -37,7 +37,7 @@ export default function RouteMap({ jobs }) {
           attribution='&copy; OpenStreetMap &copy; CARTO'
         />
         {westLine.length > 1 && <Polyline positions={westLine} pathOptions={{ color: "#FF5F1F", weight: 3, opacity: 0.7 }} />}
-        {eastLine.length > 1 && <Polyline positions={eastLine} pathOptions={{ color: "#1E40AF", weight: 3, opacity: 0.7 }} />}
+        {eastLine.length > 1 && <Polyline positions={eastLine} pathOptions={{ color: "#3B82F6", weight: 3, opacity: 0.7 }} />}
         {valid.map((j, idx) => (
           <Marker key={j.id} position={[j.job_lat, j.job_lng]}
             icon={makeIcon(idx + 1, j.zone === "west" ? "#FF5F1F" : "#1E40AF", j.zone === "west" ? "#0a0a0a" : "#fff")}>
