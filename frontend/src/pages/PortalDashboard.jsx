@@ -5,11 +5,11 @@ import L from "leaflet";
 import { portalApi, getPortalAuth } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
-function pinIcon(num, color, ghost = false) {
+function pinIcon(num, color, ghost = false, text = "#fff") {
   const opacity = ghost ? 0.55 : 1;
   return L.divIcon({
     className: "route-pin",
-    html: `<div style="background:${color};color:#fff;border-radius:999px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border:2px solid #111;opacity:${opacity};font-family:'JetBrains Mono',monospace;">${num}</div>`,
+    html: `<div style="background:${color};color:${text};border-radius:999px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border:2px solid #111;opacity:${opacity};font-family:'JetBrains Mono',monospace;">${num}</div>`,
     iconSize: [26, 26], iconAnchor: [13, 13],
   });
 }
@@ -72,7 +72,7 @@ export default function PortalDashboard() {
               attribution='&copy; OpenStreetMap &copy; CARTO' />
             {own.map((j, idx) => (
               <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-                icon={pinIcon(`Y${idx + 1}`, j.zone === "west" ? "#F97316" : "#3B82F6")}>
+                icon={pinIcon(`Y${idx + 1}`, j.zone === "west" ? "#FF5F1F" : "#1E40AF", false, j.zone === "west" ? "#0a0a0a" : "#fff")}>
                 <Tooltip>
                   <div style={{ fontSize: 12 }}>
                     <b>Your job · {fmt(j.scheduled_start)}</b><br />
