@@ -87,12 +87,12 @@ export default function Dashboard() {
         <div className="page-fade" style={{ marginBottom: 16, position: "relative" }} data-testid="new-bookings-banner">
           <button onClick={() => setAlertsOpen(o => !o)} data-testid="new-bookings-pill"
             style={{ display: "inline-flex", alignItems: "center", gap: 10,
-              background: "var(--accent-dim)", color: "var(--accent)",
-              border: "1px solid var(--border-active)", borderRadius: 999,
+              background: "var(--accent)", color: "#0a0a0a",
+              border: "1px solid var(--accent)", borderRadius: 999,
               padding: "8px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
-            <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 999, background: "var(--accent)" }} />
+            <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 999, background: "#0a0a0a" }} />
             <span data-testid="new-bookings-count">{alerts.count}</span> new booking{alerts.count === 1 ? "" : "s"} since you last looked
-            <span style={{ opacity: 0.7, fontSize: 12 }}>{alertsOpen ? "▲" : "▼"}</span>
+            <span style={{ fontSize: 12 }}>{alertsOpen ? "▲" : "▼"}</span>
           </button>
           {alertsOpen && (
             <div className="surface page-fade" style={{
@@ -127,7 +127,6 @@ export default function Dashboard() {
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>
         <div>
-          <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase" }}>Dispatch board</div>
           <h1 className="h1" style={{ margin: "4px 0" }}>
             {new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
           </h1>
@@ -199,7 +198,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobI
     <section data-testid={`zone-panel-${zone}`}>
       <div className={`zone-header ${headerClass}`}>
         <span>{title}</span>
-        <span style={{ fontSize: 12, opacity: 0.8 }}>{subtitle} · {jobs.length} jobs</span>
+        <span style={{ fontSize: 12 }}>{subtitle} · {jobs.length} jobs</span>
       </div>
       {jobs.length === 0 && (
         <div className="surface muted" style={{ padding: 20, textAlign: "center" }}>No jobs in this zone yet.</div>
@@ -257,7 +256,7 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
               fontSize: 12, fontWeight: 600,
             }}>#{index}</span>
             <span className={`badge badge-${job.status}`}>{job.status.replace(/_/g, " ")}</span>
-            {isNew && <span className="badge" style={{ background: "var(--accent-dim)", color: "var(--accent)", border: "1px solid var(--border-active)" }} data-testid="badge-new">NEW</span>}
+            {isNew && <span className="badge" style={{ background: "var(--accent)", color: "#0a0a0a", border: "1px solid var(--accent)" }} data-testid="badge-new">NEW</span>}
             {job.invoice_status === "draft" && <span className="badge badge-draft">Invoice: Draft</span>}
             {offer && (
               <span className="badge badge-dispatched_to_contractor" data-testid={`offer-countdown-${job.id}`}>
@@ -276,7 +275,7 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
             {job.vehicle_year} {job.vehicle_make} {job.vehicle_model} · {job.calibration_label}
           </div>
           <a href={`https://maps.google.com/?q=${encodeURIComponent(job.job_address)}`} target="_blank" rel="noreferrer"
-            style={{ display: "inline-block", marginTop: 6, fontSize: 13, color: "var(--accent)" }}>
+            style={{ display: "inline-block", marginTop: 6, fontSize: 13, color: "var(--accent-ink)" }}>
             {job.job_address} →
           </a>
         </div>

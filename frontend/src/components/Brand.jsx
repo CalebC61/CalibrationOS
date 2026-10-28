@@ -12,7 +12,7 @@ export default function Brand({ size = 22, subtle, tag }) {
         <span style={{
           marginLeft: 12,
           fontFamily: "'DM Sans', sans-serif",
-          fontSize: Math.max(10, size * 0.45),
+          fontSize: Math.max(12, size * 0.45),
           letterSpacing: "0.18em",
           textTransform: "uppercase",
           color: "var(--text-muted)",
@@ -23,7 +23,7 @@ export default function Brand({ size = 22, subtle, tag }) {
         <span style={{
           marginLeft: 10,
           fontFamily: "'DM Sans', sans-serif",
-          fontSize: Math.max(9, size * 0.42),
+          fontSize: Math.max(12, size * 0.42),
           letterSpacing: "0.18em",
           textTransform: "uppercase",
           color: "var(--text-subtle)",

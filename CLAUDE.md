@@ -159,6 +159,24 @@ Check there before starting work on either:
 | Frontend build | `cd frontend && yarn build` |
 | Restart on Emergent | `sudo supervisorctl restart all` |
 
+## Design (Impeccable)
+
+UI work follows the vendored [Impeccable](https://github.com/pbakaus/impeccable)
+skill (Apache 2.0, Paul Bakaus, v4.8.0) at `.cursor/skills/impeccable/`. Read
+`SKILL.md` before a visual change and `reference/craft-floor.md` immediately
+before editing UI. License and third-party notices are in that directory.
+The skill's `scripts/` runtime is intentionally not vendored and `impeccable`
+is not a project dependency — follow the skill's launcher-unavailable path
+rather than downloading a binary or installing hooks.
+
+CalibrationOS screens are **Operate** mode (dispatch, shop portal, admin).
+Brand orange is **#FF5F1F** (`--accent`, used as a fill with near-black text).
+Orange text on the gunsteel surfaces uses `--accent-ink` (#FF7E1E), because
+#FF5F1F as small text misses WCAG AA on `#2A2E37` / `#343843`. Cursor also
+loads `.cursor/rules/impeccable-design.mdc` for `frontend/` files. Do not
+restyle toward generic AI defaults (Inter/Roboto, purple gradients, eyebrow
+kickers, side-tab borders, nested cards).
+
 ## Guidelines for Claude
 1. **Build on existing patterns.** Backend integrations follow a "use the real provider if its API
    key is configured, otherwise fall back to a mock/DB log" pattern (see Stripe at

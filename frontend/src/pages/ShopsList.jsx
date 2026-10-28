@@ -37,7 +37,7 @@ export default function ShopsList() {
           <tbody>
             {filtered.map(s => (
               <tr key={s.id} style={{ borderTop: "1px solid var(--border)" }} data-testid={`shop-row-${s.id}`}>
-                <Td><Link to={`/shops/${s.id}`} style={{ color: "var(--accent)" }}>{s.name}</Link>
+                <Td><Link to={`/shops/${s.id}`} style={{ color: "var(--accent-ink)" }}>{s.name}</Link>
                   <div className="muted" style={{ fontSize: 12 }}>{s.address}</div>
                 </Td>
                 <Td><span className={`badge badge-${s.zone}`}>{s.zone}</span></Td>

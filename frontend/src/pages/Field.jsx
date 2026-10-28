@@ -165,7 +165,7 @@ export default function Field() {
 
         {offers.length > 0 && (
           <div style={{ marginBottom: 16 }} data-testid="pending-offers">
-            <div className="label" style={{ color: "var(--accent)" }}>Pending offers ({offers.length})</div>
+            <div className="label" style={{ color: "var(--accent-ink)" }}>Pending offers ({offers.length})</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {offers.map(o => (
                 <div key={o.id} className="card-job-new card-job" data-testid={`offer-${o.id}`}>

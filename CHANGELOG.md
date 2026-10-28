@@ -54,6 +54,28 @@ Job queries treated a calendar date as UTC midnight-to-midnight and defaulted "t
   rounded destination all miss an empty cache and each call Google. `coalesce()` shares the
   in-flight request for a `drive_time_cache_key`. The mock path is still uncached.
 
+### Added — Impeccable design guidance (no runtime dependency)
+Vendored the Impeccable skill (v4.8.0, Apache 2.0, Paul Bakaus, commit
+`d34c87e`) as agent guidance so later UI work does not drift into generic
+AI-looking design. Markdown only: `.cursor/skills/impeccable/SKILL.md` plus
+`reference/`, with `LICENSE` and `NOTICE`. The upstream `scripts/` launcher
+and live-browser bundle are not included, and `impeccable` is not a package
+dependency. `.cursor/rules/impeccable-design.mdc` and a short section in
+`CLAUDE.md` point at the skill and record the brand.
+
+Brand orange is **#FF5F1F** (`--accent`) for fills. Small text on gunsteel uses
+`--accent-ink` (#FF7E1E); text on an orange tint uses `--accent-on-tint`. A
+`npx impeccable detect` pass (source regex on `frontend/src`, plus a rendered
+scan of login, dashboard, portal jobs, and a job detail page) found no regex
+hits and a short list of rendered issues. Fixed only the trivial ones: muted
+label contrast, zone-header and east/west badge contrast, white-on-blue map
+pins, the Leaflet attribution bar, the 10px "Shop Portal" tag (floor is now
+12px), the "Dispatch board" kicker above the date heading, and the skipped
+heading on the job detail page (`h3` → `h2`, same visual class), and the
+zero-offset orange glow on a new job card. A rescan of those four rendered
+pages reports no remaining findings. Not done here: a layout or type redesign,
+and installing Impeccable's hooks or CLI as a dependency.
+
 ### Added — Real card charging via Stripe (2026-07-21)
 Wires up the Charge Queue, which previously listed completed jobs with a card on file but had no
 way to actually bill them — the "Charge Now" button existed in the UI but was disabled
