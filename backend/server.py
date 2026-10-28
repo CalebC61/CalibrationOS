@@ -47,10 +47,12 @@ from charging import cents, chargeable_reason, interpret_payment_intent, decline
 from google_maps import (
     GEOCODE_URL, DISTANCE_MATRIX_URL, GoogleMapsError,
     geocode_request_params, distance_matrix_request_params,
-    parse_geocode_response, parse_distance_matrix_response, drive_time_cache_key,
+    parse_geocode_response, parse_distance_matrix_response, drive_time_cache_key, coalesce,
     METRO_LAT_MIN, METRO_LAT_MAX, METRO_LNG_MIN, METRO_LNG_MAX,
 )
-from business_time import business_date, business_day_bounds
+from business_time import (
+    business_date, business_day_bounds, clamp_start_to_business_day, offered_slot_starts,
+)
 # Module 9 — Partner Growth Engine (models only here; routes are wired conditionally near the
 # bottom of this file, only when GROWTH_MODULE_ENABLED, to avoid registering unused routes)
 from growth.models import PartnerContact, enforce_grid_caps
@@ -279,29 +281,38 @@ async def geocode_address(address: str) -> dict:
             logger.error(f"[MAPS] geocode failed, falling back to mock: {e}")
     return mock_geocode(address)
 
+# In-flight real Distance Matrix calls, keyed like drive_time_cache. Concurrent day-map
+# lookups that share a rounded destination await one request instead of each paying for a miss.
+_DRIVE_TIME_INFLIGHT: dict = {}
+
 async def get_drive_time(o_lat, o_lng, d_lat, d_lng) -> dict:
     """Drive time between two points — real Google Distance Matrix when configured, else mock.
 
     Real lookups are cached per Phoenix calendar day (rounded coordinates) in `drive_time_cache`.
-    The day bucket follows America/Phoenix so it does not roll at 5 PM local. The mock path is
-    not cached (it is a local haversine). Falls back to the mock on any error.
+    The day bucket follows America/Phoenix so it does not roll at 5 PM local. Callers that miss
+    the cache together share one in-flight request per cache key. The mock path is not cached
+    (it is a local haversine). Falls back to the mock on any error.
     """
     if not google_maps_enabled():
         return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
     key = drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, business_date().isoformat())
-    cached = await db.drive_time_cache.find_one({"_id": key})
-    if cached:
-        return {"distance_miles": cached["distance_miles"], "duration_minutes": cached["duration_minutes"]}
-    try:
-        data = await asyncio.to_thread(_google_distance_matrix_request, o_lat, o_lng, d_lat, d_lng)
-        result = parse_distance_matrix_response(data)
-        await db.drive_time_cache.update_one(
-            {"_id": key}, {"$set": {**result, "cached_at": now_utc()}}, upsert=True
-        )
-        return result
-    except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
-        logger.error(f"[MAPS] distance matrix failed, falling back to mock: {e}")
-        return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
+
+    async def _load():
+        cached = await db.drive_time_cache.find_one({"_id": key})
+        if cached:
+            return {"distance_miles": cached["distance_miles"], "duration_minutes": cached["duration_minutes"]}
+        try:
+            data = await asyncio.to_thread(_google_distance_matrix_request, o_lat, o_lng, d_lat, d_lng)
+            result = parse_distance_matrix_response(data)
+            await db.drive_time_cache.update_one(
+                {"_id": key}, {"$set": {**result, "cached_at": now_utc()}}, upsert=True
+            )
+            return result
+        except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
+            logger.error(f"[MAPS] distance matrix failed, falling back to mock: {e}")
+            return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
+
+    return await coalesce(_DRIVE_TIME_INFLIGHT, key, _load)
 
 async def mock_send_sms(to: str, body: str, kind: str = "generic", job_id: Optional[str] = None):
     """Mock Twilio. Logs to sms_log collection so we can show it in UI."""
@@ -776,7 +787,9 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
     start_t = parse_time_str(z["start"])
     end_t = parse_time_str(z["end"])
     # Fetch existing jobs in zone on this Phoenix date, ordered by scheduled_start.
-    # Zone start/end clocks below stay UTC wall times; only the query window moves.
+    # Zone start/end clocks stay UTC wall times. offered_slot_starts drops any start
+    # that would fall on the previous Phoenix day (before 07:00 UTC), including when
+    # the hours were saved via /settings/zones.
     day_start, day_end = business_day_bounds(day)
     jobs = await db.jobs.find({
         "zone": zone_key,
@@ -814,20 +827,16 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
     else:
         earliest = earliest.replace(minute=minute, second=0, microsecond=0)
 
-    # Generate slots from earliest until zone end
+    # Generate slots from earliest until zone end, only when the start is on this Phoenix day.
     zone_end_dt = datetime.combine(day, end_t, tzinfo=timezone.utc)
-    cursor = earliest
-    while cursor + timedelta(minutes=z["slot_minutes"]) <= zone_end_dt:
+    remaining = z["max_jobs"] - len(jobs)
+    for cursor in offered_slot_starts(day, earliest, zone_end_dt, z["slot_minutes"], remaining):
         slots.append({
             "start": iso(cursor),
             "end": iso(cursor + timedelta(minutes=z["slot_minutes"])),
             "drive_time_minutes": drive_min,
             "label": cursor.strftime("%-I:%M %p") if hasattr(cursor, 'strftime') else cursor.isoformat(),
         })
-        # Increment by slot duration for next available slot
-        cursor = cursor + timedelta(minutes=z["slot_minutes"])
-        if len(slots) + len(jobs) >= z["max_jobs"]:
-            break
     return slots
 
 @api.post("/public/availability")
@@ -1607,11 +1616,13 @@ async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
             earliest = earliest.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         else:
             earliest = earliest.replace(minute=minute, second=0, microsecond=0)
-        new_start = earliest
+        new_start = clamp_start_to_business_day(earliest, d)
+        if new_start is None:
+            raise HTTPException(400, "Reorder would place a job outside this day.")
         new_end = new_start + timedelta(minutes=z["slot_minutes"])
         zone_end_dt = datetime.combine(d, parse_time_str(z["end"]), tzinfo=timezone.utc)
         if new_end > zone_end_dt:
-            raise HTTPException(400, f"Reorder would push job past zone end. Try a different order.")
+            raise HTTPException(400, "Reorder would push job past zone end. Try a different order.")
         updates.append({
             "id": jid,
             "scheduled_start": iso(new_start),

@@ -5,6 +5,8 @@ full server / MongoDB / a real Google API key. The real HTTP calls (requests + a
 same as the existing Xero/Resend integrations) live in server.py; this module only builds request
 params and parses responses, so parsing bugs can't hide behind a live network call in tests.
 """
+import asyncio
+from collections.abc import Awaitable, Callable
 
 # Same Phoenix-metro service-area bounding box the mock geocoder has always used, so a real
 # geocode result and the mock agree on which addresses count as "in service area."
@@ -89,3 +91,21 @@ def drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, day_iso: str) -> str:
     """
     return (f"{round(o_lat, 4)},{round(o_lng, 4)}|"
             f"{round(d_lat, 4)},{round(d_lng, 4)}|{day_iso}")
+
+
+async def coalesce(pending: dict, key: str, factory: Callable[[], Awaitable]):
+    """Run factory once per key. Concurrent callers await that same task.
+
+    `pending` is owned by the caller. The key is removed when the task finishes
+    so a later call can run again (the Mongo cache, not this dict, holds the result).
+    Check-and-set happens before the first await, so asyncio callers cannot both miss.
+    """
+    task = pending.get(key)
+    if task is None:
+        task = asyncio.create_task(factory())
+        pending[key] = task
+    try:
+        return await task
+    finally:
+        if pending.get(key) is task and task.done():
+            pending.pop(key, None)

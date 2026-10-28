@@ -8,7 +8,10 @@ import sys
 from datetime import date, datetime, time, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/
-from business_time import BUSINESS_TZ, business_date, business_day_bounds  # noqa: E402
+from business_time import (  # noqa: E402
+    BUSINESS_TZ, business_date, business_day_bounds, clamp_start_to_business_day,
+    offered_slot_starts,
+)
 
 PHOENIX_DAY = date(2026, 10, 27)
 # 6:00 PM America/Phoenix on that day — 1:00 AM UTC the next calendar day.
@@ -73,3 +76,61 @@ def test_phoenix_offset_is_minus_seven_in_january_and_july():
         local = datetime(2026, month, 15, 12, 0, tzinfo=BUSINESS_TZ)
         assert local.utcoffset() == timedelta(hours=-7)
         assert business_date(local) == date(2026, month, 15)
+
+
+def test_zone_hours_before_0700_utc_are_not_offered_on_that_phoenix_day():
+    """A saved zone of 05:00–10:00 is a UTC wall clock. 05:00 UTC is the previous Phoenix evening.
+
+    Offering it on the requested date, then querying that Phoenix day, hides the booking
+    and the slot is offered again. Every offered start must fall inside the same window /jobs uses.
+    """
+    day = date(2026, 10, 27)
+    five_am = datetime(2026, 10, 27, 5, 0, tzinfo=timezone.utc)
+    zone_end = datetime(2026, 10, 27, 10, 0, tzinfo=timezone.utc)
+    starts = offered_slot_starts(day, five_am, zone_end, slot_minutes=45)
+    day_start, day_end = business_day_bounds(day)
+
+    assert five_am not in starts
+    assert business_date(five_am) == date(2026, 10, 26)
+    assert starts == [
+        datetime(2026, 10, 27, 7, 15, tzinfo=timezone.utc),
+        datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc),
+        datetime(2026, 10, 27, 8, 45, tzinfo=timezone.utc),
+    ]
+    for start in starts:
+        assert day_start <= start < day_end
+        assert day_start.isoformat() <= start.isoformat() < day_end.isoformat()
+
+
+def test_zone_entirely_before_phoenix_midnight_offers_no_slots():
+    day = date(2026, 10, 27)
+    starts = offered_slot_starts(
+        day,
+        datetime(2026, 10, 27, 4, 0, tzinfo=timezone.utc),
+        datetime(2026, 10, 27, 6, 0, tzinfo=timezone.utc),
+        slot_minutes=45,
+    )
+    assert starts == []
+
+
+def test_default_0800_utc_zone_still_offers_its_first_slot():
+    day = date(2026, 10, 27)
+    starts = offered_slot_starts(
+        day,
+        datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc),
+        datetime(2026, 10, 27, 14, 0, tzinfo=timezone.utc),
+        slot_minutes=45,
+        limit=7,
+    )
+    assert starts[0] == datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc)
+    assert len(starts) == 7
+    assert all(business_date(s) == day for s in starts)
+
+
+def test_reorder_start_before_phoenix_midnight_moves_up_to_the_day():
+    day = date(2026, 10, 27)
+    clamped = clamp_start_to_business_day(datetime(2026, 10, 27, 5, 15, tzinfo=timezone.utc), day)
+    assert clamped == datetime(2026, 10, 27, 7, 0, tzinfo=timezone.utc)
+    kept = clamp_start_to_business_day(datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc), day)
+    assert kept == datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc)
+    assert clamp_start_to_business_day(datetime(2026, 10, 28, 8, 0, tzinfo=timezone.utc), day) is None

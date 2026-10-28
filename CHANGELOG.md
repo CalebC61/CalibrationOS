@@ -43,6 +43,16 @@ Job queries treated a calendar date as UTC midnight-to-midnight and defaulted "t
   that Phoenix day's bounds (and its ISO string sorts inside them) and outside the old UTC-midnight
   window. January and July offsets are both −07:00. Existing 08:00–19:00 UTC slot clocks stay on
   the labeled day.
+- **Slots stay on the day they are offered** (review follow-up). Zone hours are still UTC wall
+  clocks, including hours saved via `PUT /settings/zones/{zone_key}`. A zone of `05:00`–`10:00`
+  was offering 05:00 UTC, which is the previous Phoenix evening, so the booking did not match
+  the Phoenix-day job query and the slot could be offered again. `offered_slot_starts()` skips
+  those starts. `POST /jobs/reorder` clamps a computed start that would fall before the Phoenix
+  day up to that day's start, and still rejects a start that would land on a later day.
+  Default 08:00 UTC zones are unchanged.
+- **One paid lookup per drive-time key.** `asyncio.gather` on the day map let jobs that share a
+  rounded destination all miss an empty cache and each call Google. `coalesce()` shares the
+  in-flight request for a `drive_time_cache_key`. The mock path is still uncached.
 
 ### Added — Real card charging via Stripe (2026-07-21)
 Wires up the Charge Queue, which previously listed completed jobs with a card on file but had no
