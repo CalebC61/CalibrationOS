@@ -3,10 +3,10 @@ import { MapContainer, TileLayer, Marker, Polyline, Tooltip, useMap } from "reac
 import L from "leaflet";
 
 // Default marker icons break in webpack; use divIcon for numbered colored pins.
-function makeIcon(num, color) {
+function makeIcon(num, color, text = "#0a0a0a") {
   return L.divIcon({
     className: "route-pin",
-    html: `<div style="background:${color};color:#fff;border-radius:999px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:2px solid #111;box-shadow:0 2px 8px rgba(0,0,0,0.6);font-family:'JetBrains Mono',monospace;">${num}</div>`,
+    html: `<div style="background:${color};color:${text};border-radius:999px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:2px solid #111;box-shadow:0 2px 8px rgba(0,0,0,0.6);font-family:'JetBrains Mono',monospace;">${num}</div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
   });
@@ -36,11 +36,11 @@ export default function RouteMap({ jobs }) {
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
           attribution='&copy; OpenStreetMap &copy; CARTO'
         />
-        {westLine.length > 1 && <Polyline positions={westLine} pathOptions={{ color: "#F97316", weight: 3, opacity: 0.7 }} />}
+        {westLine.length > 1 && <Polyline positions={westLine} pathOptions={{ color: "#FF5F1F", weight: 3, opacity: 0.7 }} />}
         {eastLine.length > 1 && <Polyline positions={eastLine} pathOptions={{ color: "#3B82F6", weight: 3, opacity: 0.7 }} />}
         {valid.map((j, idx) => (
           <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-            icon={makeIcon(idx + 1, j.zone === "west" ? "#F97316" : "#3B82F6")}>
+            icon={makeIcon(idx + 1, j.zone === "west" ? "#FF5F1F" : "#1E40AF", j.zone === "west" ? "#0a0a0a" : "#fff")}>
             <Tooltip direction="top" offset={[0, -10]}>
               <div style={{ fontSize: 12 }}>
                 <b>#{idx + 1} · {j.shop_name}</b><br />

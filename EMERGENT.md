@@ -22,6 +22,11 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Design guidance only, plus a small token/contrast pass.** Impeccable's skill
+  text is vendored under `.cursor/skills/impeccable/` (Apache 2.0; scripts not
+  included; no new npm/pip dependency). Brand fill is `#FF5F1F`. A few CSS
+  contrast and type-size fixes landed with it. No API, collection, or hosting
+  change. Details in `CHANGELOG.md`.
 - **Session (2026-07-21c): real card charging via Stripe — the Charge Queue is now wired up.**
   `POST /api/charge-queue/{job_id}/charge` (off-session PaymentIntent against the shop's stored
   card, idempotent per job — a double-click or retry can't double-charge) and `POST
