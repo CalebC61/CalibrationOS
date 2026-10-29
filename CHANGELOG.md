@@ -8,7 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ---
 
-## [Unreleased]
+## [0.1.0] — current
+
+App version is **0.1.0**, the same number as `frontend/package.json`. `[0.0.3]` further
+down is the previous cut (Xero, 2026-06-16), not a second current version.
+
+### Fixed — zero-length zone slots (2026-10-29)
+`offered_slot_starts()` stepped by `slot_minutes`. A zone saved with `slot_minutes` of 0
+(allowed by `PUT /settings/zones/{zone_key}`) never advanced the cursor, so availability
+looped forever. Nonpositive lengths now raise before the loop, and the zone settings
+endpoint rejects them with 400. Negative lengths are rejected too.
 
 ### Fixed — Phoenix day boundaries for the shop day map (and the same date window elsewhere) (2026-10-27)
 Job queries treated a calendar date as UTC midnight-to-midnight and defaulted "today" to

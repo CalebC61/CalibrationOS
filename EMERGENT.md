@@ -140,8 +140,8 @@ new integration to wire up, only account setup:
    are now live (previously a permanently-disabled "next iteration" button — verify **Charge Now**
    and **Skip / Bill Manually** both render and work against Stripe test mode, per the checklist
    above, before flipping to a live key).
-5. **Reconcile version numbers:** `CHANGELOG.md` says `0.0.3`, `frontend/package.json` says `0.1.0`.
-   Pick one scheme.
+5. **Version is 0.1.0** in both `CHANGELOG.md` and `frontend/package.json`. `[0.0.3]` is the
+   previous cut.
 6. **Module 9 is live** — no external credentials needed (dispatch reuses existing SMS/email
    helpers). If you want it off for any reason, set `GROWTH_MODULE_ENABLED=false` and
    `REACT_APP_GROWTH_MODULE_ENABLED=false` — the backend routes 404 and the frontend falls back to

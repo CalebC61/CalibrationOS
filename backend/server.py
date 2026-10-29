@@ -1656,6 +1656,9 @@ async def update_zone(zone_key: str, body: ZoneUpdate, tech=Depends(require_owne
     if zone_key not in ZONES:
         raise HTTPException(404, "Zone not found")
     d = body.model_dump(exclude_unset=True)
+    # A zero or negative length makes offered_slot_starts step by nothing and loop forever.
+    if d.get("slot_minutes") is not None and d["slot_minutes"] <= 0:
+        raise HTTPException(400, "slot_minutes must be greater than 0")
     for k, v in d.items():
         if k in ZONES[zone_key] and v is not None:
             ZONES[zone_key][k] = v

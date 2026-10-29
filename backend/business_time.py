@@ -59,6 +59,8 @@ def offered_slot_starts(
     would not see it and the same slot could be offered again. Starts before
     the Phoenix day are skipped; the step from `earliest` is unchanged.
     """
+    if slot_minutes <= 0:
+        raise ValueError("slot_minutes must be greater than 0")
     if limit is not None and limit <= 0:
         return []
     cursor = _as_utc(earliest)

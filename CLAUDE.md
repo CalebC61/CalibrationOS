@@ -101,8 +101,8 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 - **Verify the frontend build on Emergent/Vercel.** The Step 1 `Settings.jsx` change was not built
   during the Claude session — the SPA pulls the private `@emergentbase/visual-edits` dependency, so it
   only builds inside Emergent.
-- **Version numbers are out of sync:** `CHANGELOG.md` is at `0.0.3` while `frontend/package.json` is at
-  `0.1.0`. Reconcile to a single scheme next time either file is touched.
+- **App version is 0.1.0** in both `CHANGELOG.md` (current section) and `frontend/package.json`.
+  `[0.0.3]` is the previous cut only.
 
 ## Architecture & tech stack (as-built — do NOT change without explicit approval)
 - **Backend:** FastAPI in a single module `backend/server.py`; MongoDB via Motor (async). All API

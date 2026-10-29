@@ -7,6 +7,8 @@ import os
 import sys
 from datetime import date, datetime, time, timedelta, timezone
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/
 from business_time import (  # noqa: E402
     BUSINESS_TZ, business_date, business_day_bounds, clamp_start_to_business_day,
@@ -125,6 +127,15 @@ def test_default_0800_utc_zone_still_offers_its_first_slot():
     assert starts[0] == datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc)
     assert len(starts) == 7
     assert all(business_date(s) == day for s in starts)
+
+
+def test_nonpositive_slot_minutes_is_rejected():
+    day = date(2026, 10, 27)
+    earliest = datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc)
+    zone_end = datetime(2026, 10, 27, 14, 0, tzinfo=timezone.utc)
+    for bad in (0, -15):
+        with pytest.raises(ValueError, match="slot_minutes"):
+            offered_slot_starts(day, earliest, zone_end, slot_minutes=bad)
 
 
 def test_reorder_start_before_phoenix_midnight_moves_up_to_the_day():
