@@ -8,7 +8,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ---
 
-## [Unreleased]
+## [0.1.0] — current
+
+App version is **0.1.0**, the same number as `frontend/package.json`. `[0.0.3]` further
+down is the previous cut (Xero, 2026-06-16), not a second current version.
+
+### Fixed — zero-length zone slots (2026-10-29)
+`offered_slot_starts()` stepped by `slot_minutes`. A zone saved with `slot_minutes` of 0
+(allowed by `PUT /settings/zones/{zone_key}`) never advanced the cursor, so availability
+looped forever. Nonpositive lengths now raise before the loop, and the zone settings
+endpoint rejects them with 400. Negative lengths are rejected too.
+
+### Fixed — Phoenix day boundaries for the shop day map (and the same date window elsewhere) (2026-10-27)
+Job queries treated a calendar date as UTC midnight-to-midnight and defaulted "today" to
+`now_utc().date()`. The shop is in America/Phoenix (UTC−7, no DST), so a 6 PM Phoenix job is
+01:00 UTC the next day and was missing from that Phoenix date. From 5 PM to midnight Phoenix,
+"today" was already tomorrow.
+
+- **New `backend/business_time.py`** (stdlib `zoneinfo` only). `business_date()` is the Phoenix
+  civil date of an instant (default: now). `business_day_bounds()` is that day's half-open window
+  as UTC datetimes (07:00 UTC through 07:00 UTC next day). Naive datetimes are UTC, same as the
+  rest of the backend.
+- **Query windows and default dates** now use that helper: `GET /portal/day-map`, `GET /jobs`,
+  `GET /dashboard/summary`, `POST /jobs/reorder`, `compute_available_slots` (availability),
+  `POST /public/book` (previous-job drive time and `sequence_order`, using the Phoenix date of
+  the start instant), and `POST /public/availability` ("today" for the past / 21-day checks).
+  Assist tools that call `/jobs` and `/dashboard/summary` pick this up with no tool changes.
+- **Not changed:** zone start/end clocks (`08:00`–`19:00`) are still combined as UTC wall times.
+  Those slots are 1:00 AM–12:00 PM Phoenix, so they stay on the same civil date. Reinterpreting
+  them as Phoenix local time would shift every existing appointment by 7 hours.
+- **Portal date pickers** (`frontend/src/lib/api.js` `phoenixTodayStr`, `Intl` `America/Phoenix`,
+  no new dependency). The day map's initial date and the portal booking date input's min/max were
+  `toISOString().slice(0, 10)` (the UTC date). They now use today's Phoenix date. Booking's max is
+  that date plus 21 days (Phoenix has no DST, so 21×24h lands on the same civil date). Owner
+  dashboard, field app, and public booking already used the browser's local calendar date
+  (`todayStr` / `dateStr`), not a UTC timestamp, and were left as they are.
+- **Drive times:** `get_drive_time` already cached real Distance Matrix results in `drive_time_cache`
+  (rounded coordinates, TTL index left at 2 days). The cache day was the UTC date, so it rolled at
+  5 PM Phoenix. It now uses the Phoenix date. No second cache. `GET /portal/day-map` runs the
+  per-other-shop lookup concurrently (`asyncio.gather`, order preserved). The mock path stays
+  uncached. No new dependency.
+- **Tests:** `backend/tests/test_business_time.py`. A 6 PM Phoenix instant on 2026-10-27 is inside
+  that Phoenix day's bounds (and its ISO string sorts inside them) and outside the old UTC-midnight
+  window. January and July offsets are both −07:00. Existing 08:00–19:00 UTC slot clocks stay on
+  the labeled day.
+- **Slots stay on the day they are offered** (review follow-up). Zone hours are still UTC wall
+  clocks, including hours saved via `PUT /settings/zones/{zone_key}`. A zone of `05:00`–`10:00`
+  was offering 05:00 UTC, which is the previous Phoenix evening, so the booking did not match
+  the Phoenix-day job query and the slot could be offered again. `offered_slot_starts()` skips
+  those starts. `POST /jobs/reorder` clamps a computed start that would fall before the Phoenix
+  day up to that day's start, and still rejects a start that would land on a later day.
+  Default 08:00 UTC zones are unchanged.
+- **One paid lookup per drive-time key.** `asyncio.gather` on the day map let jobs that share a
+  rounded destination all miss an empty cache and each call Google. `coalesce()` shares the
+  in-flight request for a `drive_time_cache_key`. The mock path is still uncached.
 
 ### Added — Impeccable design guidance (no runtime dependency)
 Vendored the Impeccable skill (v4.8.0, Apache 2.0, Paul Bakaus, commit

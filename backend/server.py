@@ -47,8 +47,11 @@ from charging import cents, chargeable_reason, interpret_payment_intent, decline
 from google_maps import (
     GEOCODE_URL, DISTANCE_MATRIX_URL, GoogleMapsError,
     geocode_request_params, distance_matrix_request_params,
-    parse_geocode_response, parse_distance_matrix_response, drive_time_cache_key,
+    parse_geocode_response, parse_distance_matrix_response, drive_time_cache_key, coalesce,
     METRO_LAT_MIN, METRO_LAT_MAX, METRO_LNG_MIN, METRO_LNG_MAX,
+)
+from business_time import (
+    business_date, business_day_bounds, clamp_start_to_business_day, offered_slot_starts,
 )
 # Module 9 — Partner Growth Engine (models only here; routes are wired conditionally near the
 # bottom of this file, only when GROWTH_MODULE_ENABLED, to avoid registering unused routes)
@@ -278,29 +281,38 @@ async def geocode_address(address: str) -> dict:
             logger.error(f"[MAPS] geocode failed, falling back to mock: {e}")
     return mock_geocode(address)
 
+# In-flight real Distance Matrix calls, keyed like drive_time_cache. Concurrent day-map
+# lookups that share a rounded destination await one request instead of each paying for a miss.
+_DRIVE_TIME_INFLIGHT: dict = {}
+
 async def get_drive_time(o_lat, o_lng, d_lat, d_lng) -> dict:
     """Drive time between two points — real Google Distance Matrix when configured, else mock.
 
-    Real lookups are cached per calendar day (rounded coordinates) in `drive_time_cache` — the
-    scheduling/dispatch/portal-map code calls this in loops over a day's jobs, so caching keeps
-    API spend and request latency bounded. Falls back to the mock on any error.
+    Real lookups are cached per Phoenix calendar day (rounded coordinates) in `drive_time_cache`.
+    The day bucket follows America/Phoenix so it does not roll at 5 PM local. Callers that miss
+    the cache together share one in-flight request per cache key. The mock path is not cached
+    (it is a local haversine). Falls back to the mock on any error.
     """
     if not google_maps_enabled():
         return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
-    key = drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, now_utc().date().isoformat())
-    cached = await db.drive_time_cache.find_one({"_id": key})
-    if cached:
-        return {"distance_miles": cached["distance_miles"], "duration_minutes": cached["duration_minutes"]}
-    try:
-        data = await asyncio.to_thread(_google_distance_matrix_request, o_lat, o_lng, d_lat, d_lng)
-        result = parse_distance_matrix_response(data)
-        await db.drive_time_cache.update_one(
-            {"_id": key}, {"$set": {**result, "cached_at": now_utc()}}, upsert=True
-        )
-        return result
-    except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
-        logger.error(f"[MAPS] distance matrix failed, falling back to mock: {e}")
-        return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
+    key = drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, business_date().isoformat())
+
+    async def _load():
+        cached = await db.drive_time_cache.find_one({"_id": key})
+        if cached:
+            return {"distance_miles": cached["distance_miles"], "duration_minutes": cached["duration_minutes"]}
+        try:
+            data = await asyncio.to_thread(_google_distance_matrix_request, o_lat, o_lng, d_lat, d_lng)
+            result = parse_distance_matrix_response(data)
+            await db.drive_time_cache.update_one(
+                {"_id": key}, {"$set": {**result, "cached_at": now_utc()}}, upsert=True
+            )
+            return result
+        except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
+            logger.error(f"[MAPS] distance matrix failed, falling back to mock: {e}")
+            return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
+
+    return await coalesce(_DRIVE_TIME_INFLIGHT, key, _load)
 
 async def mock_send_sms(to: str, body: str, kind: str = "generic", job_id: Optional[str] = None):
     """Mock Twilio. Logs to sms_log collection so we can show it in UI."""
@@ -774,9 +786,11 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
     z = ZONES[zone_key]
     start_t = parse_time_str(z["start"])
     end_t = parse_time_str(z["end"])
-    # Fetch existing jobs in zone on this date, ordered by scheduled_start
-    day_start = datetime.combine(day, time(0, 0), tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+    # Fetch existing jobs in zone on this Phoenix date, ordered by scheduled_start.
+    # Zone start/end clocks stay UTC wall times. offered_slot_starts drops any start
+    # that would fall on the previous Phoenix day (before 07:00 UTC), including when
+    # the hours were saved via /settings/zones.
+    day_start, day_end = business_day_bounds(day)
     jobs = await db.jobs.find({
         "zone": zone_key,
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
@@ -813,20 +827,16 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
     else:
         earliest = earliest.replace(minute=minute, second=0, microsecond=0)
 
-    # Generate slots from earliest until zone end
+    # Generate slots from earliest until zone end, only when the start is on this Phoenix day.
     zone_end_dt = datetime.combine(day, end_t, tzinfo=timezone.utc)
-    cursor = earliest
-    while cursor + timedelta(minutes=z["slot_minutes"]) <= zone_end_dt:
+    remaining = z["max_jobs"] - len(jobs)
+    for cursor in offered_slot_starts(day, earliest, zone_end_dt, z["slot_minutes"], remaining):
         slots.append({
             "start": iso(cursor),
             "end": iso(cursor + timedelta(minutes=z["slot_minutes"])),
             "drive_time_minutes": drive_min,
             "label": cursor.strftime("%-I:%M %p") if hasattr(cursor, 'strftime') else cursor.isoformat(),
         })
-        # Increment by slot duration for next available slot
-        cursor = cursor + timedelta(minutes=z["slot_minutes"])
-        if len(slots) + len(jobs) >= z["max_jobs"]:
-            break
     return slots
 
 @api.post("/public/availability")
@@ -845,8 +855,8 @@ async def public_availability(query: SlotQuery):
         day = datetime.strptime(query.date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(400, "Invalid date")
-    # Validate: not Sunday, not past, not > 21 days out
-    today = now_utc().date()
+    # Validate: not Sunday, not past, not > 21 days out. "Today" is the Phoenix date.
+    today = business_date()
     if day.weekday() == 6:
         return {"zone": zone, "in_metro": True, "slots": [], "message": "No availability on Sundays."}
     if day < today:
@@ -875,10 +885,8 @@ async def public_book(data: BookingIn):
     z = ZONES[zone]
     end_dt = start_dt + timedelta(minutes=z["slot_minutes"])
 
-    # Compute drive time from previous job (or home)
-    day = start_dt.date()
-    day_start = datetime.combine(day, time(0, 0), tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+    # Previous job and sequence are scoped to the Phoenix day of this start instant.
+    day_start, day_end = business_day_bounds(business_date(start_dt))
     prev = await db.jobs.find({
         "zone": zone,
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(start_dt)},
@@ -1001,16 +1009,15 @@ def annotate_at_risk(jobs: List[dict]) -> List[dict]:
 
 @api.get("/jobs")
 async def list_jobs(date_str: Optional[str] = None, tech=Depends(get_current_tech)):
-    """List jobs for a given date (default: today). Contractors only see their own jobs."""
+    """List jobs for a Phoenix date (default: today in America/Phoenix). Contractors only see their own jobs."""
     if date_str:
         try:
             d = datetime.strptime(date_str, "%Y-%m-%d").date()
         except ValueError:
             raise HTTPException(400, "Invalid date")
     else:
-        d = now_utc().date()
-    day_start = datetime.combine(d, time(0, 0), tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+        d = business_date()
+    day_start, day_end = business_day_bounds(d)
     q = {"scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)}}
     if tech["role"] == "contractor":
         q["technician_id"] = tech["id"]
@@ -1127,9 +1134,8 @@ async def dashboard_summary(date_str: Optional[str] = None, tech=Depends(require
     if date_str:
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
     else:
-        d = now_utc().date()
-    day_start = datetime.combine(d, time(0, 0), tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+        d = business_date()
+    day_start, day_end = business_day_bounds(d)
     jobs = await db.jobs.find({
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
         "status": {"$ne": "cancelled"},
@@ -1583,8 +1589,7 @@ async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
         d = datetime.strptime(data.date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(400, "Invalid date")
-    day_start = datetime.combine(d, time(0, 0), tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+    day_start, day_end = business_day_bounds(d)
     # Fetch jobs in scope
     jobs = await db.jobs.find({
         "id": {"$in": data.ordered_job_ids},
@@ -1611,11 +1616,13 @@ async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
             earliest = earliest.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         else:
             earliest = earliest.replace(minute=minute, second=0, microsecond=0)
-        new_start = earliest
+        new_start = clamp_start_to_business_day(earliest, d)
+        if new_start is None:
+            raise HTTPException(400, "Reorder would place a job outside this day.")
         new_end = new_start + timedelta(minutes=z["slot_minutes"])
         zone_end_dt = datetime.combine(d, parse_time_str(z["end"]), tzinfo=timezone.utc)
         if new_end > zone_end_dt:
-            raise HTTPException(400, f"Reorder would push job past zone end. Try a different order.")
+            raise HTTPException(400, "Reorder would push job past zone end. Try a different order.")
         updates.append({
             "id": jid,
             "scheduled_start": iso(new_start),
@@ -1649,6 +1656,9 @@ async def update_zone(zone_key: str, body: ZoneUpdate, tech=Depends(require_owne
     if zone_key not in ZONES:
         raise HTTPException(404, "Zone not found")
     d = body.model_dump(exclude_unset=True)
+    # A zero or negative length makes offered_slot_starts step by nothing and loop forever.
+    if d.get("slot_minutes") is not None and d["slot_minutes"] <= 0:
+        raise HTTPException(400, "slot_minutes must be greater than 0")
     for k, v in d.items():
         if k in ZONES[zone_key] and v is not None:
             ZONES[zone_key][k] = v
@@ -1911,13 +1921,15 @@ async def portal_document_download(job_id: str, doc_id: str, su=Depends(get_curr
 
 @api.get("/portal/day-map")
 async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_shop_user)):
-    """Returns OWN jobs fully detailed + other shops' jobs as anonymized blocks with drive-window from this shop."""
+    """OWN jobs in full, plus other shops' jobs as anonymized blocks with drive time from this shop.
+
+    `date_str` is an America/Phoenix civil date. Omitted, it is today's Phoenix date.
+    """
     if date_str:
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
     else:
-        d = now_utc().date()
-    day_start = datetime.combine(d, time(0, 0), tzinfo=timezone.utc)
-    day_end = day_start + timedelta(days=1)
+        d = business_date()
+    day_start, day_end = business_day_bounds(d)
     all_jobs = await db.jobs.find({
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
         "status": {"$ne": "cancelled"},
@@ -1926,24 +1938,30 @@ async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_
     shop = await db.shops.find_one({"id": su["shop_id"]})
     origin_lat = shop.get("lat") if shop else 33.4484
     origin_lng = shop.get("lng") if shop else -112.0740
-    own, others = [], []
+    own, other_jobs = [], []
     for j in all_jobs:
         if j["shop_id"] == su["shop_id"]:
             own.append(j)
         else:
-            # Drive estimate from THIS shop to that pin
-            dm = await get_drive_time(origin_lat, origin_lng, j["job_lat"], j["job_lng"])
-            others.append({
-                "id": j["id"],
-                "scheduled_start": j["scheduled_start"],
-                "scheduled_end": j["scheduled_end"],
-                "zone": j["zone"],
-                "sequence_order": j.get("sequence_order"),
-                "job_lat": j["job_lat"], "job_lng": j["job_lng"],
-                "drive_minutes_from_you": dm["duration_minutes"],
-                "status": j["status"],
-                # NO shop_name, vehicle, customer, calibration, price, address
-            })
+            other_jobs.append(j)
+
+    async def _anon(j):
+        # Real lookups hit drive_time_cache (rounded coords, Phoenix day). Run them together
+        # so a cold cache does not wait on one Distance Matrix call per other-shop job.
+        dm = await get_drive_time(origin_lat, origin_lng, j["job_lat"], j["job_lng"])
+        return {
+            "id": j["id"],
+            "scheduled_start": j["scheduled_start"],
+            "scheduled_end": j["scheduled_end"],
+            "zone": j["zone"],
+            "sequence_order": j.get("sequence_order"),
+            "job_lat": j["job_lat"], "job_lng": j["job_lng"],
+            "drive_minutes_from_you": dm["duration_minutes"],
+            "status": j["status"],
+            # NO shop_name, vehicle, customer, calibration, price, address
+        }
+
+    others = list(await asyncio.gather(*(_anon(j) for j in other_jobs)))
     return {"own": annotate_at_risk(own), "others": others, "date": d.isoformat()}
 
 @api.post("/portal/book")
@@ -2238,8 +2256,9 @@ async def startup():
     security_self_check()
     await seed_data()
     await load_settings()
-    # Auto-expire cached real-Maps drive times after 2 days (keys are per-calendar-day already,
-    # so this just caps the collection's size — a no-op cost/storage safety net, not correctness).
+    # Auto-expire cached real-Maps drive times after 2 days. Keys are already one per Phoenix
+    # calendar day, so this only caps collection size. Leave expireAfterSeconds as-is: changing
+    # it on a database that already has the index raises IndexOptionsConflict.
     await db.drive_time_cache.create_index("cached_at", expireAfterSeconds=172800)
 
 # Include router
