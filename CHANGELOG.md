@@ -12,6 +12,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 App version is **0.1.0**, the same number as `frontend/package.json`. `[0.0.3]` further
 down is the previous cut (Xero, 2026-06-16), not a second current version.
+`backend/tests/test_version.py` fails if the top changelog heading and the package
+version drift apart.
 
 ### Fixed — zero-length zone slots (2026-10-29)
 `offered_slot_starts()` stepped by `slot_minutes`. A zone saved with `slot_minutes` of 0
