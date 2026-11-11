@@ -15,6 +15,7 @@ from google_maps import (  # noqa: E402
     GoogleMapsError, in_metro, parse_geocode_response, parse_distance_matrix_response,
     parse_routes_response, routes_request_body, departure_bucket,
     geocode_request_params, distance_matrix_request_params, drive_time_cache_key, coalesce,
+    routes_request_headers, routes_http_failure, ROUTES_COMPUTE_URL, ROUTES_FIELD_MASK,
 )
 
 GEOCODE_OK = {
@@ -114,6 +115,26 @@ def test_distance_matrix_request_params_format_lat_lng_pairs():
 def test_in_metro_boundary_helper_matches_bounding_box():
     assert in_metro(33.45, -112.07) is True   # central Phoenix
     assert in_metro(34.05, -118.24) is False  # Los Angeles
+
+
+def test_routes_call_uses_the_compute_routes_endpoint_and_a_narrow_field_mask():
+    headers = routes_request_headers("secret-key")
+    assert ROUTES_COMPUTE_URL == "https://routes.googleapis.com/directions/v2:computeRoutes"
+    assert headers["X-Goog-Api-Key"] == "secret-key"
+    assert headers["X-Goog-FieldMask"] == "routes.duration,routes.distanceMeters"
+    assert headers["X-Goog-FieldMask"] == ROUTES_FIELD_MASK
+    assert "polyline" not in headers["X-Goog-FieldMask"]
+    assert "toll" not in headers["X-Goog-FieldMask"]
+
+
+def test_routes_403_body_is_logged_without_the_key():
+    body = '{"error":{"code":403,"message":"Routes API has not been used","status":"PERMISSION_DENIED","key":"secret-key"}}'
+    detail = routes_http_failure(403, body, "secret-key")
+    assert "403" in detail
+    assert "Routes API has not been used" in detail
+    assert "PERMISSION_DENIED" in detail
+    assert "secret-key" not in detail
+    assert "[redacted]" in detail
 
 
 def test_routes_body_asks_for_traffic_at_a_departure():

@@ -194,12 +194,21 @@ def test_early_arrival_is_held_until_the_owner_decides(monkeypatch):
             })
             assert avail.status_code == 200, avail.text
             starts = {slot["start"]: slot for slot in avail.json()["slots"]}
-            assert six.isoformat() in starts
-            assert starts[six.isoformat()]["requires_approval"] is True
+            # 89 minutes from home. Leaving at 6:00 AM arrives at 7:29, so the
+            # first grid time is 7:30 (pending). 8:00 leaves at 6:31 and is confirmed.
+            seven_thirty, _ = zone_window(day, time(7, 30), time(17, 0))
             eight, _ = zone_window(day, time(8, 0), time(17, 0))
-            assert eight.isoformat() not in starts
+            assert six.isoformat() not in starts
+            assert seven_thirty.isoformat() in starts
+            assert starts[seven_thirty.isoformat()]["requires_approval"] is True
+            assert eight.isoformat() in starts
+            assert starts[eight.isoformat()]["requires_approval"] is False
+            for hour, minute in ((8, 15), (8, 30), (8, 45), (9, 0), (9, 15), (9, 30)):
+                instant, _ = zone_window(day, time(hour, minute), time(17, 0))
+                assert instant.isoformat() in starts
+                assert starts[instant.isoformat()]["requires_approval"] is False
             booked = await client.post("/api/public/book", json={
-                **PAYLOAD, "job_address": "Surprise, AZ", "scheduled_start": six.isoformat(),
+                **PAYLOAD, "job_address": "Surprise, AZ", "scheduled_start": seven_thirty.isoformat(),
             })
             assert booked.status_code == 200, booked.text
             body = booked.json()
@@ -207,7 +216,7 @@ def test_early_arrival_is_held_until_the_owner_decides(monkeypatch):
             assert body["requires_approval"] is True
             assert sms == []
             again = await client.post("/api/public/book", json={
-                **PAYLOAD, "job_address": "Surprise, AZ", "scheduled_start": six.isoformat(),
+                **PAYLOAD, "job_address": "Surprise, AZ", "scheduled_start": seven_thirty.isoformat(),
             })
             assert again.status_code == 400
             tech = server.make_token("field", "technician")
