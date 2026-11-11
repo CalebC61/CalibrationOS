@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { api, formatDate } from "../lib/api";
 import Shell from "../components/Shell";
 
@@ -49,7 +49,8 @@ export default function ShopDetail() {
           <div className="label">Booking link</div>
           <div className="font-mono" style={{ background: "var(--bg-elevated)", padding: 10, borderRadius: 6, fontSize: 13, wordBreak: "break-all" }} data-testid="shop-booking-link">{url}</div>
           <div style={{ display: "flex", gap: 8, marginTop: 12, marginBottom: 16, flexWrap: "wrap" }}>
-            <button className="btn btn-primary" onClick={() => { navigator.clipboard.writeText(url); alert("Copied!"); }}>Copy</button>
+            <Link to={`/book/${shop.booking_link_token}`} className="btn btn-primary" data-testid="book-job">Book a job</Link>
+            <button className="btn btn-ghost" onClick={() => { navigator.clipboard.writeText(url); alert("Copied!"); }}>Copy</button>
             <a className="btn btn-ghost" href={url} target="_blank" rel="noreferrer">Open</a>
             <button className="btn btn-ghost" onClick={regen} data-testid="regen-link">Regenerate</button>
           </div>

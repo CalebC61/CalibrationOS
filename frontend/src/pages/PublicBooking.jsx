@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, formatTime, formatDate, dateStr } from "../lib/api";
+import { api, formatTime, formatDate, getStoredAuth, phoenixTodayStr } from "../lib/api";
 import Brand from "../components/Brand";
 
 const ADAS_OPTIONS = [
@@ -10,6 +10,13 @@ const ADAS_OPTIONS = [
   { v: "multi_camera",   l: "Multi-Camera System",                  default: "triple" },
   { v: "tesla",          l: "Tesla",                                 default: "tesla" },
 ];
+
+// Phoenix is UTC−7 all year. 08:00 local is 15:00 UTC; hours past 23 roll the UTC date.
+function phoenixInstant(day, hhmm) {
+  const [y, m, d] = day.split("-").map(Number);
+  const [hh, mm] = hhmm.split(":").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, hh + 7, mm)).toISOString();
+}
 
 const CAL_LABELS = {
   static: "Static ADAS Calibration", dynamic: "Dynamic ADAS Calibration",
@@ -30,6 +37,8 @@ export default function PublicBooking() {
   const [slotsMsg, setSlotsMsg] = useState("");
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [chosenSlot, setChosenSlot] = useState(null);
+  const [customTime, setCustomTime] = useState("");
+  const isOwner = getStoredAuth()?.role === "owner";
   const [vehicle, setVehicle] = useState({
     customer_last_name: "", year: new Date().getFullYear(), make: "", model: "",
     trim: "", vin: "", adas_system: "forward_camera",
@@ -150,12 +159,18 @@ export default function PublicBooking() {
         {step === 2 && (
           <Step title="Pick a date">
             <input className="input" type="date" value={date}
-              min={dateStr(new Date())}
-              max={dateStr(new Date(Date.now() + 21 * 86400000))}
-              onChange={e => { setDate(e.target.value); loadSlots(e.target.value); }}
+              min={phoenixTodayStr()}
+              max={phoenixTodayStr(new Date(Date.now() + 21 * 86400000))}
+              onChange={e => {
+                const next = e.target.value;
+                setDate(next);
+                loadSlots(next);
+                if (isOwner && customTime && next) setChosenSlot({ start: phoenixInstant(next, customTime) });
+                else setChosenSlot(null);
+              }}
               data-testid="booking-date" />
             {slotsLoading && <div className="muted" style={{ marginTop: 12, fontSize: 14 }}>Calculating available times…</div>}
-            {slotsMsg && <div style={{ marginTop: 12, color: "var(--yellow)", fontSize: 14 }}>{slotsMsg}</div>}
+            {slotsMsg && !chosenSlot && <div style={{ marginTop: 12, color: "var(--yellow)", fontSize: 14 }}>{slotsMsg}</div>}
             {slots.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div className="label">Available times</div>
@@ -163,11 +178,23 @@ export default function PublicBooking() {
                   {slots.map(s => (
                     <button key={s.start} type="button"
                       className={"btn " + (chosenSlot?.start === s.start ? "btn-primary" : "btn-ghost")}
-                      onClick={() => setChosenSlot(s)} data-testid={`slot-${s.start}`}>
+                      onClick={() => { setCustomTime(""); setChosenSlot(s); }} data-testid={`slot-${s.start}`}>
                       {formatTime(s.start)}
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+            {isOwner && date && (
+              <div style={{ marginTop: 16 }}>
+                <label className="label" htmlFor="owner-time">Set a time</label>
+                <input id="owner-time" className="input" type="time" value={customTime}
+                  onChange={e => {
+                    const value = e.target.value;
+                    setCustomTime(value);
+                    if (value) setChosenSlot({ start: phoenixInstant(date, value) });
+                  }}
+                  data-testid="owner-custom-time" />
               </div>
             )}
             <NavBtns onBack={() => setStep(1)} onNext={() => setStep(3)} nextDisabled={!chosenSlot} />

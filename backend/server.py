@@ -66,7 +66,8 @@ from google_maps import (
     METRO_LAT_MIN, METRO_LAT_MAX, METRO_LNG_MIN, METRO_LNG_MAX,
 )
 from business_time import (
-    business_date, business_day_bounds, clamp_start_to_business_day, offered_slot_starts,
+    BUSINESS_TZ, business_date, business_day_bounds, clamp_start_to_business_day,
+    offered_slot_starts, zone_window,
 )
 # Module 9 — Partner Growth Engine (models only here; routes are wired conditionally near the
 # bottom of this file, only when GROWTH_MODULE_ENABLED, to avoid registering unused routes)
@@ -802,10 +803,9 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
     start_t = parse_time_str(z["start"])
     end_t = parse_time_str(z["end"])
     # Fetch existing jobs in zone on this Phoenix date, ordered by scheduled_start.
-    # Zone start/end clocks stay UTC wall times. offered_slot_starts drops any start
-    # that would fall on the previous Phoenix day (before 07:00 UTC), including when
-    # the hours were saved via /settings/zones.
+    # Zone clocks are America/Phoenix (West 08:00, East 14:30), stored as UTC.
     day_start, day_end = business_day_bounds(day)
+    zone_start_dt, zone_end_dt = zone_window(day, start_t, end_t)
     jobs = await db.jobs.find({
         "zone": zone_key,
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
@@ -824,7 +824,7 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
             anchor_dt = anchor_dt.replace(tzinfo=timezone.utc)
         origin = (last["job_lat"], last["job_lng"])
     else:
-        anchor_dt = datetime.combine(day, start_t, tzinfo=timezone.utc)
+        anchor_dt = zone_start_dt
         origin = (CALEB_HOME["lat"], CALEB_HOME["lng"])
 
     # Drive time from origin to new job
@@ -843,14 +843,14 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
         earliest = earliest.replace(minute=minute, second=0, microsecond=0)
 
     # Generate slots from earliest until zone end, only when the start is on this Phoenix day.
-    zone_end_dt = datetime.combine(day, end_t, tzinfo=timezone.utc)
     remaining = z["max_jobs"] - len(jobs)
     for cursor in offered_slot_starts(day, earliest, zone_end_dt, z["slot_minutes"], remaining):
+        local = cursor.astimezone(BUSINESS_TZ)
         slots.append({
             "start": iso(cursor),
             "end": iso(cursor + timedelta(minutes=z["slot_minutes"])),
             "drive_time_minutes": drive_min,
-            "label": cursor.strftime("%-I:%M %p") if hasattr(cursor, 'strftime') else cursor.isoformat(),
+            "label": local.strftime("%-I:%M %p"),
         })
     return slots
 
@@ -964,9 +964,10 @@ async def public_book(data: BookingIn):
     }
     await db.jobs.insert_one(job.copy())
 
-    # Mock confirmation SMS
+    # Mock confirmation SMS. The log uses Phoenix wall time; nothing is sent for real.
+    when = start_dt.astimezone(BUSINESS_TZ).strftime("%a %b %d at %-I:%M %p")
     msg = (f"Booking confirmed with The Calibration Crew. "
-           f"{start_dt.strftime('%a %b %d at %-I:%M %p')} for your {data.year} {data.make} {data.model}. "
+           f"{when} for your {data.year} {data.make} {data.model}. "
            f"Questions? Reply to this message.")
     if job["notification_phone"]:
         await mock_send_sms(job["notification_phone"], msg, kind="booking_confirmed", job_id=job["id"])
@@ -987,7 +988,7 @@ async def public_book(data: BookingIn):
         })
         owner_msg = (
             f"🎉 New booking from {shop['name']}: "
-            f"{start_dt.strftime('%a %b %d at %-I:%M %p')} — "
+            f"{when} — "
             f"{data.year} {data.make} {data.model} (${price:.0f}). "
             f"View on dispatch board."
         )
@@ -1615,8 +1616,8 @@ async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
     by_id = {j["id"]: j for j in jobs}
     if set(data.ordered_job_ids) - set(by_id.keys()):
         raise HTTPException(400, "Some job IDs are invalid or not reorderable")
-    # Sequential recalc from zone start, anchored at owner home for first job
-    cursor = datetime.combine(d, parse_time_str(z["start"]), tzinfo=timezone.utc)
+    # Sequential recalc from the Phoenix zone start, anchored at owner home for first job
+    cursor, zone_end_dt = zone_window(d, parse_time_str(z["start"]), parse_time_str(z["end"]))
     origin = (CALEB_HOME["lat"], CALEB_HOME["lng"])
     updates = []
     for seq, jid in enumerate(data.ordered_job_ids, start=1):
@@ -1635,7 +1636,6 @@ async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
         if new_start is None:
             raise HTTPException(400, "Reorder would place a job outside this day.")
         new_end = new_start + timedelta(minutes=z["slot_minutes"])
-        zone_end_dt = datetime.combine(d, parse_time_str(z["end"]), tzinfo=timezone.utc)
         if new_end > zone_end_dt:
             raise HTTPException(400, "Reorder would push job past zone end. Try a different order.")
         updates.append({

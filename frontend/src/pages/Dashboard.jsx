@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { api, formatTime, todayStr, dateStr } from "../lib/api";
+import { api, formatTime, phoenixTodayStr, dateStr } from "../lib/api";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
@@ -13,7 +13,7 @@ const STATUS_FLOW = {
 };
 
 export default function Dashboard() {
-  const [date, setDate] = useState(todayStr());
+  const [date, setDate] = useState(() => phoenixTodayStr());
   const [jobs, setJobs] = useState([]);
   const [summary, setSummary] = useState(null);
   const [alerts, setAlerts] = useState({ count: 0, alerts: [] });
@@ -132,7 +132,7 @@ export default function Dashboard() {
           </h1>
           <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
             <button className="btn btn-ghost" onClick={() => shiftDate(-1)} data-testid="prev-day">← Prev</button>
-            <button className="btn btn-ghost" onClick={() => setDate(todayStr())} data-testid="today-btn">Today</button>
+            <button className="btn btn-ghost" onClick={() => setDate(phoenixTodayStr())} data-testid="today-btn">Today</button>
             <button className="btn btn-ghost" onClick={() => shiftDate(1)} data-testid="next-day">Next →</button>
           </div>
         </div>

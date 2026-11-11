@@ -8,6 +8,7 @@ import ShopsList from "@/pages/ShopsList";
 import ShopNew from "@/pages/ShopNew";
 import ShopDetail from "@/pages/ShopDetail";
 import PublicShopStatus from "@/pages/PublicShopStatus";
+import PublicBooking from "@/pages/PublicBooking";
 import Field from "@/pages/Field";
 import Invoices from "@/pages/Invoices";
 import Growth from "@/pages/growth/Growth";
@@ -52,6 +53,7 @@ function App() {
           <Route path="/" element={<RoleRedirect />} />
           <Route path="/login" element={<Login />} />
           <Route path="/scorecard/:token" element={<PublicShopStatus />} />
+          <Route path="/book/:token" element={<PublicBooking />} />
 
           {/* Portal (shop user) */}
           <Route path="/portal/login" element={<PortalLogin />} />

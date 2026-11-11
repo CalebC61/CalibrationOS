@@ -15,6 +15,19 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — public booking and Phoenix slot clocks (2026-11-11)
+`/book/:token` is routed. Logged-out visitors and a logged-in owner both reach
+`PublicBooking`; the catch-all no longer sends that URL to the dashboard.
+Shop detail has a Book a job button for that shop's token. An owner on the
+booking page can type any time on the chosen date, which is stored as the
+matching UTC instant (Phoenix is UTC−7, no DST).
+
+Zone hours are America/Phoenix. West 08:00 is 15:00 UTC, not 08:00 UTC (which
+displayed as 1:00 AM). East 14:30–19:00 crosses UTC midnight and stays on that
+Phoenix day. `scheduled_start` is still a UTC ISO string. Dispatch, the route
+map, and `formatTime` render it in America/Phoenix. Booking still logs a mock
+SMS and does not send email.
+
 ### Changed — self-host deploy targets (2026-11-11)
 The website is `thecalibrationcrew.us` and `www` (Vercel). The API stays
 `api.thecalibrationcrew.us` (Render). `DEPLOY.md` no longer tells you to create an Atlas

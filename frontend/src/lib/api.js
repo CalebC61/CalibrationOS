@@ -37,11 +37,15 @@ export function setStoredAuth(d) {
 
 export function formatTime(iso) {
   const d = new Date(iso);
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleTimeString(undefined, {
+    hour: "numeric", minute: "2-digit", timeZone: "America/Phoenix",
+  });
 }
 export function formatDate(iso) {
   const d = new Date(iso);
-  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return d.toLocaleDateString(undefined, {
+    weekday: "short", month: "short", day: "numeric", timeZone: "America/Phoenix",
+  });
 }
 export function todayStr() {
   const d = new Date();

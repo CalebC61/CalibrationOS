@@ -45,6 +45,17 @@ def in_business_day(instant: datetime, day: date) -> bool:
     return start <= utc < end
 
 
+def zone_window(day: date, start: time, end: time) -> tuple[datetime, datetime]:
+    """Shop hours on a Phoenix civil date, as UTC datetimes.
+
+    08:00–14:00 is morning in Phoenix (15:00–21:00 UTC), not 08:00 UTC.
+    19:00 Phoenix is 02:00 UTC the next calendar day and still on `day`.
+    """
+    start_utc = datetime.combine(day, start, tzinfo=BUSINESS_TZ).astimezone(timezone.utc)
+    end_utc = datetime.combine(day, end, tzinfo=BUSINESS_TZ).astimezone(timezone.utc)
+    return start_utc, end_utc
+
+
 def offered_slot_starts(
     day: date,
     earliest: datetime,
@@ -52,12 +63,11 @@ def offered_slot_starts(
     slot_minutes: int,
     limit: int | None = None,
 ) -> list[datetime]:
-    """UTC-wall-clock slot starts that still land on the requested Phoenix day.
+    """Slot starts that land on the requested Phoenix day.
 
-    Zone hours are combined as UTC on the calendar label (`05:00` → 05:00 UTC).
-    That instant is 10 PM Phoenix the day before, so the job query for `day`
-    would not see it and the same slot could be offered again. Starts before
-    the Phoenix day are skipped; the step from `earliest` is unchanged.
+    `earliest` and `zone_end` are absolute instants. Shop hours should come
+    from zone_window so 08:00 means 08:00 Phoenix. A start before that Phoenix
+    day is skipped; the step from `earliest` is unchanged.
     """
     if slot_minutes <= 0:
         raise ValueError("slot_minutes must be greater than 0")
