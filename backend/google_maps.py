@@ -140,20 +140,23 @@ def routes_http_failure(status_code: int, body: str, api_key: str = "") -> str:
     return f"HTTP {status_code}: {detail}"
 
 
-def routes_request_body(o_lat, o_lng, d_lat, d_lng, departure_iso: str) -> dict:
+def routes_request_body(o_lat, o_lng, d_lat, d_lng, departure_iso: str | None = None,
+                        routing_preference: str = "TRAFFIC_AWARE") -> dict:
     """JSON body for Routes API computeRoutes.
 
-    `TRAFFIC_AWARE` (not TRAFFIC_AWARE_OPTIMAL) is the traffic-aware preference
-    that bills as Compute Routes Pro. `departure_iso` is RFC3339 and must be
-    in the future; Google rejects a departure in the past.
+    `TRAFFIC_AWARE` bills as Compute Routes Pro and may include departureTime.
+    `TRAFFIC_UNAWARE` bills as Compute Routes Essentials and must not include
+    departureTime: Google returns 400 "Timestamp cannot be set for TRAFFIC_UNAWARE".
     """
-    return {
+    body = {
         "origin": {"location": {"latLng": {"latitude": float(o_lat), "longitude": float(o_lng)}}},
         "destination": {"location": {"latLng": {"latitude": float(d_lat), "longitude": float(d_lng)}}},
         "travelMode": "DRIVE",
-        "routingPreference": "TRAFFIC_AWARE",
-        "departureTime": departure_iso,
+        "routingPreference": routing_preference,
     }
+    if routing_preference != "TRAFFIC_UNAWARE" and departure_iso:
+        body["departureTime"] = departure_iso
+    return body
 
 
 def _duration_seconds(value) -> float:

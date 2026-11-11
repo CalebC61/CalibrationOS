@@ -5,6 +5,7 @@ from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument
 import os
 import asyncio
 import logging
@@ -82,8 +83,12 @@ from routing import (
     is_routing_tech, next_tech_color, owner_routing_updates, tech_schedule,
 )
 from scheduling import (
-    BUFFER_MINUTES, DURATION_MINUTES, block_minutes, candidate_slots, insertion_cost,
-    placement_error, round_up, schedule_drive_queries,
+    BUFFER_MINUTES, DURATION_MINUTES, annotated_drive_queries, block_minutes, candidate_slots,
+    insertion_cost, placement_error, round_up, slot_touching_queries,
+)
+from route_cost import (
+    ESSENTIALS, PRO, apply_rush, cache_ttl_seconds, collapse_queries, default_drive_settings,
+    leg_signature, normalize_address, routing_mode,
 )
 from addons import (
     arrival_band, policy_from_tech, request_kind, same_day_closed_message, slot_decision,
@@ -297,16 +302,19 @@ def _google_distance_matrix_request(o_lat, o_lng, d_lat, d_lng) -> dict:
     resp.raise_for_status()
     return resp.json()
 
-def _google_routes_request(o_lat, o_lng, d_lat, d_lng, departure_iso: str) -> dict:
-    """computeRoutes with TRAFFIC_AWARE. The key stays in a header so it is not part of the URL.
+def _google_routes_request(o_lat, o_lng, d_lat, d_lng, departure_iso: str | None,
+                           routing_preference: str) -> dict:
+    """computeRoutes. The key stays in a header so it is not part of the URL.
 
-    A non-2xx response, including 403, is logged with the response body and the
-    key stripped, then raised so the caller can use the mileage estimate.
+    TRAFFIC_UNAWARE does not send departureTime. A non-2xx response, including
+    403, is logged with the response body and the key stripped.
     """
     resp = requests.post(
         ROUTES_COMPUTE_URL,
         headers=routes_request_headers(GOOGLE_MAPS_API_KEY),
-        json=routes_request_body(o_lat, o_lng, d_lat, d_lng, departure_iso),
+        json=routes_request_body(
+            o_lat, o_lng, d_lat, d_lng, departure_iso, routing_preference,
+        ),
         timeout=10,
     )
     if resp.status_code >= 400:
@@ -318,13 +326,38 @@ def _google_routes_request(o_lat, o_lng, d_lat, d_lng, departure_iso: str) -> di
 async def geocode_address(address: str) -> dict:
     """Geocode an address — real Google Geocoding API when configured, otherwise the mock.
 
-    Falls back to the mock on any error (bad address, quota, network) so booking/shop/contractor
-    flows never fail on a geocoding hiccup, mirroring the Xero invoice fallback pattern.
+    Real results are cached by the normalized address so the same shop is not
+    geocoded again. Falls back to the mock on any error so booking never fails
+    on a geocoding hiccup.
     """
     if google_maps_enabled():
+        key = normalize_address(address)
+        cache = getattr(db, "geocode_cache", None)
+        if cache is not None and key:
+            try:
+                cached = await cache.find_one({"_id": key})
+            except Exception as exc:
+                logger.warning("[MAPS] geocode cache read failed: %s", exc)
+                cached = None
+            if cached and cached.get("lat") is not None:
+                return {
+                    "lat": cached["lat"], "lng": cached["lng"],
+                    "formatted_address": cached.get("formatted_address") or address,
+                    "in_metro": cached.get("in_metro", True),
+                }
         try:
             data = await asyncio.to_thread(_google_geocode_request, address)
-            return parse_geocode_response(data, address)
+            parsed = parse_geocode_response(data, address)
+            if cache is not None and key:
+                try:
+                    await cache.update_one(
+                        {"_id": key},
+                        {"$set": {**parsed, "cached_at": now_utc()}},
+                        upsert=True,
+                    )
+                except Exception as exc:
+                    logger.warning("[MAPS] geocode cache write failed: %s", exc)
+            return parsed
         except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
             logger.error(f"[MAPS] geocode failed, falling back to mock: {e}")
     return mock_geocode(address)
@@ -348,8 +381,7 @@ async def geocode_for_regeocode(address: str) -> dict:
 _DRIVE_TIME_INFLIGHT: dict = {}
 _LOGGED_MISSING_MAPS_KEY = False
 _LOGGED_PAST_DEPARTURE = False
-# Traffic-aware predictions are reused for 12 hours. The Mongo TTL (2 days) is only a backstop.
-TRAFFIC_CACHE_SECONDS = 12 * 3600
+_LOGGED_BUDGET: set = set()
 
 def _log_drive_fallback(reason: str):
     global _LOGGED_MISSING_MAPS_KEY, _LOGGED_PAST_DEPARTURE
@@ -368,7 +400,7 @@ def _log_drive_fallback(reason: str):
     logger.warning("[MAPS] drive time fell back to the mileage estimate: %s", reason)
 
 def _cache_is_fresh(cached: dict) -> bool:
-    raw = cached.get("cached_at")
+    raw = cached.get("expires_at") or cached.get("cached_at")
     if isinstance(raw, datetime):
         seen = raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
     else:
@@ -378,8 +410,10 @@ def _cache_is_fresh(cached: dict) -> bool:
             return False
         if seen.tzinfo is None:
             seen = seen.replace(tzinfo=timezone.utc)
-    age = (now_utc() - seen.astimezone(timezone.utc)).total_seconds()
-    return 0 <= age <= TRAFFIC_CACHE_SECONDS
+    if cached.get("expires_at"):
+        return now_utc() < seen.astimezone(timezone.utc)
+    # Older rows only stored cached_at. Treat them as expired so a new mode key is fetched.
+    return False
 
 def _departure_for_routes(depart_at: datetime | None) -> datetime | None:
     """A future departure Google will accept, or None when we should not call Routes.
@@ -397,50 +431,167 @@ def _departure_for_routes(depart_at: datetime | None) -> datetime | None:
         return None
     return depart_at
 
-async def get_drive_time(o_lat, o_lng, d_lat, d_lng, depart_at: datetime | None = None) -> dict:
-    """Drive time for one leg — Routes API with traffic when a key is set, else the mileage estimate.
+def _merge_drive_settings(doc: dict | None) -> dict:
+    merged = default_drive_settings()
+    for key in merged:
+        if doc and doc.get(key) not in (None, ""):
+            merged[key] = doc[key]
+    return merged
 
-    The Routes call is computeRoutes with TRAFFIC_AWARE and that leg's departure time,
-    so a morning rush and a midday hop do not share a number. Results are cached by
-    rounded coordinates and a 15-minute departure bucket for 12 hours. Any failure,
-    a missing key, or a departure already in the past logs and uses mock_distance_matrix
-    (about 2.2 minutes per mile plus 5, at least 10).
+
+async def load_drive_settings() -> dict:
+    store = getattr(db, "app_settings", None)
+    if store is None:
+        return default_drive_settings()
+    try:
+        doc = await store.find_one({"_id": "drive"})
+    except Exception as exc:
+        logger.warning("[MAPS] drive settings unreadable, using defaults: %s", exc)
+        return default_drive_settings()
+    return _merge_drive_settings(doc)
+
+
+async def _routes_budget_allows(mode: str, settings: dict) -> bool:
+    """Count one Google Routes call for today. False when that mode's daily cap is already hit."""
+    limit = int(settings["pro_daily_limit"] if mode == PRO else settings["essentials_daily_limit"])
+    field = "pro" if mode == PRO else "essentials"
+    day = business_date(now_utc()).isoformat()
+    store = getattr(db, "routes_budget", None)
+    if store is None:
+        return True
+    try:
+        doc = await store.find_one_and_update(
+            {"_id": day},
+            {"$inc": {field: 1}, "$setOnInsert": {"date": day}},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+    except Exception as exc:
+        logger.warning("[MAPS] route budget counter failed open: %s", exc)
+        return True
+    used = int((doc or {}).get(field) or 0)
+    if used <= limit:
+        return True
+    try:
+        await store.update_one({"_id": day}, {"$inc": {field: -1}})
+    except Exception:
+        pass
+    if day + field not in _LOGGED_BUDGET:
+        _LOGGED_BUDGET.add(day + field)
+        logger.warning(
+            "[MAPS] daily %s Routes limit of %s is reached; using the mileage estimate",
+            field, limit,
+        )
+    return False
+
+
+async def routes_budget_snapshot() -> dict:
+    settings = await load_drive_settings()
+    day = business_date(now_utc()).isoformat()
+    doc = {}
+    store = getattr(db, "routes_budget", None)
+    if store is not None:
+        try:
+            doc = await store.find_one({"_id": day}) or {}
+        except Exception:
+            doc = {}
+    return {
+        "date": day,
+        "pro": int(doc.get("pro") or 0),
+        "essentials": int(doc.get("essentials") or 0),
+        "pro_limit": int(settings["pro_daily_limit"]),
+        "essentials_limit": int(settings["essentials_daily_limit"]),
+        "pro_cutoff": settings["pro_cutoff"],
+        "rush_multiplier": settings["rush_multiplier"],
+        "rush_morning_start": settings["rush_morning_start"],
+        "rush_morning_end": settings["rush_morning_end"],
+        "rush_evening_start": settings["rush_evening_start"],
+        "rush_evening_end": settings["rush_evening_end"],
+    }
+
+
+async def get_drive_time(
+    o_lat, o_lng, d_lat, d_lng,
+    depart_at: datetime | None = None,
+    *,
+    mode: str = PRO,
+    appointment_day: date | None = None,
+    settings: dict | None = None,
+) -> dict:
+    """One leg. Pro uses TRAFFIC_AWARE and a departure. Essentials does not send one.
+
+    Essentials minutes are multiplied for Phoenix rush hour. A missing key, a
+    past Pro departure, a failed call, or a full daily budget uses the mileage
+    estimate and logs the reason.
     """
     if (o_lat, o_lng) == (d_lat, d_lng):
         return {"distance_miles": 0.0, "duration_minutes": 0}
-    depart = _departure_for_routes(depart_at)
-    if not google_maps_enabled() or depart is None:
-        _log_drive_fallback("no-key" if not google_maps_enabled() else "departure is not in the future")
-        return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
-    bucket = departure_bucket(depart)
-    key = drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, business_date(depart).isoformat(), bucket)
-    departure_iso = depart.strftime("%Y-%m-%dT%H:%M:%SZ")
+    settings = settings or default_drive_settings()
+    estimate = mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
+    if not google_maps_enabled():
+        _log_drive_fallback("no-key")
+        return estimate
+    preference = "TRAFFIC_AWARE" if mode == PRO else "TRAFFIC_UNAWARE"
+    depart = None
+    departure_iso = None
+    if mode == PRO:
+        depart = _departure_for_routes(depart_at)
+        if depart is None:
+            _log_drive_fallback("departure is not in the future")
+            return estimate
+        departure_iso = depart.strftime("%Y-%m-%dT%H:%M:%SZ")
+        bucket = departure_bucket(depart)
+    else:
+        bucket = None
+    key = drive_time_cache_key(
+        o_lat, o_lng, d_lat, d_lng,
+        (appointment_day or business_date(depart_at or now_utc())).isoformat(),
+        bucket,
+    )
+    key = f"{key}|{mode}"
 
     async def _load():
-        try:
-            cached = await db.drive_time_cache.find_one({"_id": key})
-        except Exception as exc:
-            logger.warning("[MAPS] drive-time cache read failed, calling Routes: %s", exc)
-            cached = None
+        cache = getattr(db, "drive_time_cache", None)
+        cached = None
+        if cache is not None:
+            try:
+                cached = await cache.find_one({"_id": key})
+            except Exception as exc:
+                logger.warning("[MAPS] drive-time cache read failed, calling Routes: %s", exc)
         if cached and _cache_is_fresh(cached):
-            return {"distance_miles": cached["distance_miles"], "duration_minutes": cached["duration_minutes"]}
+            minutes = int(cached["duration_minutes"])
+            if mode == ESSENTIALS:
+                minutes = apply_rush(minutes, depart_at, settings)
+            return {"distance_miles": cached["distance_miles"], "duration_minutes": minutes}
+        if not await _routes_budget_allows(mode, settings):
+            return estimate
         try:
             data = await asyncio.to_thread(
-                _google_routes_request, o_lat, o_lng, d_lat, d_lng, departure_iso,
+                _google_routes_request, o_lat, o_lng, d_lat, d_lng, departure_iso, preference,
             )
             result = parse_routes_response(data)
-            try:
-                await db.drive_time_cache.update_one(
-                    {"_id": key},
-                    {"$set": {**result, "cached_at": now_utc(), "departure_bucket": bucket}},
-                    upsert=True,
-                )
-            except Exception as exc:
-                logger.warning("[MAPS] drive-time cache write failed: %s", exc)
+            expires = now_utc() + timedelta(seconds=cache_ttl_seconds(mode, now_utc(), appointment_day))
+            if cache is not None:
+                try:
+                    await cache.update_one(
+                        {"_id": key},
+                        {"$set": {
+                            **result, "cached_at": now_utc(), "expires_at": expires,
+                            "mode": mode, "departure_bucket": bucket,
+                        }},
+                        upsert=True,
+                    )
+                except Exception as exc:
+                    logger.warning("[MAPS] drive-time cache write failed: %s", exc)
+            if mode == ESSENTIALS:
+                result = {
+                    **result,
+                    "duration_minutes": apply_rush(result["duration_minutes"], depart_at, settings),
+                }
             return result
         except (GoogleMapsError, requests.RequestException, KeyError, IndexError, ValueError) as exc:
             _log_drive_fallback(str(exc))
-            return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
+            return estimate
 
     return await coalesce(_DRIVE_TIME_INFLIGHT, key, _load)
 
@@ -820,6 +971,16 @@ class PricingUpdate(BaseModel):
     triple: Optional[float] = None
     tesla: Optional[float] = None
 
+class DriveSettingsIn(BaseModel):
+    pro_cutoff: Optional[str] = None
+    rush_multiplier: Optional[float] = None
+    rush_morning_start: Optional[str] = None
+    rush_morning_end: Optional[str] = None
+    rush_evening_start: Optional[str] = None
+    rush_evening_end: Optional[str] = None
+    pro_daily_limit: Optional[int] = None
+    essentials_daily_limit: Optional[int] = None
+
 class ZoneUpdate(BaseModel):
     start: Optional[str] = None  # "HH:MM"
     end: Optional[str] = None
@@ -1050,45 +1211,26 @@ def _tech_home(tech: dict | None) -> tuple:
     return (CALEB_HOME["lat"], CALEB_HOME["lng"])
 
 
-def _leg_key(origin, dest, depart):
-    if depart is None:
-        stamp = ""
-    else:
-        if depart.tzinfo is None:
-            depart = depart.replace(tzinfo=timezone.utc)
-        stamp = depart.astimezone(timezone.utc).replace(microsecond=0).isoformat()
-    return (
-        round(float(origin[0]), 5), round(float(origin[1]), 5),
-        round(float(dest[0]), 5), round(float(dest[1]), 5),
-        stamp,
-    )
-
-
-async def _drive_lookup(queries: list):
-    """Minutes for each (origin, destination, depart) leg. Same callable for offer and recheck.
-
-    Each leg is fetched with that departure so rush hour is not a flat number.
-    A leg the schedule asks for that was not prefetched uses the mileage estimate.
-    """
-    unique = []
-    seen = set()
-    for origin, dest, depart in queries:
-        if not origin or not dest or origin[0] is None or dest[0] is None:
-            continue
-        key = _leg_key(origin, dest, depart)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append((origin, dest, depart, key))
+async def _drive_lookup(queries: list, *, mode: str, same_day: bool, home, appointment_day: date, settings: dict):
+    """Minutes for the collapsed legs. Essentials results pick up the rush multiplier per departure."""
+    unique = collapse_queries(queries, mode=mode, same_day=same_day, home=home)
     sem = asyncio.Semaphore(8)
 
     async def one(item):
-        origin, dest, depart, key = item
+        origin, dest, depart, signature = item
         async with sem:
             if (origin[0], origin[1]) == (dest[0], dest[1]):
-                return key, 0
-            dm = await get_drive_time(origin[0], origin[1], dest[0], dest[1], depart_at=depart)
-            return key, dm["duration_minutes"]
+                return signature, 0
+            dm = await get_drive_time(
+                origin[0], origin[1], dest[0], dest[1],
+                depart_at=depart, mode=mode, appointment_day=appointment_day, settings=settings,
+            )
+            minutes = dm["duration_minutes"]
+            # get_drive_time already applies rush for Essentials. Store the raw-to-caller number
+            # for Pro, and the unmultiplied API minutes are not available. Re-apply would double.
+            # For Essentials the table holds the multiplied value of the prefetch departure.
+            # Lookups at a different rush band recompute below from a stored base when present.
+            return signature, minutes
 
     rows = await asyncio.gather(*(one(item) for item in unique)) if unique else []
     table = dict(rows)
@@ -1098,11 +1240,25 @@ async def _drive_lookup(queries: list):
             return 0
         if (origin[0], origin[1]) == (dest[0], dest[1]):
             return 0
-        key = _leg_key(origin, dest, depart)
-        if key not in table:
-            logger.warning("[MAPS] drive leg was not prefetched; using the mileage estimate")
-            return mock_distance_matrix(origin[0], origin[1], dest[0], dest[1])["duration_minutes"]
-        return table[key]
+        signature = leg_signature(origin, dest, depart, mode=mode, same_day=same_day, home=home)
+        if signature not in table:
+            estimate = mock_distance_matrix(origin[0], origin[1], dest[0], dest[1])["duration_minutes"]
+            if mode == ESSENTIALS:
+                return apply_rush(estimate, depart, settings)
+            return estimate
+        got = table[signature]
+        if mode != ESSENTIALS:
+            return got
+        # Prefetch stored the rushed minutes for its own departure. Scale back to the
+        # base, then apply the rush factor for the departure the slot actually uses.
+        base_depart = None
+        for origin_q, dest_q, depart_q, sig in unique:
+            if sig == signature:
+                base_depart = depart_q
+                break
+        base_factor = apply_rush(100, base_depart, settings) / 100 if base_depart is not None else 1
+        raw = got / base_factor if base_factor else got
+        return apply_rush(int(round(raw)), depart, settings)
 
     return drive
 
@@ -1203,8 +1359,12 @@ def _aware_start(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-async def _route_context(tech, day: date, new_point: tuple, jobs: list, now: datetime, duration: int | None = None):
-    """Drive table and clock window for one address on one technician's day."""
+async def _route_context(tech, day: date, new_point: tuple, jobs: list, now: datetime, duration: int | None = None, slot: datetime | None = None):
+    """Drive table and clock window for one address on one technician's day.
+
+    `slot` is set for a book or an edit. Only the legs that touch that arrival
+    are fetched. Availability leaves it empty and walks the day, collapsed.
+    """
     schedule = tech_schedule(tech)
     kind = request_kind(day, now)
     clocks = _clocks_for(day, schedule, now, kind)
@@ -1215,17 +1375,31 @@ async def _route_context(tech, day: date, new_point: tuple, jobs: list, now: dat
         planned = planned + [anchor]
     duration = schedule["job_duration_minutes"] if duration is None else int(duration)
     buffer = schedule["buffer_minutes"]
-    queries = schedule_drive_queries(
-        day_start=clocks["day_start"], offer_end=clocks["offer_end"], home=_tech_home(tech),
-        jobs=planned, new_point=new_point, duration=duration, buffer=buffer,
-        grid_start=clocks["grid_start"], home_ready=clocks["home_ready"],
-        earliest_home_departure=clocks["earliest_home_departure"],
+    home = _tech_home(tech)
+    settings = await load_drive_settings()
+    mode = routing_mode(day, now, settings["pro_cutoff"])
+    same_day = kind == "same_day"
+    if slot is not None:
+        queries = slot_touching_queries(
+            start=slot, day_start=clocks["day_start"], home=home, jobs=planned,
+            new_point=new_point, duration=duration, buffer=buffer,
+            earliest_home_departure=clocks["earliest_home_departure"],
+        )
+    else:
+        queries = annotated_drive_queries(
+            day_start=clocks["day_start"], offer_end=clocks["offer_end"], home=home,
+            jobs=planned, new_point=new_point, duration=duration, buffer=buffer,
+            grid_start=clocks["grid_start"], home_ready=clocks["home_ready"],
+            earliest_home_departure=clocks["earliest_home_departure"],
+        )
+    drive = await _drive_lookup(
+        queries, mode=mode, same_day=same_day, home=home,
+        appointment_day=day, settings=settings,
     )
-    drive = await _drive_lookup(queries)
     return {
         "schedule": schedule, "kind": kind, "clocks": clocks, "had_route": had_route,
         "jobs": planned, "duration": duration, "buffer": buffer, "drive": drive,
-        "home": _tech_home(tech), "policy": policy_from_tech(tech), "new_point": new_point,
+        "home": home, "policy": policy_from_tech(tech), "new_point": new_point,
     }
 
 
@@ -1334,7 +1508,7 @@ async def _arrival_plan(tech, day, start: datetime, new_point: tuple, jobs: list
         closed = same_day_closed_message(now, policy_from_tech(tech))
         if closed:
             raise HTTPException(400, closed)
-    ctx = await _route_context(tech, day, new_point, jobs, now, duration=duration)
+    ctx = await _route_context(tech, day, new_point, jobs, now, duration=duration, slot=start)
     decided = _decide_one(ctx, start, allow_outside=allow_outside)
     if decided.get("error"):
         raise HTTPException(400, decided["error"])
@@ -2130,6 +2304,7 @@ async def integrations_status(tech=Depends(require_owner)):
             "configured": google_maps_enabled(),
             "connected": google_maps_enabled(),  # API key only — no separate OAuth connect step
             "mode": "live" if google_maps_enabled() else "mock",
+            "routes": await routes_budget_snapshot(),
         },
         "twilio": {"configured": False, "connected": False, "mode": "mock"},
         "google_calendar": {"configured": False, "connected": False, "mode": "deferred"},
@@ -2358,6 +2533,20 @@ def _check_routing_fields(fields: dict):
     over = fields.get("same_day_over_limit")
     if over is not None and over not in ("pending", "hide"):
         raise HTTPException(400, "Choose approval or hide when a same-day time is over the limit.")
+
+@api.put("/settings/drive")
+async def update_drive_settings(body: DriveSettingsIn, tech=Depends(require_owner)):
+    """Owner limits for Routes spend and the rush-hour multiplier. No messages."""
+    incoming = {key: value for key, value in body.model_dump().items() if value is not None}
+    if "rush_multiplier" in incoming and not (1 <= float(incoming["rush_multiplier"]) <= 3):
+        raise HTTPException(400, "Rush multiplier must be between 1 and 3.")
+    for key in ("pro_daily_limit", "essentials_daily_limit"):
+        if key in incoming and int(incoming[key]) < 0:
+            raise HTTPException(400, "Daily route limit cannot be negative.")
+    current = await load_drive_settings()
+    current.update(incoming)
+    await db.app_settings.update_one({"_id": "drive"}, {"$set": current}, upsert=True)
+    return await routes_budget_snapshot()
 
 @api.get("/routing-techs")
 async def list_routing_techs_route(tech=Depends(require_owner)):
@@ -2835,6 +3024,7 @@ async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_
         dm = await get_drive_time(
             origin_lat, origin_lng, j["job_lat"], j["job_lng"],
             depart_at=datetime.fromisoformat(str(j["scheduled_start"]).replace("Z", "+00:00")),
+            mode=ESSENTIALS,
         )
         return {
             "id": j["id"],
@@ -3161,10 +3351,14 @@ async def startup():
     security_self_check()
     await seed_data()
     await load_settings()
-    # Auto-expire cached real-Maps drive times after 2 days. Keys are already one per Phoenix
-    # calendar day, so this only caps collection size. Leave expireAfterSeconds as-is: changing
-    # it on a database that already has the index raises IndexOptionsConflict.
-    await db.drive_time_cache.create_index("cached_at", expireAfterSeconds=172800)
+    # Essentials rows live up to 7 days. Pro rows set expires_at two hours out and the
+    # reader ignores them after that. Drop the old 2-day cached_at TTL if it is still there,
+    # because it would delete a 7-day row early. A conflicting drop is not fatal.
+    try:
+        await db.drive_time_cache.drop_index("cached_at_1")
+    except Exception:
+        pass
+    await db.drive_time_cache.create_index("expires_at", expireAfterSeconds=0)
 
 @api.get("/health")
 async def health():

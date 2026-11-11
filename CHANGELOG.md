@@ -15,6 +15,22 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — fewer Google Routes calls (2026-11-11)
+Traffic-aware Compute Routes Pro is only for today, and for tomorrow while
+it is still before 10:00 AM Phoenix. Later dates use TRAFFIC_UNAWARE
+(Essentials), which rejects `departureTime`, plus a 1.25× rush multiplier
+from 6:30–9:00 AM and 3:30–6:30 PM. Those windows, the multiplier, the 10:00
+cutoff, and the daily caps are owner settings (defaults: Pro 300/day,
+Essentials 600/day). Past the cap, drive time falls back to the mileage
+estimate and a warning is logged. Settings shows today's counts.
+
+Future departures share a 30-minute bucket. Same-day stays at 15 minutes.
+A return home is one call per hour on Pro and one call on Essentials. A
+slot that cannot work even at 60 mph never calls Google. A book or an edit
+rechecks only the previous stop, the new stop, and the next stop. Future
+results stay cached for 7 days or until that date ends. Pro results stay
+for 2 hours. Geocodes are cached by the normalized address.
+
 ### Fixed — first stop on an empty future day, and Routes 403 logs (2026-11-11)
 On an empty future day the technician may leave home at 6:00 AM. A first stop
 is offered when arrival minus the drive is still at or after 6:00. An 8:00 AM

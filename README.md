@@ -44,4 +44,4 @@ Enable these on that Google Cloud project:
 
 The legacy Distance Matrix API is not used for new drive times. If the key is missing, Routes is not enabled, or a call fails, the API logs it and uses the mileage estimate (about 2.2 minutes per mile plus 5, at least 10). Results are cached for 12 hours by rounded coordinates and a 15-minute departure bucket.
 
-Rough cost at 5–10 jobs a day: on the order of 2,000–8,000 route requests a month, about **$20–$80** at $10 per 1,000 Pro requests, before the $200 monthly Maps credit. At this volume the credit usually covers it. Confirm the current price on the Google Maps Platform pricing page; Google changes it.
+Traffic-aware calls (`TRAFFIC_AWARE`, Compute Routes Pro) are only for today and for tomorrow before 10:00 AM Phoenix. Later dates use `TRAFFIC_UNAWARE` (Compute Routes Essentials) with no `departureTime`, then a rush-hour multiplier. Pro includes 5,000 free requests a month and Essentials 10,000. A typical month of this scheduler stays inside those free tiers. Confirm the current price on the Google Maps Platform pricing page.
