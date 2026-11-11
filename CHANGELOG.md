@@ -15,6 +15,34 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Added — edit jobs and shop addresses (2026-11-11)
+Dispatch job cards and the field job screen have an Edit button. It can change
+the address, customer name, phone, email, vehicle, service, price, Phoenix
+date and time, zone, and notes. `PATCH /api/jobs/{id}` saves that. A new
+address is geocoded with Google when `GOOGLE_MAPS_API_KEY` is set (otherwise
+the mock). An explicit zone still wins over the geocoded zone. Only an owner can
+call `PATCH /api/jobs/{id}` or save a shop. Technicians and contractors,
+including a contractor assigned to the job, get 403. Edit is hidden on
+dispatch and the field screen unless the signed-in role is owner. The
+shop booking link is unchanged.
+
+Shops → Edit opens the existing shop form (name, address, contacts). Changing
+the address re-geocodes that shop the same way.
+
+`/book/:token` lists that shop’s upcoming jobs. The shop can edit the same
+fields except price and zone, or cancel. The token cannot read or change
+another shop’s jobs. Edits store `updated_at` and `edit_history` (who, when,
+which fields). Editing and this cancel do not send SMS or email, and do not
+change status unless the shop cancels.
+
+### Added — Refresh map locations on dispatch (2026-11-11)
+The owner dispatch board has a **Refresh map locations** button beside the route
+map. It asks for confirmation, then `POST /api/admin/regeocode` with no date
+(shops and jobs). The confirm copy states that this only updates coordinates
+and sends no messages. The button shows shops and jobs counts for updated,
+failed, and skipped, then reloads the day's jobs so the map uses the new pins.
+No endpoint behavior changed.
+
 ### Fixed — route map tiles, booking notes, re-geocode (2026-11-11)
 CARTO's public `dark_all` raster URL now returns one "API KEY REQUIRED" watermark
 for every tile (same PNG, etag `wm-da89c20e77c1-dark`). The dispatch route map and

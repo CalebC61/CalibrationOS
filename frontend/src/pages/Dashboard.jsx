@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
-import { api, formatTime, phoenixTodayStr, dateStr } from "../lib/api";
+import { api, formatTime, phoenixTodayStr, dateStr, getStoredAuth } from "../lib/api";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
 import RescheduleCancelModal from "../components/RescheduleCancelModal";
 import TomorrowStrip from "../components/TomorrowStrip";
+import JobEditModal from "../components/JobEditModal";
 
 const STATUS_FLOW = {
   booked: { next: "driving", label: "Start Driving" },
@@ -13,6 +14,7 @@ const STATUS_FLOW = {
 };
 
 export default function Dashboard() {
+  const isOwner = getStoredAuth()?.role === "owner";
   const [date, setDate] = useState(() => phoenixTodayStr());
   const [jobs, setJobs] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -22,6 +24,10 @@ export default function Dashboard() {
   const [dispatchTarget, setDispatchTarget] = useState(null);
   const [rescheduleTarget, setRescheduleTarget] = useState(null); // { job, mode: 'reschedule' | 'cancel' }
   const [dragOver, setDragOver] = useState(null);
+  const [refreshingMap, setRefreshingMap] = useState(false);
+  const [refreshResult, setRefreshResult] = useState(null);
+  const [refreshError, setRefreshError] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -66,6 +72,24 @@ export default function Dashboard() {
     const d = new Date(date + "T00:00:00");
     d.setDate(d.getDate() + days);
     setDate(dateStr(d));
+  }
+
+  async function refreshLocations() {
+    const ok = window.confirm("Refresh map locations? This only updates coordinates and sends no messages.");
+    if (!ok) return;
+    setRefreshingMap(true);
+    setRefreshError(null);
+    try {
+      const { data } = await api.post("/admin/regeocode");
+      setRefreshResult(data);
+      await load();
+    } catch (e) {
+      setRefreshResult(null);
+      const detail = e.response?.data?.detail;
+      setRefreshError(typeof detail === "string" ? detail : "Could not refresh locations. Try again.");
+    } finally {
+      setRefreshingMap(false);
+    }
   }
 
   async function handleDrop(zone, draggedId, targetIdx) {
@@ -151,32 +175,63 @@ export default function Dashboard() {
           headerClass="zone-header-west" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
           onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
+          onEdit={isOwner ? setEditTarget : null}
           dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
         <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east} onStatus={setStatus}
           headerClass="zone-header-east" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
           onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
+          onEdit={isOwner ? setEditTarget : null}
           dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
       </div>
 
-      {jobs.length > 0 && (
-        <section>
-          <div className="h3" style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>Route Map</span>
-            <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>Numbered by sequence · Orange = West · Blue = East</span>
+      <section>
+        <div className="h3" style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span>Route Map</span>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            {jobs.length > 0 && (
+              <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>Numbered by sequence · Orange = West · Blue = East</span>
+            )}
+            {isOwner && (
+            <button type="button" className="btn btn-ghost" onClick={refreshLocations} disabled={refreshingMap}
+              data-testid="refresh-map-locations"
+              style={{ padding: "6px 12px", fontSize: 13, opacity: refreshingMap ? 0.6 : 1 }}>
+              {refreshingMap ? "Refreshing…" : "Refresh map locations"}
+            </button>
+            )}
           </div>
+        </div>
+        {refreshResult && (
+          <div className="muted" style={{ fontSize: 13, marginBottom: 10 }} data-testid="regeocode-result">
+            {refreshResult.shops && <div>Shops: {countLine(refreshResult.shops)}</div>}
+            <div>Jobs: {countLine(refreshResult.jobs)}</div>
+          </div>
+        )}
+        {refreshError && (
+          <div style={{ color: "var(--red)", fontSize: 13, marginBottom: 10 }} data-testid="regeocode-error">{refreshError}</div>
+        )}
+        {jobs.length > 0 ? (
           <RouteMap jobs={[...west, ...east]} />
-        </section>
-      )}
+        ) : (
+          <div className="surface muted" style={{ padding: 16, textAlign: "center" }}>No jobs on this day.</div>
+        )}
+      </section>
 
       <DispatchModal open={!!dispatchTarget} job={dispatchTarget}
         onClose={() => setDispatchTarget(null)} onDone={load} />
+      <JobEditModal open={!!editTarget} job={editTarget}
+        onClose={() => setEditTarget(null)} onDone={load} />
       <RescheduleCancelModal open={!!rescheduleTarget} job={rescheduleTarget?.job}
         mode={rescheduleTarget?.mode}
         onClose={() => setRescheduleTarget(null)} onDone={load} />
       <TomorrowStrip baseDate={date} />
     </Shell>
   );
+}
+
+function countLine(group) {
+  const n = (k) => Number(group?.[k] || 0);
+  return `${n("updated")} updated, ${n("failed")} failed, ${n("skipped")} skipped`;
 }
 
 function Metric({ label, value, highlight }) {
@@ -193,7 +248,7 @@ function Metric({ label, value, highlight }) {
 }
 
 function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobIds, offerByJob,
-                    onDispatch, onRespond, onReschedule, dragOver, setDragOver, onDrop }) {
+                    onDispatch, onRespond, onReschedule, onEdit, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className={`zone-header ${headerClass}`}>
@@ -207,7 +262,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobI
         {jobs.map((j, idx) => (
           <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
-            onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule}
+            onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule} onEdit={onEdit}
             zone={zone} dropIndex={idx}
             isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
             onDragOver={(e) => { e.preventDefault(); setDragOver({ zone, idx }); }}
@@ -234,7 +289,7 @@ function OfferCountdown({ expiresAt }) {
   return <span className="font-mono">{min}:{String(sec).padStart(2, "0")}</span>;
 }
 
-function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule,
+function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule, onEdit,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
   const isLocked = job.status === "complete" || job.status === "cancelled";
@@ -299,6 +354,10 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+        {onEdit && (
+          <button className="btn btn-ghost" onClick={() => onEdit(job)}
+            data-testid={`job-edit-${job.id}`}>Edit</button>
+        )}
         {flow && (
           <button className="btn btn-primary" onClick={() => onStatus(job.id, flow.next)}
             data-testid={`job-action-${job.id}`}>{flow.label}</button>

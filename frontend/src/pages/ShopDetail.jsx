@@ -18,9 +18,21 @@ export default function ShopDetail() {
   async function save() {
     setSaving(true);
     try {
-      const { data } = await api.put(`/shops/${id}`, edit);
+      const { data } = await api.put(`/shops/${id}`, {
+        name: edit.name,
+        contact_name: edit.contact_name || null,
+        contact_phone: edit.contact_phone || null,
+        contact_email: edit.contact_email || null,
+        address: edit.address,
+        pricing_tier: edit.pricing_tier || "standard",
+        status: edit.status,
+        notes: edit.notes || null,
+      });
       setShop(data); setEdit(data);
       alert("Saved");
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      alert(typeof detail === "string" ? detail : "Could not save this shop. Try again.");
     } finally { setSaving(false); }
   }
 
@@ -78,7 +90,10 @@ export default function ShopDetail() {
             <Field label="Contact name"><input className="input" value={edit.contact_name || ""} onChange={e => setEdit({...edit, contact_name: e.target.value})} /></Field>
             <Field label="Contact phone"><input className="input" value={edit.contact_phone || ""} onChange={e => setEdit({...edit, contact_phone: e.target.value})} /></Field>
           </Row>
-          <Field label="Address"><input className="input" value={edit.address || ""} onChange={e => setEdit({...edit, address: e.target.value})} /></Field>
+          <Field label="Address"><input className="input" value={edit.address || ""} onChange={e => setEdit({...edit, address: e.target.value})} data-testid="shop-address" /></Field>
+          <div className="muted" style={{ fontSize: 13, marginTop: -8, marginBottom: 14 }}>
+            A new address updates this shop’s map pin. Nothing is sent to the shop.
+          </div>
           <Field label="Contact email"><input className="input" value={edit.contact_email || ""} onChange={e => setEdit({...edit, contact_email: e.target.value})} /></Field>
           <button className="btn btn-primary" disabled={saving} onClick={save} data-testid="save-shop">{saving ? "Saving…" : "Save Changes"}</button>
         </div>
