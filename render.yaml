@@ -2,9 +2,6 @@ services:
   - type: web
     name: calibrationos-api
     runtime: docker
-    # dockerfilePath and dockerContext are relative to the repo root, not rootDir.
-    # rootDir only limits which file changes trigger a rebuild.
-    rootDir: backend
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     plan: starter
