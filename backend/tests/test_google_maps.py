@@ -145,6 +145,14 @@ def test_routes_body_asks_for_traffic_at_a_departure():
     assert body["origin"]["location"]["latLng"]["latitude"] == 33.35
 
 
+def test_traffic_unaware_body_omits_departure_time():
+    body = routes_request_body(
+        33.35, -111.79, 33.43, -112.35, "2026-11-16T15:00:00Z", "TRAFFIC_UNAWARE",
+    )
+    assert body["routingPreference"] == "TRAFFIC_UNAWARE"
+    assert "departureTime" not in body
+
+
 def test_routes_response_uses_traffic_duration():
     parsed = parse_routes_response({
         "routes": [{"distanceMeters": 80467, "duration": "4500s", "staticDuration": "3600s"}],

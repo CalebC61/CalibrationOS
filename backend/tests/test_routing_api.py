@@ -192,7 +192,7 @@ def test_public_book_rejects_surprise_and_san_tan_at_the_same_time(monkeypatch):
     def close(a, b):
         return abs(a[0] - b[0]) < 0.02 and abs(a[1] - b[1]) < 0.02
 
-    async def drive(o_lat, o_lng, d_lat, d_lng, depart_at=None):
+    async def drive(o_lat, o_lng, d_lat, d_lng, depart_at=None, **kwargs):
         a, b = (o_lat, o_lng), (d_lat, d_lng)
         table = (
             ((home, surprise), 89),

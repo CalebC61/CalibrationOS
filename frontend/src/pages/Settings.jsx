@@ -500,7 +500,7 @@ function IntegrationsTab() {
           <div style={{ fontWeight: 600 }}>Google Maps</div>
           <div className="muted" style={{ fontSize: 12 }}>
             {!status ? "Loading…"
-              : maps?.mode === "live" ? "Live — geocoding plus traffic-aware drive times (Routes API, cached 12 hours)"
+              : maps?.mode === "live" ? "Live — geocoding plus Routes. Today and early tomorrow use traffic; later dates use the cheaper estimate."
               : "Not configured — set GOOGLE_MAPS_API_KEY (mock geocoding/drive-time active)"}
           </div>
         </div>
@@ -508,6 +508,15 @@ function IntegrationsTab() {
           <span style={{ color: "var(--yellow)", fontSize: 13 }}>Mock mode</span>
         )}
       </div>
+      {maps?.routes && (
+        <div style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }} data-testid="routes-budget">
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Routes calls today</div>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Traffic-aware {maps.routes.pro} of {maps.routes.pro_limit}. Standard {maps.routes.essentials} of {maps.routes.essentials_limit}.
+            Tomorrow uses traffic before {maps.routes.pro_cutoff}. Rush hours add ×{maps.routes.rush_multiplier} ({maps.routes.rush_morning_start}–{maps.routes.rush_morning_end} and {maps.routes.rush_evening_start}–{maps.routes.rush_evening_end}).
+          </div>
+        </div>
+      )}
 
       {others.map(i => (
         <div key={i.name} style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>

@@ -284,6 +284,100 @@ def candidate_slots(
     return slots
 
 
+def slot_touching_queries(
+    *,
+    start: datetime,
+    day_start: datetime,
+    home: tuple,
+    jobs: list,
+    new_point: tuple,
+    duration: int = DURATION_MINUTES,
+    buffer: int = BUFFER_MINUTES,
+    earliest_home_departure: datetime | None = None,
+) -> list:
+    """Only the legs that touch one chosen arrival: previous→new, new→next, and the direct leg.
+
+    A book or an edit rechecks these. It does not walk the whole day's grid.
+    """
+    start = _aware(start)
+    ordered = _ordered(jobs)
+    previous, nxt = _neighbors(start, ordered)
+    if previous:
+        origin = (previous[0]["job_lat"], previous[0]["job_lng"])
+        ready = previous[1] + timedelta(minutes=previous[2] + buffer)
+    else:
+        origin = home
+        ready = _aware(earliest_home_departure or day_start)
+    if nxt:
+        dest = (nxt[0]["job_lat"], nxt[0]["job_lng"])
+        arrive_by = nxt[1]
+    else:
+        dest = home
+        arrive_by = None
+    depart = start + timedelta(minutes=duration + buffer)
+    return [
+        (origin, new_point, ready, None),
+        (new_point, dest, depart, arrive_by),
+        (origin, dest, ready, None),
+    ]
+
+
+def annotated_drive_queries(
+    *,
+    day_start: datetime,
+    offer_end: datetime,
+    home: tuple,
+    jobs: list,
+    new_point: tuple,
+    duration: int = DURATION_MINUTES,
+    buffer: int = BUFFER_MINUTES,
+    grid: int = GRID_MINUTES,
+    grid_start: datetime | None = None,
+    home_ready: datetime | None = None,
+    earliest_home_departure: datetime | None = None,
+) -> list:
+    """Every leg the slot walk can ask for, with the deadline that makes it impossible.
+
+    The fourth item is the latest arrival, or None when the leg is only a duration.
+    """
+    day_start = _aware(day_start)
+    offer_end = _aware(offer_end)
+    ready = _aware(home_ready or day_start)
+    ordered = _ordered(jobs)
+    queries = [
+        (home, new_point, day_start, None),
+        (home, new_point, ready, None),
+    ]
+    if earliest_home_departure is not None:
+        queries.append((home, new_point, _aware(earliest_home_departure), None))
+    for _job, job_start, job_duration in ordered:
+        leave = job_start + timedelta(minutes=job_duration + buffer)
+        point = (_job["job_lat"], _job["job_lng"])
+        queries.append((point, new_point, leave, None))
+        queries.append((point, home, leave, None))
+    cursor = round_up(_aware(grid_start or day_start), grid)
+    while cursor <= offer_end:
+        previous, nxt = _neighbors(cursor, ordered)
+        if previous:
+            origin = (previous[0]["job_lat"], previous[0]["job_lng"])
+            origin_ready = previous[1] + timedelta(minutes=previous[2] + buffer)
+        else:
+            origin = home
+            origin_ready = day_start
+        if nxt:
+            dest = (nxt[0]["job_lat"], nxt[0]["job_lng"])
+            arrive_by = nxt[1]
+        else:
+            dest = home
+            arrive_by = None
+        depart = cursor + timedelta(minutes=duration + buffer)
+        queries.append((origin, new_point, origin_ready, None))
+        queries.append((new_point, dest, depart, arrive_by))
+        queries.append((origin, dest, origin_ready, None))
+        cursor += timedelta(minutes=grid)
+    return queries
+
+
 def schedule_drive_queries(
     *,
     day_start: datetime,

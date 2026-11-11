@@ -139,7 +139,7 @@ def _minutes(a, b):
 def _install(monkeypatch, db, now):
     sms = []
 
-    async def drive(o_lat, o_lng, d_lat, d_lng, depart_at=None):
+    async def drive(o_lat, o_lng, d_lat, d_lng, depart_at=None, **kwargs):
         return {"duration_minutes": _minutes((o_lat, o_lng), (d_lat, d_lng)), "distance_miles": 10}
 
     async def geo(address):
