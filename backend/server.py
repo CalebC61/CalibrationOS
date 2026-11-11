@@ -75,6 +75,13 @@ from regeocode import (
     detect_zone, jobs_on_phoenix_day, location_set, regeocode_records,
     regeocode_scope, zone_for_geocode,
 )
+from routing import (
+    assign_technician, contractor_routing_updates,
+    is_routing_tech, next_tech_color, owner_routing_updates, tech_schedule,
+)
+from scheduling import (
+    BUFFER_MINUTES, DURATION_MINUTES, block_minutes, candidate_slots, placement_error,
+)
 # Module 9 — Partner Growth Engine (models only here; routes are wired conditionally near the
 # bottom of this file, only when GROWTH_MODULE_ENABLED, to avoid registering unused routes)
 from growth.models import PartnerContact, enforce_grid_caps
@@ -671,8 +678,32 @@ class DispatchIn(BaseModel):
 class OfferResponseIn(BaseModel):
     accept: bool
 
+class RoutingTechIn(BaseModel):
+    name: str
+    phone: Optional[str] = None
+    home_address: str
+    service_radius_miles: Optional[float] = None
+    day_start: str = "08:00"
+    day_end: str = "19:00"
+    slot_minutes: int = 45
+    max_jobs: int = 14
+
+class RoutingTechUpdate(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    home_address: Optional[str] = None
+    service_radius_miles: Optional[float] = None
+    clear_service_radius: bool = False
+    day_start: Optional[str] = None
+    day_end: Optional[str] = None
+    slot_minutes: Optional[int] = None
+    max_jobs: Optional[int] = None
+    is_active: Optional[bool] = None
+    routes_jobs: Optional[bool] = None
+
 class ReorderIn(BaseModel):
-    zone: Literal["west", "east"]
+    zone: Optional[Literal["west", "east"]] = None
+    technician_id: Optional[str] = None
     date: str  # YYYY-MM-DD
     ordered_job_ids: List[str]
 
@@ -885,62 +916,116 @@ def parse_time_str(t: str) -> time:
     h, m = t.split(":")
     return time(int(h), int(m))
 
-async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_lng: float):
-    """Slot availability algorithm per spec."""
-    z = ZONES[zone_key]
-    start_t = parse_time_str(z["start"])
-    end_t = parse_time_str(z["end"])
-    # Fetch existing jobs in zone on this Phoenix date, ordered by scheduled_start.
-    # Zone clocks are America/Phoenix (West 08:00, East 14:30), stored as UTC.
-    day_start, day_end = business_day_bounds(day)
-    zone_start_dt, zone_end_dt = zone_window(day, start_t, end_t)
-    jobs = await db.jobs.find({
-        "zone": zone_key,
-        "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
-        "status": {"$nin": ["cancelled"]},
-    }, {"_id": 0}).sort("scheduled_start", 1).to_list(100)
-
-    if len(jobs) >= z["max_jobs"]:
-        return []
-
-    slots = []
-    # Anchor: end of last booked job + drive time, or zone start at home
-    if jobs:
-        last = jobs[-1]
-        anchor_dt = datetime.fromisoformat(last["scheduled_end"])
-        if anchor_dt.tzinfo is None:
-            anchor_dt = anchor_dt.replace(tzinfo=timezone.utc)
-        origin = (last["job_lat"], last["job_lng"])
-    else:
-        anchor_dt = zone_start_dt
-        origin = (CALEB_HOME["lat"], CALEB_HOME["lng"])
-
-    # Drive time from origin to new job
-    dm = await get_drive_time(origin[0], origin[1], job_lat, job_lng)
-    drive_min = dm["duration_minutes"]
-
-    # Earliest start = anchor + drive, rounded up to next 15-min boundary
-    earliest = anchor_dt + timedelta(minutes=drive_min)
-    # Round up to next slot boundary (every 15 min within window)
-    minute = (earliest.minute // 15) * 15
-    if earliest.minute % 15 != 0 or earliest.second > 0:
+def _round_up_quarter_hour(moment: datetime) -> datetime:
+    minute = (moment.minute // 15) * 15
+    if moment.minute % 15 != 0 or moment.second > 0 or moment.microsecond > 0:
         minute += 15
     if minute >= 60:
-        earliest = earliest.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    else:
-        earliest = earliest.replace(minute=minute, second=0, microsecond=0)
+        return moment.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    return moment.replace(minute=minute, second=0, microsecond=0)
 
-    # Generate slots from earliest until zone end, only when the start is on this Phoenix day.
-    remaining = z["max_jobs"] - len(jobs)
-    for cursor in offered_slot_starts(day, earliest, zone_end_dt, z["slot_minutes"], remaining):
-        local = cursor.astimezone(BUSINESS_TZ)
+
+async def load_routing_techs():
+    """Active owners and hired technicians with a home base. Contractors are excluded."""
+    people = await db.technicians.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+    return [person for person in people if is_routing_tech(person)]
+
+
+async def _assigned_tech(lat: float, lng: float):
+    chosen = assign_technician(await load_routing_techs(), lat, lng)
+    if chosen:
+        return chosen
+    return await db.technicians.find_one({"role": "owner"}, {"_id": 0, "password_hash": 0})
+
+
+def _tech_home(tech: dict | None) -> tuple:
+    if tech and tech.get("home_lat") is not None and tech.get("home_lng") is not None:
+        return (tech["home_lat"], tech["home_lng"])
+    return (CALEB_HOME["lat"], CALEB_HOME["lng"])
+
+
+async def _drive_lookup(pairs: list):
+    """Minutes for each (origin, destination) pair. Same callable for offer and recheck."""
+    table = {}
+    for origin, dest in pairs:
+        if origin == dest:
+            table[(origin, dest)] = 0
+            continue
+        dm = await get_drive_time(origin[0], origin[1], dest[0], dest[1])
+        table[(origin, dest)] = dm["duration_minutes"]
+
+    def drive(origin, dest):
+        return table[(origin, dest)]
+
+    return drive
+
+
+def _route_pairs(home, new_point, jobs):
+    pairs = [(home, new_point)]
+    for job in jobs:
+        point = (job.get("job_lat"), job.get("job_lng"))
+        if point[0] is None or point[1] is None:
+            continue
+        pairs.append((point, new_point))
+        pairs.append((new_point, point))
+    return pairs
+
+
+async def _route_jobs(tech_id: str, day: date, ignore_job_id: str | None = None):
+    day_start, day_end = business_day_bounds(day)
+    found = await db.jobs.find({
+        "technician_id": tech_id,
+        "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
+        "status": {"$nin": ["cancelled"]},
+    }, {"_id": 0}).to_list(200)
+    if ignore_job_id:
+        found = [job for job in found if job.get("id") != ignore_job_id]
+    return found
+
+
+async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_lng: float, tech: dict = None):
+    """Open arrivals on one technician's route, including gaps between jobs.
+
+    `zone_key` is ignored. East/West no longer has its own clock.
+    """
+    del zone_key
+    schedule = tech_schedule(tech)
+    # Leave home at the technician's day start. Shops cannot be offered an arrival after 5:00 PM.
+    day_start, offer_end = zone_window(day, parse_time_str(schedule["day_start"]), time(17, 0))
+    jobs = []
+    if tech and tech.get("id"):
+        jobs = await _route_jobs(tech["id"], day)
+    home = _tech_home(tech)
+    new_point = (job_lat, job_lng)
+    drive = await _drive_lookup(_route_pairs(home, new_point, jobs))
+    raw = candidate_slots(
+        day_start=day_start, offer_end=offer_end, home=home, jobs=jobs,
+        new_point=new_point, drive=drive, duration=DURATION_MINUTES, buffer=BUFFER_MINUTES,
+    )
+    slots = []
+    for slot in raw:
+        start = datetime.fromisoformat(slot["start"])
         slots.append({
-            "start": iso(cursor),
-            "end": iso(cursor + timedelta(minutes=z["slot_minutes"])),
-            "drive_time_minutes": drive_min,
-            "label": local.strftime("%-I:%M %p"),
+            "start": slot["start"],
+            "end": slot["end"],
+            "drive_time_minutes": drive(home, new_point),
+            "label": start.astimezone(BUSINESS_TZ).strftime("%-I:%M %p"),
         })
     return slots
+
+
+async def _reject_if_route_conflicts(tech, day, start: datetime, new_point: tuple, jobs: list, duration: int, allow_after_offer_end: bool):
+    schedule = tech_schedule(tech)
+    day_start, offer_end = zone_window(day, parse_time_str(schedule["day_start"]), time(17, 0))
+    home = _tech_home(tech)
+    drive = await _drive_lookup(_route_pairs(home, new_point, jobs))
+    message = placement_error(
+        start=start, duration=duration, buffer=BUFFER_MINUTES,
+        day_start=day_start, offer_end=offer_end, home=home, jobs=jobs,
+        new_point=new_point, drive=drive, allow_after_offer_end=allow_after_offer_end,
+    )
+    if message:
+        raise HTTPException(400, message)
 
 @api.post("/public/availability")
 async def public_availability(query: SlotQuery):
@@ -966,8 +1051,15 @@ async def public_availability(query: SlotQuery):
         return {"zone": zone, "in_metro": True, "slots": [], "message": "That date is in the past."}
     if (day - today).days > 21:
         return {"zone": zone, "in_metro": True, "slots": [], "message": "Bookings are only available 21 days out."}
-    slots = await compute_available_slots(zone, day, geo["lat"], geo["lng"])
-    return {"zone": zone, "in_metro": True, "slots": slots, "job_lat": geo["lat"], "job_lng": geo["lng"]}
+    # One technician covers every in-valley address. Extra technicians split by home base.
+    tech = await _assigned_tech(geo["lat"], geo["lng"])
+    slots = await compute_available_slots(zone, day, geo["lat"], geo["lng"], tech=tech)
+    return {
+        "zone": zone, "in_metro": True, "slots": slots,
+        "job_lat": geo["lat"], "job_lng": geo["lng"],
+        "technician_id": tech.get("id") if tech else None,
+        "technician_name": tech.get("name") if tech else None,
+    }
 
 @api.post("/public/book")
 async def public_book(data: BookingIn):
@@ -985,23 +1077,35 @@ async def public_book(data: BookingIn):
         raise HTTPException(400, "Invalid scheduled_start")
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
-    z = ZONES[zone]
-    end_dt = start_dt + timedelta(minutes=z["slot_minutes"])
+    tech = await _assigned_tech(geo["lat"], geo["lng"])
+    schedule = tech_schedule(tech)
+    end_dt = start_dt + timedelta(minutes=DURATION_MINUTES)
+    route_day = business_date(start_dt)
+    route_jobs = await _route_jobs(tech.get("id"), route_day) if tech and tech.get("id") else []
+    await _reject_if_route_conflicts(
+        tech, route_day, start_dt, (geo["lat"], geo["lng"]), route_jobs,
+        DURATION_MINUTES, allow_after_offer_end=False,
+    )
 
-    # Previous job and sequence are scoped to the Phoenix day of this start instant.
+    # Previous job and sequence follow this technician's day, not an East/West zone.
     day_start, day_end = business_day_bounds(business_date(start_dt))
-    prev = await db.jobs.find({
-        "zone": zone,
+    tech_id = tech.get("id") if tech else None
+    prev_query = {
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(start_dt)},
         "status": {"$nin": ["cancelled"]},
-    }, {"_id": 0}).sort("scheduled_start", -1).limit(1).to_list(1)
+    }
+    if tech_id:
+        prev_query["technician_id"] = tech_id
+    prev = await db.jobs.find(prev_query, {"_id": 0}).sort("scheduled_start", -1).limit(1).to_list(1)
     if prev:
         origin = (prev[0]["job_lat"], prev[0]["job_lng"])
+    elif tech and tech.get("home_lat") is not None:
+        origin = (tech["home_lat"], tech["home_lng"])
     else:
         origin = (CALEB_HOME["lat"], CALEB_HOME["lng"])
     dm = await get_drive_time(origin[0], origin[1], geo["lat"], geo["lng"])
 
-    # Find owner technician
+    # Find owner technician (alerts still go to the owner, not a hired tech)
     owner = await db.technicians.find_one({"role": "owner"})
 
     customer = job_customer_fields(notes=data.notes, customer_first_name=data.customer_first_name)
@@ -1019,24 +1123,29 @@ async def public_book(data: BookingIn):
     # Determine price from shop rate card
     price = shop_price_for(shop, data.calibration_type)
 
-    # Compute sequence_order: count of existing non-cancelled jobs on this day in this zone + 1
-    seq_count = await db.jobs.count_documents({
-        "zone": zone,
+    # Sequence is this technician's jobs that Phoenix day, on either side of the valley.
+    seq_query = {
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
         "status": {"$nin": ["cancelled"]},
-    })
+    }
+    if tech_id:
+        seq_query["technician_id"] = tech_id
+    seq_count = await db.jobs.count_documents(seq_query)
 
     job = {
         "id": gen_id(),
         "shop_id": shop["id"],
         "shop_name": shop["name"],  # denormalized for fast reads
         "vehicle_id": vehicle["id"],
-        "technician_id": owner["id"] if owner else None,
+        "technician_id": tech_id or (owner["id"] if owner else None),
+        "technician_name": (tech or owner or {}).get("name"),
+        "technician_color": (tech or {}).get("color") or "#FF5F1F",
         "zone": zone,
         "calibration_type": data.calibration_type,
         "calibration_label": STANDARD_PRICING[data.calibration_type]["label"],
         "scheduled_start": iso(start_dt),
         "scheduled_end": iso(end_dt),
+        "duration_minutes": DURATION_MINUTES,
         "job_address": data.job_address,
         "job_lat": geo["lat"], "job_lng": geo["lng"],
         "status": "booked",
@@ -1219,6 +1328,11 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
             zone = zone_for_geocode(geo)
             if zone:
                 fields["zone"] = zone
+        chosen = assign_technician(await load_routing_techs(), geo["lat"], geo["lng"])
+        if chosen and chosen.get("id") != job.get("technician_id"):
+            fields["technician_id"] = chosen["id"]
+            fields["technician_name"] = chosen.get("name")
+            fields["technician_color"] = chosen.get("color") or "#FF5F1F"
     if "calibration_type" in fields:
         fields["calibration_label"] = STANDARD_PRICING[fields["calibration_type"]]["label"]
     if "scheduled_start" in fields:
@@ -1229,6 +1343,26 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
     changed = changed_keys(job, fields)
     if not changed:
         return job
+    route_touch = {"scheduled_start", "job_lat", "job_lng", "technician_id"} & set(changed)
+    if route_touch:
+        merged = {**job, **fields}
+        try:
+            start = datetime.fromisoformat(str(merged["scheduled_start"]).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Invalid date and time.")
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        tech_id = merged.get("technician_id")
+        person = await db.technicians.find_one({"id": tech_id}, {"_id": 0, "password_hash": 0}) if tech_id else None
+        if person is None:
+            person = await _assigned_tech(merged.get("job_lat"), merged.get("job_lng"))
+        siblings = await _route_jobs(person["id"], business_date(start), ignore_job_id=job.get("id")) if person else []
+        await _reject_if_route_conflicts(
+            person, business_date(start), start,
+            (merged.get("job_lat"), merged.get("job_lng")),
+            siblings, block_minutes(merged),
+            allow_after_offer_end=(who.get("kind") == "owner"),
+        )
     now = iso(now_utc())
     entry = {"at": now, "who": who, "fields": changed}
     await db.jobs.update_one(
@@ -1807,28 +1941,150 @@ async def list_contractors(tech=Depends(require_owner)):
     ).to_list(50)
     return techs
 
+def _tech_public(person: dict) -> dict:
+    keys = (
+        "id", "name", "role", "phone", "email", "home_address", "home_lat", "home_lng",
+        "service_radius_miles", "day_start", "day_end", "slot_minutes", "max_jobs",
+        "is_active", "color", "routes_jobs",
+    )
+    return {key: person.get(key) for key in keys}
+
+def _check_routing_fields(fields: dict):
+    radius = fields.get("service_radius_miles")
+    if radius is not None and float(radius) <= 0:
+        raise HTTPException(400, "Service area must be greater than 0 miles, or left blank.")
+    slot = fields.get("slot_minutes")
+    if slot is not None and int(slot) <= 0:
+        raise HTTPException(400, "Slot length must be greater than 0.")
+    cap = fields.get("max_jobs")
+    if cap is not None and int(cap) <= 0:
+        raise HTTPException(400, "Max jobs must be greater than 0.")
+    start, end = fields.get("day_start"), fields.get("day_end")
+    if start and end and start >= end:
+        raise HTTPException(400, "Day start must be before day end.")
+
+@api.get("/routing-techs")
+async def list_routing_techs_route(tech=Depends(require_owner)):
+    people = await db.technicians.find(
+        {"role": {"$in": ["owner", "technician"]}},
+        {"_id": 0, "password_hash": 0},
+    ).to_list(50)
+    return [_tech_public(person) for person in people]
+
+@api.post("/routing-techs")
+async def create_routing_tech(body: RoutingTechIn, tech=Depends(require_owner)):
+    """Add a technician with a geocoded home base. Does not send SMS or email."""
+    if not body.name.strip() or not body.home_address.strip():
+        raise HTTPException(400, "Name and home address are required.")
+    _check_routing_fields(body.model_dump())
+    try:
+        geo = await geocode_for_regeocode(body.home_address.strip())
+    except (GoogleMapsError, requests.RequestException):
+        raise HTTPException(400, "Could not locate that home address.")
+    used = []
+    for person in await db.technicians.find({}, {"_id": 0, "color": 1}).to_list(50):
+        if person.get("color"):
+            used.append(person["color"])
+    tech_id = gen_id()
+    doc = {
+        "id": tech_id,
+        "name": body.name.strip(),
+        "email": f"tech-{tech_id}@technicians.invalid",
+        "phone": body.phone,
+        "role": "technician",
+        "home_address": body.home_address.strip(),
+        "home_lat": geo["lat"],
+        "home_lng": geo["lng"],
+        "service_radius_miles": body.service_radius_miles,
+        "day_start": body.day_start,
+        "day_end": body.day_end,
+        "slot_minutes": body.slot_minutes,
+        "max_jobs": body.max_jobs,
+        "is_active": True,
+        "routes_jobs": True,
+        "color": next_tech_color(used),
+        "password_hash": hash_password(secrets.token_urlsafe(24)),
+        "created_at": iso(now_utc()),
+    }
+    await db.technicians.insert_one(doc.copy())
+    doc.pop("password_hash", None)
+    return _tech_public(doc)
+
+@api.put("/routing-techs/{tech_id}")
+async def update_routing_tech(tech_id: str, body: RoutingTechUpdate, tech=Depends(require_owner)):
+    """Edit a home base or service area. Contractors are not changed here. No messages."""
+    person = await db.technicians.find_one({"id": tech_id}, {"_id": 0})
+    if not person or person.get("role") not in ("owner", "technician"):
+        raise HTTPException(404, "Technician not found")
+    update = body.model_dump(exclude_unset=True)
+    _check_routing_fields(update)
+    turning_off = update.get("is_active") is False or update.get("routes_jobs") is False
+    if turning_off:
+        still = [p for p in await load_routing_techs() if p.get("id") != tech_id]
+        if not still:
+            raise HTTPException(400, "At least one technician has to cover the valley.")
+    if update.get("clear_service_radius"):
+        update["service_radius_miles"] = None
+    update.pop("clear_service_radius", None)
+    if update.get("home_address") and update["home_address"].strip() != (person.get("home_address") or "").strip():
+        try:
+            geo = await geocode_for_regeocode(update["home_address"].strip())
+        except (GoogleMapsError, requests.RequestException):
+            raise HTTPException(400, "Could not locate that home address.")
+        update["home_address"] = update["home_address"].strip()
+        update["home_lat"] = geo["lat"]
+        update["home_lng"] = geo["lng"]
+    if not update:
+        return _tech_public(person)
+    update["updated_at"] = iso(now_utc())
+    await db.technicians.update_one({"id": tech_id}, {"$set": update})
+    fresh = await db.technicians.find_one({"id": tech_id}, {"_id": 0, "password_hash": 0})
+    return _tech_public(fresh)
+
 # ---------- Job reorder with drive-time recalc ----------
 @api.post("/jobs/reorder")
 async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
-    z = ZONES[data.zone]
+    if not data.technician_id and not data.zone:
+        raise HTTPException(400, "technician_id is required")
     try:
         d = datetime.strptime(data.date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(400, "Invalid date")
     day_start, day_end = business_day_bounds(d)
+    if data.technician_id:
+        person = await db.technicians.find_one({"id": data.technician_id}, {"_id": 0, "password_hash": 0})
+        if not person:
+            raise HTTPException(404, "Technician not found")
+        schedule = tech_schedule(person)
+        origin_home = (
+            (person["home_lat"], person["home_lng"])
+            if person.get("home_lat") is not None else (CALEB_HOME["lat"], CALEB_HOME["lng"])
+        )
+        scope = {"technician_id": data.technician_id}
+    else:
+        schedule = {
+            "day_start": ZONES[data.zone]["start"],
+            "day_end": ZONES[data.zone]["end"],
+            "slot_minutes": ZONES[data.zone]["slot_minutes"],
+            "max_jobs": ZONES[data.zone]["max_jobs"],
+        }
+        origin_home = (CALEB_HOME["lat"], CALEB_HOME["lng"])
+        scope = {"zone": data.zone}
     # Fetch jobs in scope
     jobs = await db.jobs.find({
         "id": {"$in": data.ordered_job_ids},
-        "zone": data.zone,
+        **scope,
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
         "status": {"$nin": ["cancelled", "complete"]},
     }, {"_id": 0}).to_list(100)
     by_id = {j["id"]: j for j in jobs}
     if set(data.ordered_job_ids) - set(by_id.keys()):
         raise HTTPException(400, "Some job IDs are invalid or not reorderable")
-    # Sequential recalc from the Phoenix zone start, anchored at owner home for first job
-    cursor, zone_end_dt = zone_window(d, parse_time_str(z["start"]), parse_time_str(z["end"]))
-    origin = (CALEB_HOME["lat"], CALEB_HOME["lng"])
+    # Sequential recalc from this technician's day start, anchored at their home.
+    cursor, zone_end_dt = zone_window(
+        d, parse_time_str(schedule["day_start"]), parse_time_str(schedule["day_end"]),
+    )
+    origin = origin_home
     updates = []
     for seq, jid in enumerate(data.ordered_job_ids, start=1):
         j = by_id[jid]
@@ -1845,7 +2101,7 @@ async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
         new_start = clamp_start_to_business_day(earliest, d)
         if new_start is None:
             raise HTTPException(400, "Reorder would place a job outside this day.")
-        new_end = new_start + timedelta(minutes=z["slot_minutes"])
+        new_end = new_start + timedelta(minutes=schedule["slot_minutes"])
         if new_end > zone_end_dt:
             raise HTTPException(400, "Reorder would push job past zone end. Try a different order.")
         updates.append({
@@ -2358,6 +2614,18 @@ async def seed_data():
         )
         logger.warning(f"[SECURITY] Rotated owner password to match OWNER_PASSWORD env for {owner_email}.")
 
+    # Routing defaults for the owner. Never overwrites a home address they already saved,
+    # and does not move existing appointment times.
+    owner_doc = await db.technicians.find_one({"role": "owner"})
+    if owner_doc:
+        routing_updates = owner_routing_updates(owner_doc)
+        if routing_updates:
+            await db.technicians.update_one({"id": owner_doc["id"]}, {"$set": routing_updates})
+        await db.jobs.update_many(
+            {"$or": [{"technician_id": None}, {"technician_id": {"$exists": False}}]},
+            {"$set": {"technician_id": owner_doc["id"]}},
+        )
+
     # Contractor — demo/starter account. Seeds with CONTRACTOR_PASSWORD when set (any env), or the
     # dev default when demo data is enabled; skipped in production if neither applies.
     contractor_email = SEED_CONTRACTOR_EMAIL
@@ -2381,6 +2649,12 @@ async def seed_data():
             {"id": existing_c["id"]}, {"$set": {"password_hash": hash_password(SEED_CONTRACTOR_PASSWORD)}}
         )
         logger.warning(f"[SECURITY] Rotated contractor password to match CONTRACTOR_PASSWORD env for {contractor_email}.")
+
+    # Contractors stay off the automatic route. Existing jobs keep their times.
+    for person in await db.technicians.find({"role": "contractor"}, {"_id": 0}).to_list(20):
+        routing_updates = contractor_routing_updates(person)
+        if routing_updates:
+            await db.technicians.update_one({"id": person["id"]}, {"$set": routing_updates})
 
     # Demo shops (gated: on in dev, off in production unless SEED_DEMO_DATA=true)
     shop_count = await db.shops.count_documents({})

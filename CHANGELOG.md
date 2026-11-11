@@ -15,6 +15,37 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — one technician covers the whole valley (2026-11-11)
+Booking, slot availability, the dispatch board, and the route map no longer
+split the day into hard-coded East and West. With one active routing
+technician (Caleb, home base Gilbert unless the owner changes it), every
+in-valley job is theirs. Morning stays bookable when an afternoon job
+already exists, and the other way around. A seeded contractor does not
+take a side of the valley.
+
+The owner can add technicians under Settings → Technicians. Each one has a
+geocoded home base, a day window, and an optional service radius. With two
+or more, a job goes to a tech whose radius covers it, otherwise to the
+nearest home. Pins and route lines use each tech's color. Existing
+appointment times are not moved. Jobs missing a technician are attached to
+the owner. Only the owner can edit technicians. No SMS or email is sent.
+Shop booking links, job edits, and Refresh map locations are unchanged.
+The stored east/west label is still written by geocoding so older tools
+keep working; it does not decide who drives or which slots are offered.
+
+Each technician's day is one route. Offered times are grid arrivals that
+fit the drive from the previous stop and the drive to the next stop, plus
+a 20-minute job and a 15-minute buffer, including gaps between jobs.
+`POST /api/public/book` and edits that change the time or address run that
+check again and reject a conflict. A Surprise arrival and a San Tan Valley
+arrival cannot share 8:00 AM. Shops are not offered an arrival after
+5:00 PM. Nothing new is texted or emailed.
+
+Deferred from the smart-scheduling plan (PR #12): shop-facing arrival
+windows instead of a clock time, sliding later ETAs inside a window, the
+per-day booking lock, the one-time +7 hour restamp, and a text when a
+drag moves an ETA out of a promised window.
+
 ### Added — edit jobs and shop addresses (2026-11-11)
 Dispatch job cards and the field job screen have an Edit button. It can change
 the address, customer name, phone, email, vehicle, service, price, Phoenix

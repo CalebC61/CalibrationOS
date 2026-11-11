@@ -17,6 +17,7 @@ export default function Dashboard() {
   const isOwner = getStoredAuth()?.role === "owner";
   const [date, setDate] = useState(() => phoenixTodayStr());
   const [jobs, setJobs] = useState([]);
+  const [techs, setTechs] = useState([]);
   const [summary, setSummary] = useState(null);
   const [alerts, setAlerts] = useState({ count: 0, alerts: [] });
   const [alertsOpen, setAlertsOpen] = useState(false);
@@ -38,6 +39,10 @@ export default function Dashboard() {
         api.get(`/contractor-offers`),
       ]);
       setJobs(j.data); setSummary(s.data); setAlerts(a.data); setOffers(o.data);
+      try {
+        const t = await api.get("/routing-techs");
+        setTechs(t.data || []);
+      } catch { setTechs([]); }
     } catch (e) { console.error(e); }
   }, [date]);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
@@ -65,8 +70,21 @@ export default function Dashboard() {
   const newJobIds = new Set(alerts.alerts.map(a => a.job_id));
   const offerByJob = Object.fromEntries(offers.filter(o => o.status === "pending").map(o => [o.job_id, o]));
 
-  const west = jobs.filter(j => j.zone === "west").sort((a,b) => a.scheduled_start.localeCompare(b.scheduled_start));
-  const east = jobs.filter(j => j.zone === "east").sort((a,b) => a.scheduled_start.localeCompare(b.scheduled_start));
+  const routingTechs = techs.filter(t => t.role !== "contractor" && t.routes_jobs !== false && t.is_active !== false);
+  const colorById = Object.fromEntries(routingTechs.map(t => [t.id, t.color || "#FF5F1F"]));
+  const nameById = Object.fromEntries(routingTechs.map(t => [t.id, t.name]));
+  const painted = jobs.map(j => ({
+    ...j,
+    technician_color: j.technician_color || colorById[j.technician_id] || "#FF5F1F",
+    technician_name: j.technician_name || nameById[j.technician_id] || "",
+  }));
+  function jobsFor(tech) {
+    return painted
+      .filter(j => j.technician_id === tech.id || (!j.technician_id && tech.role === "owner"))
+      .sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
+  }
+  const panels = (routingTechs.length ? routingTechs : [{ id: "unassigned", name: "Today", role: "owner", color: "#FF5F1F", home_address: "" }])
+    .map(tech => ({ tech, jobs: tech.id === "unassigned" ? painted.slice().sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start)) : jobsFor(tech) }));
 
   function shiftDate(days) {
     const d = new Date(date + "T00:00:00");
@@ -92,12 +110,12 @@ export default function Dashboard() {
     }
   }
 
-  async function handleDrop(zone, draggedId, targetIdx) {
-    const zoneJobs = zone === "west" ? west : east;
-    const ids = zoneJobs.map(j => j.id).filter(id => id !== draggedId);
+  async function handleDrop(techId, draggedId, targetIdx) {
+    const panel = panels.find(p => p.tech.id === techId);
+    const ids = (panel?.jobs || []).map(j => j.id).filter(id => id !== draggedId);
     ids.splice(targetIdx, 0, draggedId);
     try {
-      await api.post("/jobs/reorder", { zone, date, ordered_job_ids: ids });
+      await api.post("/jobs/reorder", { technician_id: techId, date, ordered_job_ids: ids });
       load();
     } catch (e) {
       alert(e.response?.data?.detail || "Reorder failed");
@@ -171,26 +189,33 @@ export default function Dashboard() {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16, marginBottom: 20 }}>
-        <ZonePanel title="West Valley" subtitle="8:00 AM – 2:00 PM" zone="west" jobs={west} onStatus={setStatus}
-          headerClass="zone-header-west" newJobIds={newJobIds} offerByJob={offerByJob}
-          onDispatch={setDispatchTarget} onRespond={manualRespond}
-          onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
-          onEdit={isOwner ? setEditTarget : null}
-          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
-        <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east} onStatus={setStatus}
-          headerClass="zone-header-east" newJobIds={newJobIds} offerByJob={offerByJob}
-          onDispatch={setDispatchTarget} onRespond={manualRespond}
-          onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
-          onEdit={isOwner ? setEditTarget : null}
-          dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
+        {panels.map(({ tech, jobs: techJobs }) => (
+          <ZonePanel key={tech.id}
+            title={tech.name || "Technician"}
+            subtitle={routingTechs.length <= 1 ? "Whole valley" : (tech.home_address || "Home base")}
+            zone={tech.id} jobs={techJobs} onStatus={setStatus}
+            accent={tech.color || "#FF5F1F"}
+            newJobIds={newJobIds} offerByJob={offerByJob}
+            onDispatch={setDispatchTarget} onRespond={manualRespond}
+            onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
+            onEdit={isOwner ? setEditTarget : null}
+            dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
+        ))}
       </div>
 
       <section>
         <div className="h3" style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <span>Route Map</span>
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            {jobs.length > 0 && (
-              <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>Numbered by sequence · Orange = West · Blue = East</span>
+            {routingTechs.length > 0 && (
+              <span className="muted" style={{ fontSize: 12, fontWeight: 400, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {routingTechs.map(t => (
+                  <span key={t.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 99, background: t.color || "#FF5F1F" }} />
+                    {t.name}
+                  </span>
+                ))}
+              </span>
             )}
             {isOwner && (
             <button type="button" className="btn btn-ghost" onClick={refreshLocations} disabled={refreshingMap}
@@ -211,7 +236,7 @@ export default function Dashboard() {
           <div style={{ color: "var(--red)", fontSize: 13, marginBottom: 10 }} data-testid="regeocode-error">{refreshError}</div>
         )}
         {jobs.length > 0 ? (
-          <RouteMap jobs={[...west, ...east]} />
+          <RouteMap jobs={painted} />
         ) : (
           <div className="surface muted" style={{ padding: 16, textAlign: "center" }}>No jobs on this day.</div>
         )}
@@ -247,16 +272,19 @@ function Metric({ label, value, highlight }) {
   );
 }
 
-function ZonePanel({ title, subtitle, zone, jobs, onStatus, headerClass, newJobIds, offerByJob,
+function ZonePanel({ title, subtitle, zone, jobs, onStatus, accent, newJobIds, offerByJob,
                     onDispatch, onRespond, onReschedule, onEdit, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
-      <div className={`zone-header ${headerClass}`}>
-        <span>{title}</span>
+      <div className="zone-header">
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 99, background: accent }} />
+          {title}
+        </span>
         <span style={{ fontSize: 12 }}>{subtitle} · {jobs.length} jobs</span>
       </div>
       {jobs.length === 0 && (
-        <div className="surface muted" style={{ padding: 20, textAlign: "center" }}>No jobs in this zone yet.</div>
+        <div className="surface muted" style={{ padding: 20, textAlign: "center" }}>No jobs for this technician yet.</div>
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {jobs.map((j, idx) => (

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import Shell from "../components/Shell";
 
-const TABS = ["pricing", "schedule", "contractor", "integrations"];
+const TABS = ["pricing", "technicians", "schedule", "contractor", "integrations"];
 
 export default function Settings() {
   const [tab, setTab] = useState("pricing");
@@ -17,6 +17,7 @@ export default function Settings() {
         ))}
       </div>
       {tab === "pricing" && <PricingTab />}
+      {tab === "technicians" && <TechniciansTab />}
       {tab === "schedule" && <ScheduleTab />}
       {tab === "contractor" && <ContractorTab />}
       {tab === "integrations" && <IntegrationsTab />}
@@ -67,6 +68,136 @@ function PricingTab() {
   );
 }
 
+function TechniciansTab() {
+  const [techs, setTechs] = useState([]);
+  const [edits, setEdits] = useState({});
+  const [savingId, setSavingId] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState({ name: "", phone: "", home_address: "", service_radius_miles: "" });
+
+  async function load() {
+    const { data } = await api.get("/routing-techs");
+    setTechs(data);
+    const next = {};
+    data.forEach(t => {
+      next[t.id] = {
+        name: t.name || "",
+        phone: t.phone || "",
+        home_address: t.home_address || "",
+        service_radius_miles: t.service_radius_miles ?? "",
+        day_start: (t.day_start || "08:00").slice(0, 5),
+        day_end: (t.day_end || "19:00").slice(0, 5),
+        is_active: t.is_active !== false,
+      };
+    });
+    setEdits(next);
+  }
+  useEffect(() => { load(); }, []);
+
+  function patch(id, fields) {
+    setEdits(current => ({ ...current, [id]: { ...current[id], ...fields } }));
+  }
+
+  async function save(id) {
+    const edit = edits[id];
+    setSavingId(id);
+    try {
+      await api.put(`/routing-techs/${id}`, {
+        name: edit.name,
+        phone: edit.phone || null,
+        home_address: edit.home_address,
+        service_radius_miles: edit.service_radius_miles === "" ? null : Number(edit.service_radius_miles),
+        clear_service_radius: edit.service_radius_miles === "",
+        day_start: edit.day_start,
+        day_end: edit.day_end,
+        is_active: edit.is_active,
+      });
+      await load();
+    } catch (e) {
+      alert(typeof e.response?.data?.detail === "string" ? e.response.data.detail : "Save failed");
+    } finally { setSavingId(null); }
+  }
+
+  async function createTech() {
+    setCreating(true);
+    try {
+      await api.post("/routing-techs", {
+        name: draft.name,
+        phone: draft.phone || null,
+        home_address: draft.home_address,
+        service_radius_miles: draft.service_radius_miles === "" ? null : Number(draft.service_radius_miles),
+      });
+      setDraft({ name: "", phone: "", home_address: "", service_radius_miles: "" });
+      await load();
+    } catch (e) {
+      alert(typeof e.response?.data?.detail === "string" ? e.response.data.detail : "Could not add that technician.");
+    } finally { setCreating(false); }
+  }
+
+  return (
+    <div data-testid="technicians-tab" style={{ maxWidth: 720 }}>
+      <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
+        With one technician, every Phoenix Valley job goes to them. Add another home base and jobs split by whoever is nearest, or by a service radius when you set one. Saving does not send a message.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {techs.map(t => (
+          <div key={t.id} className="surface" style={{ padding: 20 }} data-testid={`routing-tech-${t.id}`}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div className="h3" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 99, background: t.color || "#FF5F1F" }} />
+                {t.role === "owner" ? "Owner" : "Technician"}
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={edits[t.id]?.is_active || false}
+                  onChange={e => patch(t.id, { is_active: e.target.checked })} />
+                Active
+              </label>
+            </div>
+            <Row>
+              <Field label="Name"><input className="input" value={edits[t.id]?.name || ""}
+                onChange={e => patch(t.id, { name: e.target.value })} data-testid={`tech-name-${t.id}`} /></Field>
+              <Field label="Phone"><input className="input" value={edits[t.id]?.phone || ""}
+                onChange={e => patch(t.id, { phone: e.target.value })} /></Field>
+            </Row>
+            <Field label="Home base"><input className="input" value={edits[t.id]?.home_address || ""}
+              onChange={e => patch(t.id, { home_address: e.target.value })} data-testid={`tech-home-${t.id}`} /></Field>
+            <Row>
+              <Field label="Day start"><input className="input" type="time" value={edits[t.id]?.day_start || "08:00"}
+                onChange={e => patch(t.id, { day_start: e.target.value })} /></Field>
+              <Field label="Day end"><input className="input" type="time" value={edits[t.id]?.day_end || "19:00"}
+                onChange={e => patch(t.id, { day_end: e.target.value })} /></Field>
+            </Row>
+            <Field label="Service radius in miles (optional)">
+              <input className="input" type="number" min="1" step="1" placeholder="Blank covers by nearest home"
+                value={edits[t.id]?.service_radius_miles ?? ""}
+                onChange={e => patch(t.id, { service_radius_miles: e.target.value })} />
+            </Field>
+            <button className="btn btn-primary" onClick={() => save(t.id)} disabled={savingId === t.id}
+              data-testid={`save-tech-${t.id}`}>{savingId === t.id ? "Saving…" : "Save"}</button>
+          </div>
+        ))}
+        <div className="surface" style={{ padding: 20 }}>
+          <div className="h3" style={{ marginBottom: 12 }}>Add a technician</div>
+          <Row>
+            <Field label="Name"><input className="input" value={draft.name}
+              onChange={e => setDraft({ ...draft, name: e.target.value })} data-testid="new-tech-name" /></Field>
+            <Field label="Phone"><input className="input" value={draft.phone}
+              onChange={e => setDraft({ ...draft, phone: e.target.value })} /></Field>
+          </Row>
+          <Field label="Home base"><input className="input" value={draft.home_address}
+            onChange={e => setDraft({ ...draft, home_address: e.target.value })} data-testid="new-tech-home" /></Field>
+          <Field label="Service radius in miles (optional)">
+            <input className="input" type="number" min="1" value={draft.service_radius_miles}
+              onChange={e => setDraft({ ...draft, service_radius_miles: e.target.value })} />
+          </Field>
+          <button className="btn btn-primary" onClick={createTech} disabled={creating || !draft.name || !draft.home_address}
+            data-testid="add-tech">{creating ? "Adding…" : "Add technician"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ScheduleTab() {
   const [zones, setZones] = useState([]);
   const [edit, setEdit] = useState({});
@@ -91,7 +222,11 @@ function ScheduleTab() {
   }
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 16, maxWidth: 800 }} data-testid="schedule-tab">
+    <div data-testid="schedule-tab">
+    <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+      Booking no longer splits the valley into East and West. These clocks are leftover and are not used to place jobs.
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 16, maxWidth: 800 }}>
       {zones.map(z => (
         <div key={z.slug} className="surface" style={{ padding: 20 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -130,6 +265,7 @@ function ScheduleTab() {
             data-testid={`save-zone-${z.slug}`}>{saving === z.slug ? "Saving…" : "Save"}</button>
         </div>
       ))}
+    </div>
     </div>
   );
 }

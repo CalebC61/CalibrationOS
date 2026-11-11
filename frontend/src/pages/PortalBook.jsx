@@ -112,7 +112,7 @@ export default function PortalBook() {
             <input className="input" value={address} onChange={e => { setAddress(e.target.value); setZoneInfo(null); }}
               onBlur={geo} data-testid="b-addr" />
             {zoneInfo?.in_metro && <div style={{ marginTop: 10, fontSize: 14 }}>
-              Service zone: <span className={`badge badge-${zoneInfo.zone}`}>{zoneInfo.zone === "west" ? "West Valley" : "East Valley"}</span>
+              In our Phoenix service area.
             </div>}
             {zoneInfo && !zoneInfo.in_metro && <div style={{ color: "var(--red)", marginTop: 10, fontSize: 14 }}>Outside our service area.</div>}
             <Nav onNext={() => setStep(2)} nextDisabled={!zoneInfo?.in_metro} />

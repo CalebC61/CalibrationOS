@@ -73,7 +73,7 @@ export default function PortalDashboard() {
             <DarkBasemap />
             {own.map((j, idx) => (
               <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-                icon={pinIcon(`Y${idx + 1}`, j.zone === "west" ? "#FF5F1F" : "#1E40AF", false, j.zone === "west" ? "#0a0a0a" : "#fff")}>
+                icon={pinIcon(`Y${idx + 1}`, "#FF5F1F", false, "#0a0a0a")}>
                 <Tooltip>
                   <div style={{ fontSize: 12 }}>
                     <b>Your job · {fmt(j.scheduled_start)}</b><br />
@@ -87,7 +87,7 @@ export default function PortalDashboard() {
                 icon={pinIcon("·", "#666", true)}>
                 <Tooltip>
                   <div style={{ fontSize: 12 }}>
-                    <b>{fmt(j.scheduled_start)} — {j.zone === "west" ? "West Valley" : "East Valley"}</b><br />
+                    <b>{fmt(j.scheduled_start)}</b><br />
                     ~{j.drive_minutes_from_you} min drive from your shop
                   </div>
                 </Tooltip>
