@@ -10,6 +10,7 @@ email-validator==2.3.0
 PyJWT==2.15.1
 bcrypt==5.0.0
 passlib==1.7.4
+# America/Phoenix for zoneinfo on images without system tzdata (python:3.13-slim).
 tzdata==2026.5
 motor==3.7.1
 pytest==9.1.1

@@ -15,6 +15,14 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — self-host deploy targets (2026-11-11)
+The website is `thecalibrationcrew.us` and `www` (Vercel). The API stays
+`api.thecalibrationcrew.us` (Render). `DEPLOY.md` no longer tells you to create an Atlas
+user named `calibrationos`; any read/write user works, including `admin_db_user`.
+`CORS_ORIGINS` should list both web origins. Assist calls itself at `http://127.0.0.1:$PORT`
+when `ASSIST_SELF_BASE_URL` is blank, so Render's assigned port works. The login form no
+longer prefills the dev owner password.
+
 ### Fixed — zero-length zone slots (2026-10-29)
 `offered_slot_starts()` stepped by `slot_minutes`. A zone saved with `slot_minutes` of 0
 (allowed by `PUT /settings/zones/{zone_key}`) never advanced the cursor, so availability

@@ -22,10 +22,14 @@ from urllib.parse import quote
 
 import httpx
 
-# The app calls itself over localhost — same-origin, same port the backend binds (8001 per
-# Emergent runtime rules). Overridable for tests via ASSIST_SELF_BASE_URL.
+# The app calls itself over localhost on the port this process binds. Emergent binds 8001
+# and does not set PORT. Render sets PORT (often not 8001). ASSIST_SELF_BASE_URL overrides both.
 def _self_base_url() -> str:
-    return os.environ.get("ASSIST_SELF_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
+    explicit = (os.environ.get("ASSIST_SELF_BASE_URL") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    port = (os.environ.get("PORT") or "8001").strip() or "8001"
+    return f"http://127.0.0.1:{port}"
 
 
 async def _request(method: str, path: str, token: str,

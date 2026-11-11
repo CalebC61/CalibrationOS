@@ -32,7 +32,7 @@ from .tools import TOOL_REGISTRY, Tool
 
 logger = logging.getLogger(__name__)
 
-ASSIST_MODEL = os.environ.get("ASSIST_MODEL", "gemini-2.5-flash")
+ASSIST_MODEL = (os.environ.get("ASSIST_MODEL") or "").strip() or "gemini-2.5-flash"
 MAX_TOOL_ROUNDS = 6
 HISTORY_LIMIT = 30  # most recent messages fed back to the model
 

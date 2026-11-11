@@ -2,8 +2,11 @@ services:
   - type: web
     name: calibrationos-api
     runtime: docker
+    # dockerfilePath and dockerContext are relative to the repo root, not rootDir.
+    # rootDir only limits which file changes trigger a rebuild.
     rootDir: backend
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     plan: starter
     region: oregon
     healthCheckPath: /api/health
@@ -19,7 +22,11 @@ services:
         value: "true"
       - key: ASSIST_MODULE_ENABLED
         value: "true"
-      # Set these in the Render dashboard (sync: false = prompt, never committed)
+      # Production does not seed demo shops. Blank is the same as false when APP_ENV=production.
+      - key: SEED_DEMO_DATA
+        value: "false"
+      # Set these in the Render dashboard (sync: false = prompt, never committed).
+      # A blank optional value is treated as unset. See DEPLOY.md for which ones boot requires.
       - { key: MONGO_URL, sync: false }
       - { key: CORS_ORIGINS, sync: false }
       - { key: OWNER_EMAIL, sync: false }
@@ -38,4 +45,5 @@ services:
       - { key: XERO_SALES_ACCOUNT_CODE, sync: false }
       - { key: GOOGLE_API_KEY, sync: false }
       - { key: ASSIST_MODEL, sync: false }
+      - { key: ASSIST_PENDING_TTL_SECONDS, sync: false }
       - { key: ASSIST_SELF_BASE_URL, sync: false }

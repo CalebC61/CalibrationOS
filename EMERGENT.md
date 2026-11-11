@@ -206,9 +206,9 @@ Xero gracefully falls back to the existing mock, so the app keeps running and ex
 - `ASSIST_MODEL` *(optional, default `gemini-2.5-flash`)* — Gemini model id.
 - `ASSIST_PENDING_TTL_SECONDS` *(optional, default `300`)* — how long a proposed action stays
   confirmable.
-- `ASSIST_SELF_BASE_URL` *(optional, default `http://127.0.0.1:8001`)* — where the assistant's
-  tools reach the app's own API; the default matches the backend's port on your runtime, leave
-  it alone in production.
+- `ASSIST_SELF_BASE_URL` *(optional)* — where the assistant's tools reach the app's own API.
+  Leave it unset. The default is `http://127.0.0.1:$PORT`, or port `8001` when `PORT` is unset
+  (this Emergent runtime). Set it only to override that.
 
 ## Testing
 - Backend: `cd backend && pytest tests/ -v`.
