@@ -15,6 +15,36 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Added — early arrivals, traffic-aware drive times, and today's route limits (2026-11-11)
+Shops keep one booking page. The scheduler decides from the Phoenix date.
+
+A later date, including a request made the night before, uses the whole-valley
+route. Arrivals from 6:00 AM are offered. Before 8:00 AM the job is
+`requested` (pending owner approval) and still holds the slot. 8:00 AM–5:00 PM
+is confirmed as before. The first stop of the day before 8:00 AM does not
+wait on the drive from home; the technician leaves early. Drive time between
+jobs still applies.
+
+A booking for today uses the technician's current place (the last job, or a
+fresh `live_lat` / `live_lng` / `live_at` when one is stored). It is confirmed
+only when the extra drive and the later finish stay inside the technician's
+limits (defaults: 20 minutes extra drive, 45 minutes later finish). Past that,
+the time is held for approval, or hidden, depending on Settings → Technicians.
+Today can be turned off. The cutoff defaults to 1:00 PM. There is no separate
+shop control and no "add-on" label. The shop sees the times it can book, and
+"Pending approval" when the owner still has to say yes.
+
+Job length defaults to 20 minutes and the buffer between stops defaults to
+15. Both are editable per technician.
+
+Drive times call the Routes API `computeRoutes` with `TRAFFIC_AWARE` and that
+leg's departure time when `GOOGLE_MAPS_API_KEY` is set. Cache: 12 hours, by
+rounded coordinates and a 15-minute departure bucket. A missing key or a
+failed call is logged and the mileage estimate is used. Approve and decline
+(`POST /api/jobs/{id}/approve` and `/decline`, owner only) do not send SMS or
+email. `notify_booking_approval` is the hook. Technicians and contractors
+cannot edit jobs or approve times.
+
 ### Changed — one technician covers the whole valley (2026-11-11)
 Booking, slot availability, the dispatch board, and the route map no longer
 split the day into hard-coded East and West. With one active routing

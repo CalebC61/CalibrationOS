@@ -6,11 +6,14 @@ These are pure (stdlib only) and run anywhere — no server, MongoDB, or Google 
 import asyncio
 import os
 import sys
+from datetime import datetime, timezone
+
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/
 from google_maps import (  # noqa: E402
     GoogleMapsError, in_metro, parse_geocode_response, parse_distance_matrix_response,
+    parse_routes_response, routes_request_body, departure_bucket,
     geocode_request_params, distance_matrix_request_params, drive_time_cache_key, coalesce,
 )
 
@@ -111,6 +114,38 @@ def test_distance_matrix_request_params_format_lat_lng_pairs():
 def test_in_metro_boundary_helper_matches_bounding_box():
     assert in_metro(33.45, -112.07) is True   # central Phoenix
     assert in_metro(34.05, -118.24) is False  # Los Angeles
+
+
+def test_routes_body_asks_for_traffic_at_a_departure():
+    body = routes_request_body(33.35, -111.79, 33.43, -112.35, "2026-11-16T15:00:00Z")
+    assert body["routingPreference"] == "TRAFFIC_AWARE"
+    assert body["travelMode"] == "DRIVE"
+    assert body["departureTime"] == "2026-11-16T15:00:00Z"
+    assert body["origin"]["location"]["latLng"]["latitude"] == 33.35
+
+
+def test_routes_response_uses_traffic_duration():
+    parsed = parse_routes_response({
+        "routes": [{"distanceMeters": 80467, "duration": "4500s", "staticDuration": "3600s"}],
+    })
+    assert parsed["duration_minutes"] == 75
+    assert parsed["distance_miles"] == 50.0
+
+
+def test_routes_error_and_empty_route_raise():
+    with pytest.raises(GoogleMapsError):
+        parse_routes_response({"error": {"message": "Routes API has not been used"}})
+    with pytest.raises(GoogleMapsError):
+        parse_routes_response({"routes": []})
+
+
+def test_departure_bucket_is_fifteen_minutes_and_changes_the_cache_key():
+    morning = datetime(2026, 11, 16, 15, 7, tzinfo=timezone.utc)
+    later = datetime(2026, 11, 16, 22, 5, tzinfo=timezone.utc)
+    assert departure_bucket(morning) == "2026-11-16T15:00Z"
+    rush = drive_time_cache_key(33.35, -111.79, 33.43, -112.35, "2026-11-16", departure_bucket(morning))
+    midday = drive_time_cache_key(33.35, -111.79, 33.43, -112.35, "2026-11-16", departure_bucket(later))
+    assert rush != midday
 
 
 def test_cache_key_rounds_coordinates_and_includes_day():

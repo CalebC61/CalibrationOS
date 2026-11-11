@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr } from "../lib/api";
+import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr, jobStatusLabel } from "../lib/api";
 import JobEditModal from "../components/JobEditModal";
 
 /** Mobile-optimized PWA technician field view. Works on phone or desktop. */
@@ -94,7 +94,7 @@ export default function Field() {
             )}
             <div><b>Service:</b> {j.calibration_label}</div>
             <div><b>Price:</b> ${j.price.toFixed(2)}</div>
-            <div><b>Status:</b> <span className={`badge badge-${j.status}`}>{j.status.replace(/_/g, " ")}</span></div>
+            <div><b>Status:</b> <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span></div>
             {j.notes && (
               <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }} data-testid="job-booking-notes">
                 <b>Booking notes:</b> {j.notes}
@@ -217,7 +217,7 @@ export default function Field() {
               </div>
               <div className="h3" style={{ marginTop: 6 }}>{j.shop_name}</div>
               <div className="muted" style={{ fontSize: 13 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
-              <div style={{ marginTop: 8 }}><span className={`badge badge-${j.status}`}>{j.status.replace(/_/g, " ")}</span></div>
+              <div style={{ marginTop: 8 }}><span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span></div>
             </button>
           ))}
         </div>

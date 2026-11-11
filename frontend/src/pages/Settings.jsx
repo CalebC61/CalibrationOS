@@ -87,6 +87,13 @@ function TechniciansTab() {
         service_radius_miles: t.service_radius_miles ?? "",
         day_start: (t.day_start || "08:00").slice(0, 5),
         day_end: (t.day_end || "19:00").slice(0, 5),
+        job_duration_minutes: t.job_duration_minutes ?? 20,
+        buffer_minutes: t.buffer_minutes ?? 15,
+        same_day_bookings_enabled: t.same_day_bookings_enabled !== false,
+        same_day_cutoff: (t.same_day_cutoff || "13:00").slice(0, 5),
+        same_day_max_extra_drive_minutes: t.same_day_max_extra_drive_minutes ?? 20,
+        same_day_max_later_finish_minutes: t.same_day_max_later_finish_minutes ?? 45,
+        same_day_over_limit: t.same_day_over_limit || "pending",
         is_active: t.is_active !== false,
       };
     });
@@ -110,6 +117,13 @@ function TechniciansTab() {
         clear_service_radius: edit.service_radius_miles === "",
         day_start: edit.day_start,
         day_end: edit.day_end,
+        job_duration_minutes: Number(edit.job_duration_minutes),
+        buffer_minutes: Number(edit.buffer_minutes),
+        same_day_bookings_enabled: edit.same_day_bookings_enabled,
+        same_day_cutoff: edit.same_day_cutoff,
+        same_day_max_extra_drive_minutes: Number(edit.same_day_max_extra_drive_minutes),
+        same_day_max_later_finish_minutes: Number(edit.same_day_max_later_finish_minutes),
+        same_day_over_limit: edit.same_day_over_limit,
         is_active: edit.is_active,
       });
       await load();
@@ -166,6 +180,52 @@ function TechniciansTab() {
                 onChange={e => patch(t.id, { day_start: e.target.value })} /></Field>
               <Field label="Day end"><input className="input" type="time" value={edits[t.id]?.day_end || "19:00"}
                 onChange={e => patch(t.id, { day_end: e.target.value })} /></Field>
+            </Row>
+            <Row>
+              <Field label="Job length (minutes)">
+                <input className="input" type="number" min="10" max="90" value={edits[t.id]?.job_duration_minutes ?? 20}
+                  onChange={e => patch(t.id, { job_duration_minutes: e.target.value })}
+                  data-testid={`tech-duration-${t.id}`} />
+              </Field>
+              <Field label="Buffer between stops (minutes)">
+                <input className="input" type="number" min="0" max="90" value={edits[t.id]?.buffer_minutes ?? 15}
+                  onChange={e => patch(t.id, { buffer_minutes: e.target.value })}
+                  data-testid={`tech-buffer-${t.id}`} />
+              </Field>
+            </Row>
+            <div style={{ fontSize: 14, fontWeight: 600, margin: "4px 0 8px" }}>Bookings for today</div>
+            <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+              A shop uses the same booking page. If they pick today, a time is confirmed only when the extra drive and the later finish stay inside these limits. Anything past that waits for you, or is left off the list.
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, marginBottom: 12 }}>
+              <input type="checkbox" checked={edits[t.id]?.same_day_bookings_enabled !== false}
+                onChange={e => patch(t.id, { same_day_bookings_enabled: e.target.checked })}
+                data-testid={`tech-today-${t.id}`} />
+              Accept bookings for today
+            </label>
+            <Row>
+              <Field label="Last time to book today">
+                <input className="input" type="time" value={edits[t.id]?.same_day_cutoff || "13:00"}
+                  onChange={e => patch(t.id, { same_day_cutoff: e.target.value })} />
+              </Field>
+              <Field label="When a time is over the limit">
+                <select className="input" value={edits[t.id]?.same_day_over_limit || "pending"}
+                  onChange={e => patch(t.id, { same_day_over_limit: e.target.value })}
+                  data-testid={`tech-over-limit-${t.id}`}>
+                  <option value="pending">Hold it for my approval</option>
+                  <option value="hide">Don't offer that time</option>
+                </select>
+              </Field>
+            </Row>
+            <Row>
+              <Field label="Extra drive, auto-confirm up to (minutes)">
+                <input className="input" type="number" min="0" value={edits[t.id]?.same_day_max_extra_drive_minutes ?? 20}
+                  onChange={e => patch(t.id, { same_day_max_extra_drive_minutes: e.target.value })} />
+              </Field>
+              <Field label="Later finish, auto-confirm up to (minutes)">
+                <input className="input" type="number" min="0" value={edits[t.id]?.same_day_max_later_finish_minutes ?? 45}
+                  onChange={e => patch(t.id, { same_day_max_later_finish_minutes: e.target.value })} />
+              </Field>
             </Row>
             <Field label="Service radius in miles (optional)">
               <input className="input" type="number" min="1" step="1" placeholder="Blank covers by nearest home"
@@ -440,7 +500,7 @@ function IntegrationsTab() {
           <div style={{ fontWeight: 600 }}>Google Maps</div>
           <div className="muted" style={{ fontSize: 12 }}>
             {!status ? "Loading…"
-              : maps?.mode === "live" ? "Live — real geocoding + drive times (Distance Matrix, daily-cached)"
+              : maps?.mode === "live" ? "Live — geocoding plus traffic-aware drive times (Routes API, cached 12 hours)"
               : "Not configured — set GOOGLE_MAPS_API_KEY (mock geocoding/drive-time active)"}
           </div>
         </div>

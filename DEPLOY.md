@@ -41,7 +41,7 @@ Any database user with read and write works, including permission to create inde
    - `CONTRACTOR_EMAIL` (default `contractor@thecalibrationcrew.us`), `CONTRACTOR_PASSWORD` (no contractor account in production until this or demo seed is on)
    - `RESEND_API_KEY`, `SENDER_EMAIL` — email
    - `STRIPE_API_KEY` — card capture and the charge queue. Use `sk_test_...` before `sk_live_...`
-   - `GOOGLE_MAPS_API_KEY` — geocoding and drive time. Restrict the key to the Geocoding API and the Distance Matrix API. Do not restrict it by HTTP referrer; the backend calls Google, not the browser. The starter plan has no static outbound IP, so an IP restriction will fail until you add one.
+   - `GOOGLE_MAPS_API_KEY` — geocoding and traffic-aware drive time. Restrict the key to the Geocoding API and the Routes API (`computeRoutes` with `TRAFFIC_AWARE` bills as Compute Routes Pro). Do not restrict it by HTTP referrer; the backend calls Google, not the browser. The starter plan has no static outbound IP, so an IP restriction will fail until you add one. See the README for the rough monthly cost.
    - `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `XERO_POST_CONNECT_REDIRECT`, `XERO_SALES_ACCOUNT_CODE` (default `200`)
    - `GOOGLE_API_KEY` — Admin Assist. Without it the module is off even though `ASSIST_MODULE_ENABLED=true`.
    - `ASSIST_MODEL` (default `gemini-2.5-flash`), `ASSIST_PENDING_TTL_SECONDS` (default `300`)

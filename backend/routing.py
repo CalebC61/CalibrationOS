@@ -70,13 +70,23 @@ def assign_technician(techs: list, lat: float, lng: float):
 
 
 def tech_schedule(person: dict | None) -> dict:
-    """One full Phoenix day. Not the old west-morning / east-afternoon split."""
+    """One full Phoenix day. Not the old west-morning / east-afternoon split.
+
+    Job length defaults to 20 minutes (jobs run 15–25). The buffer is the pad
+    between stops, separate from the drive itself.
+    """
+    from scheduling import BUFFER_MINUTES, DURATION_MINUTES
+
     source = person or {}
+    duration = source.get("job_duration_minutes")
+    buffer = source.get("buffer_minutes")
     return {
         "day_start": source.get("day_start") or DEFAULT_DAY_START,
         "day_end": source.get("day_end") or DEFAULT_DAY_END,
         "slot_minutes": int(source.get("slot_minutes") or DEFAULT_SLOT_MINUTES),
         "max_jobs": int(source.get("max_jobs") or DEFAULT_MAX_JOBS),
+        "job_duration_minutes": DURATION_MINUTES if duration is None else int(duration),
+        "buffer_minutes": BUFFER_MINUTES if buffer is None else int(buffer),
     }
 
 

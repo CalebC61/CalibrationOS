@@ -4,9 +4,13 @@ Kept import-light (stdlib only) so response parsing is unit-testable without boo
 full server / MongoDB / a real Google API key. The real HTTP calls (requests + asyncio.to_thread,
 same as the existing Xero/Resend integrations) live in server.py; this module only builds request
 params and parses responses, so parsing bugs can't hide behind a live network call in tests.
+
+Drive time uses the Routes API (`computeRoutes`) with `TRAFFIC_AWARE` and a departure
+time. The legacy Distance Matrix helpers stay so older responses can still be parsed.
 """
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 
 # Same Phoenix-metro service-area bounding box the mock geocoder has always used, so a real
 # geocode result and the mock agree on which addresses count as "in service area."
@@ -15,6 +19,8 @@ METRO_LNG_MIN, METRO_LNG_MAX = -112.9, -111.4
 
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 DISTANCE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
+ROUTES_COMPUTE_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+ROUTES_FIELD_MASK = "routes.duration,routes.distanceMeters"
 
 
 class GoogleMapsError(Exception):
@@ -81,16 +87,73 @@ def parse_distance_matrix_response(data: dict) -> dict:
     }
 
 
-def drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, day_iso: str) -> str:
-    """Cache key for a day's drive time between two points, rounded to ~11m precision.
+def departure_bucket(moment: datetime) -> str:
+    """UTC instant floored to 15 minutes. Legs that leave in the same quarter-hour share a cache entry."""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    moment = moment.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    return moment.replace(minute=(moment.minute // 15) * 15).strftime("%Y-%m-%dT%H:%MZ")
+
+
+def drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, day_iso: str, departure_bucket: str | None = None) -> str:
+    """Cache key for a drive between two points, rounded to ~11m precision.
 
     Coordinates are rounded so nearby-but-not-identical floats (e.g. re-geocoding the same
-    address) still hit the cache. Keying on the calendar day matches the "daily caching" the
-    project's own roadmap called for — bounds real API spend without a separate TTL sweep needed
-    to keep results fresh. Callers pass an America/Phoenix date (`business_date()`), not the UTC date.
+    address) still hit the cache. The Phoenix day is always part of the key. A departure
+    bucket (15-minute UTC floor) keeps a rush-hour leg from reusing a midday one.
     """
-    return (f"{round(o_lat, 4)},{round(o_lng, 4)}|"
-            f"{round(d_lat, 4)},{round(d_lng, 4)}|{day_iso}")
+    base = (f"{round(float(o_lat), 4)},{round(float(o_lng), 4)}|"
+            f"{round(float(d_lat), 4)},{round(float(d_lng), 4)}|{day_iso}")
+    if departure_bucket:
+        return f"{base}|{departure_bucket}"
+    return base
+
+
+def routes_request_body(o_lat, o_lng, d_lat, d_lng, departure_iso: str) -> dict:
+    """JSON body for Routes API computeRoutes.
+
+    `TRAFFIC_AWARE` (not TRAFFIC_AWARE_OPTIMAL) is the traffic-aware preference
+    that bills as Compute Routes Pro. `departure_iso` is RFC3339 and must be
+    in the future; Google rejects a departure in the past.
+    """
+    return {
+        "origin": {"location": {"latLng": {"latitude": float(o_lat), "longitude": float(o_lng)}}},
+        "destination": {"location": {"latLng": {"latitude": float(d_lat), "longitude": float(d_lng)}}},
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+        "departureTime": departure_iso,
+    }
+
+
+def _duration_seconds(value) -> float:
+    text = str(value or "")
+    if not text.endswith("s"):
+        raise GoogleMapsError(f"routes duration missing: {value!r}")
+    try:
+        return float(text[:-1])
+    except ValueError as exc:
+        raise GoogleMapsError(f"routes duration unreadable: {value!r}") from exc
+
+
+def parse_routes_response(data: dict) -> dict:
+    """Parse a computeRoutes response into {distance_miles, duration_minutes}.
+
+    `duration` is the traffic-aware time when routingPreference was TRAFFIC_AWARE.
+    Raises GoogleMapsError when Google returned an error object or no route.
+    """
+    if data.get("error"):
+        message = (data.get("error") or {}).get("message") or data.get("error")
+        raise GoogleMapsError(f"routes failed: {message}")
+    routes = data.get("routes") or []
+    if not routes:
+        raise GoogleMapsError("routes API returned no route")
+    route = routes[0]
+    seconds = _duration_seconds(route.get("duration"))
+    meters = route.get("distanceMeters") or 0
+    return {
+        "distance_miles": round(float(meters) / 1609.344, 1),
+        "duration_minutes": max(1, round(seconds / 60)),
+    }
 
 
 async def coalesce(pending: dict, key: str, factory: Callable[[], Awaitable]):
