@@ -25,29 +25,42 @@ function FitBounds({ points }) {
   return null;
 }
 
+function pinText(color) {
+  return color.toLowerCase() === "#ff5f1f" ? "#0a0a0a" : "#fff";
+}
+
 export default function RouteMap({ jobs }) {
   const valid = jobs.filter(j => j.job_lat && j.job_lng);
   const points = valid.map(j => [j.job_lat, j.job_lng]);
   const center = points[0] || [33.4484, -112.0740];
-  const westLine = valid.filter(j => j.zone === "west").map(j => [j.job_lat, j.job_lng]);
-  const eastLine = valid.filter(j => j.zone === "east").map(j => [j.job_lat, j.job_lng]);
+  const byTech = new Map();
+  valid.forEach((job) => {
+    const key = job.technician_id || "route";
+    if (!byTech.has(key)) byTech.set(key, { color: job.technician_color || "#FF5F1F", points: [] });
+    byTech.get(key).points.push([job.job_lat, job.job_lng]);
+  });
   return (
     <div style={{ height: 380, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }} data-testid="route-map">
       <MapContainer center={center} zoom={10} style={{ height: "100%", width: "100%", background: "#0d1116" }}>
         <DarkBasemap />
-        {westLine.length > 1 && <Polyline positions={westLine} pathOptions={{ color: "#FF5F1F", weight: 3, opacity: 0.7 }} />}
-        {eastLine.length > 1 && <Polyline positions={eastLine} pathOptions={{ color: "#3B82F6", weight: 3, opacity: 0.7 }} />}
-        {valid.map((j, idx) => (
+        {[...byTech.entries()].map(([techId, route]) => (
+          route.points.length > 1 && <Polyline key={techId} positions={route.points} pathOptions={{ color: route.color, weight: 3, opacity: 0.7 }} />
+        ))}
+        {valid.map((j, idx) => {
+          const color = j.technician_color || "#FF5F1F";
+          return (
           <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-            icon={makeIcon(idx + 1, j.zone === "west" ? "#FF5F1F" : "#1E40AF", j.zone === "west" ? "#0a0a0a" : "#fff")}>
+            icon={makeIcon(idx + 1, color, pinText(color))}>
             <Tooltip direction="top" offset={[0, -10]}>
               <div style={{ fontSize: 12 }}>
                 <b>#{idx + 1} · {j.shop_name}</b><br />
                 {formatTime(j.scheduled_start)}
+                {j.technician_name ? <> · {j.technician_name}</> : null}
               </div>
             </Tooltip>
           </Marker>
-        ))}
+          );
+        })}
         <FitBounds points={points} />
       </MapContainer>
     </div>

@@ -176,7 +176,7 @@ export default function PublicBooking() {
               onBlur={geocodeAddr} placeholder="123 Main St, Phoenix, AZ" data-testid="booking-address" />
             {zoneInfo && zoneInfo.in_metro && (
               <div style={{ marginTop: 10, fontSize: 14 }}>
-                This job is in our <span className={`badge badge-${zoneInfo.zone}`}>{zoneInfo.zone === "west" ? "West Valley" : "East Valley"}</span> service area.
+                This address is in our Phoenix service area.
               </div>
             )}
             {zoneInfo && !zoneInfo.in_metro && (
