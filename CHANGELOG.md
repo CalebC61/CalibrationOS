@@ -20,8 +20,11 @@ Dispatch job cards and the field job screen have an Edit button. It can change
 the address, customer name, phone, email, vehicle, service, price, Phoenix
 date and time, zone, and notes. `PATCH /api/jobs/{id}` saves that. A new
 address is geocoded with Google when `GOOGLE_MAPS_API_KEY` is set (otherwise
-the mock). An explicit zone still wins over the geocoded zone. The assigned
-contractor can edit only their own job.
+the mock). An explicit zone still wins over the geocoded zone. Only an owner can
+call `PATCH /api/jobs/{id}` or save a shop. Technicians and contractors,
+including a contractor assigned to the job, get 403. Edit is hidden on
+dispatch and the field screen unless the signed-in role is owner. The
+shop booking link is unchanged.
 
 Shops → Edit opens the existing shop form (name, address, contacts). Changing
 the address re-geocodes that shop the same way.

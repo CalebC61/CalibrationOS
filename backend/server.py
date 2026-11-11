@@ -1246,15 +1246,11 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
     return fresh
 
 @api.patch("/jobs/{job_id}")
-async def patch_job(job_id: str, body: JobEditIn, tech=Depends(get_current_tech)):
-    """Owner or assigned technician override. Never sends a message or changes status."""
+async def patch_job(job_id: str, body: JobEditIn, tech=Depends(require_owner)):
+    """Owner edit. Technicians and contractors cannot change a job. No messages, no status change."""
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
-    if tech["role"] not in ("owner", "contractor"):
-        raise HTTPException(403, "Not allowed")
-    if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
-        raise HTTPException(403, "Not your job")
     try:
         fields = prepare_edit(body.model_dump(exclude_unset=True), allow_price=True, allow_zone=True)
     except ValueError as exc:

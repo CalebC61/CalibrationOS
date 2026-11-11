@@ -76,8 +76,10 @@ export default function Field() {
         <div className="surface page-fade" style={{ padding: 18, margin: 12 }} data-testid="job-detail">
           <div className="muted" style={{ fontSize: 12 }}>{formatTime(j.scheduled_start)}</div>
           <div className="h2" style={{ marginTop: 4 }}>{j.shop_name}</div>
-          <button className="btn btn-ghost" style={{ marginTop: 12, width: "100%" }}
-            onClick={() => setEditing(true)} data-testid="job-edit">Edit</button>
+          {auth?.role === "owner" && (
+            <button className="btn btn-ghost" style={{ marginTop: 12, width: "100%" }}
+              onClick={() => setEditing(true)} data-testid="job-edit">Edit</button>
+          )}
           <div className="muted" style={{ fontSize: 14, marginTop: 4 }}>
             {j.vehicle_year} {j.vehicle_make} {j.vehicle_model}
           </div>

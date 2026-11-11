@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { api, formatTime, phoenixTodayStr, dateStr } from "../lib/api";
+import { api, formatTime, phoenixTodayStr, dateStr, getStoredAuth } from "../lib/api";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
@@ -14,6 +14,7 @@ const STATUS_FLOW = {
 };
 
 export default function Dashboard() {
+  const isOwner = getStoredAuth()?.role === "owner";
   const [date, setDate] = useState(() => phoenixTodayStr());
   const [jobs, setJobs] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -174,13 +175,13 @@ export default function Dashboard() {
           headerClass="zone-header-west" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
           onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
-          onEdit={setEditTarget}
+          onEdit={isOwner ? setEditTarget : null}
           dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
         <ZonePanel title="East Valley" subtitle="2:30 PM – 7:00 PM" zone="east" jobs={east} onStatus={setStatus}
           headerClass="zone-header-east" newJobIds={newJobIds} offerByJob={offerByJob}
           onDispatch={setDispatchTarget} onRespond={manualRespond}
           onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
-          onEdit={setEditTarget}
+          onEdit={isOwner ? setEditTarget : null}
           dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
       </div>
 
@@ -191,11 +192,13 @@ export default function Dashboard() {
             {jobs.length > 0 && (
               <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>Numbered by sequence · Orange = West · Blue = East</span>
             )}
+            {isOwner && (
             <button type="button" className="btn btn-ghost" onClick={refreshLocations} disabled={refreshingMap}
               data-testid="refresh-map-locations"
               style={{ padding: "6px 12px", fontSize: 13, opacity: refreshingMap ? 0.6 : 1 }}>
               {refreshingMap ? "Refreshing…" : "Refresh map locations"}
             </button>
+            )}
           </div>
         </div>
         {refreshResult && (
@@ -351,8 +354,10 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-        <button className="btn btn-ghost" onClick={() => onEdit(job)}
-          data-testid={`job-edit-${job.id}`}>Edit</button>
+        {onEdit && (
+          <button className="btn btn-ghost" onClick={() => onEdit(job)}
+            data-testid={`job-edit-${job.id}`}>Edit</button>
+        )}
         {flow && (
           <button className="btn btn-primary" onClick={() => onStatus(job.id, flow.next)}
             data-testid={`job-action-${job.id}`}>{flow.label}</button>

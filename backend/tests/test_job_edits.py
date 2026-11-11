@@ -146,9 +146,10 @@ def world(monkeypatch):
     db = _DB()
     db.technicians.docs.append({"id": "tech-1", "role": "owner", "name": "Caleb", "email": "caleb@thecalibrationcrew.us"})
     db.technicians.docs.append({"id": "tech-2", "role": "contractor", "name": "West Tech", "email": "west@example.com"})
+    db.technicians.docs.append({"id": "tech-3", "role": "technician", "name": "Field Tech", "email": "field@example.com"})
     db.shops.docs.append(_shop())
     db.shops.docs.append(_shop(id="shop-2", name="Other Shop", booking_link_token="tok-b"))
-    db.jobs.docs.append(_job())
+    db.jobs.docs.append(_job(technician_id="tech-2"))
     db.jobs.docs.append(_job(id="job-other", shop_id="shop-2"))
     db.jobs.docs.append(_job(id="job-past", scheduled_start=PAST, scheduled_end=PAST))
     db.jobs.docs.append(_job(id="job-cancelled", status="cancelled"))
@@ -176,7 +177,8 @@ def world(monkeypatch):
     monkeypatch.setattr(server, "send_email", email)
     monkeypatch.setattr(server, "geocode_for_regeocode", geo)
     yield {"db": db, "calls": calls, "owner": server.make_token("tech-1", "owner"),
-           "contractor": server.make_token("tech-2", "contractor")}
+           "contractor": server.make_token("tech-2", "contractor"),
+           "technician": server.make_token("tech-3", "technician")}
     monkeypatch.setattr(server, "db", original)
 
 
@@ -329,17 +331,33 @@ def test_geocode_failure_does_not_save_the_new_address(world):
     asyncio.run(run())
 
 
-def test_contractor_cannot_edit_someone_elses_job(world):
+def test_technician_and_assigned_contractor_cannot_patch_a_job(world):
     async def run():
         async with _client() as client:
-            response = await client.patch(
+            contractor = await client.patch(
                 "/api/jobs/job-1",
                 headers=_auth(world["contractor"]),
                 json={"notes": "mine"},
             )
-        assert response.status_code == 403
+            technician = await client.patch(
+                "/api/jobs/job-1",
+                headers=_auth(world["technician"]),
+                json={"notes": "mine"},
+            )
+            shop_edit = await client.put(
+                "/api/shops/shop-1",
+                headers=_auth(world["contractor"]),
+                json={"name": "Taken Over", "address": "200 E Main, Gilbert, AZ"},
+            )
+        assert contractor.status_code == 403
+        assert technician.status_code == 403
+        assert shop_edit.status_code == 403
         stored = await world["db"].jobs.find_one({"id": "job-1"})
         assert stored["notes"] == "Gate"
+        assert stored["technician_id"] == "tech-2"
+        shop = await world["db"].shops.find_one({"id": "shop-1"})
+        assert shop["name"] == "Glass Co"
+        assert world["calls"]["sms"] == []
 
     asyncio.run(run())
 
