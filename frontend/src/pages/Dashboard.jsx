@@ -278,6 +278,19 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
             style={{ display: "inline-block", marginTop: 6, fontSize: 13, color: "var(--accent-ink)" }}>
             {job.job_address} →
           </a>
+          {(job.customer_first_name || job.notes) && (
+            <div style={{ marginTop: 8, fontSize: 13 }}>
+              {job.customer_first_name && (
+                <div>{[job.customer_first_name, job.customer_last_name].filter(Boolean).join(" ")}</div>
+              )}
+              {job.notes && (
+                <div style={{ whiteSpace: "pre-wrap", marginTop: job.customer_first_name ? 4 : 0 }}
+                  data-testid={`job-notes-${job.id}`}>
+                  <span className="muted">Notes: </span>{job.notes}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <div style={{ textAlign: "right" }}>
           <div className="font-display" style={{ fontSize: 18, fontWeight: 700 }}>{formatTime(job.scheduled_start)}</div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { MapContainer, TileLayer, Marker, Tooltip, useMap } from "react-leaflet";
+import { MapContainer, Marker, Tooltip, useMap } from "react-leaflet";
+import DarkBasemap from "../components/DarkBasemap";
 import L from "leaflet";
 import { phoenixTodayStr } from "../lib/api";
 import { portalApi, getPortalAuth } from "../lib/portalApi";
@@ -69,8 +70,7 @@ export default function PortalDashboard() {
         <div style={{ height: 380, borderRadius: 8, overflow: "hidden" }} data-testid="portal-map">
           <MapContainer center={allPoints[0] || [33.4484, -112.0740]} zoom={10}
             style={{ height: "100%", width: "100%", background: "#0d1116" }}>
-            <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-              attribution='&copy; OpenStreetMap &copy; CARTO' />
+            <DarkBasemap />
             {own.map((j, idx) => (
               <Marker key={j.id} position={[j.job_lat, j.job_lng]}
                 icon={pinIcon(`Y${idx + 1}`, j.zone === "west" ? "#FF5F1F" : "#1E40AF", false, j.zone === "west" ? "#0a0a0a" : "#fff")}>

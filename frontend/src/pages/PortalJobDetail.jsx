@@ -29,13 +29,19 @@ export default function PortalJobDetail() {
       </div>
 
       <div className="surface" style={{ padding: 20, marginBottom: 16 }}>
-        <Row k="Customer" v={j.customer_last_name} />
+        <Row k="Customer" v={[j.customer_first_name, j.customer_last_name].filter(Boolean).join(" ")} />
         <Row k="Service" v={j.calibration_label} />
         <Row k="Price" v={`$${j.price.toFixed(2)}`} />
         <Row k="Scheduled" v={fmt(j.scheduled_start)} />
         {j.actual_completion && <Row k="Completed" v={fmt(j.actual_completion)} />}
         {j.result && <Row k="Result" v={j.result.toUpperCase()} />}
         <Row k="Address" v={j.job_address} />
+        {j.notes && (
+          <div style={{ padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+            <div className="muted">Notes</div>
+            <div style={{ marginTop: 4, whiteSpace: "pre-wrap" }} data-testid="portal-job-notes">{j.notes}</div>
+          </div>
+        )}
         {j.vehicle_vin && <Row k="VIN" v={j.vehicle_vin} />}
       </div>
 

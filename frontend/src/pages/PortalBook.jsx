@@ -28,7 +28,8 @@ export default function PortalBook() {
   const [slots, setSlots] = useState([]);
   const [slotsMsg, setSlotsMsg] = useState("");
   const [chosen, setChosen] = useState(null);
-  const [veh, setVeh] = useState({ customer_last_name: "", year: new Date().getFullYear(),
+  const [veh, setVeh] = useState({ customer_first_name: "", customer_last_name: "", notes: "",
+    year: new Date().getFullYear(),
     make: "", model: "", trim: "", vin: "", adas_system: "forward_camera" });
   const [calType, setCalType] = useState("static");
   const [notifyPhone, setNotifyPhone] = useState("");
@@ -81,6 +82,8 @@ export default function PortalBook() {
       const { data } = await portalApi.post("/portal/book", {
         booking_token: shop.booking_link_token, job_address: address,
         scheduled_start: chosen.start, customer_last_name: veh.customer_last_name,
+        customer_first_name: veh.customer_first_name.trim() || null,
+        notes: veh.notes.trim() || null,
         year: Number(veh.year), make: veh.make, model: veh.model,
         trim: veh.trim || null, vin: veh.vin || null,
         adas_system: veh.adas_system, calibration_type: calType,
@@ -139,8 +142,12 @@ export default function PortalBook() {
         )}
         {step === 3 && (
           <Card title="Vehicle">
-            <F label="Customer last name *"><input className="input" value={veh.customer_last_name}
-              onChange={e => setVeh({...veh, customer_last_name: e.target.value})} data-testid="b-ln" /></F>
+            <R>
+              <F label="Customer first name"><input className="input" value={veh.customer_first_name}
+                onChange={e => setVeh({...veh, customer_first_name: e.target.value})} data-testid="b-fn" /></F>
+              <F label="Customer last name *"><input className="input" value={veh.customer_last_name}
+                onChange={e => setVeh({...veh, customer_last_name: e.target.value})} data-testid="b-ln" /></F>
+            </R>
             <R><F label="Year *"><input className="input" type="number" value={veh.year}
               onChange={e => setVeh({...veh, year: e.target.value})} /></F>
               <F label="Make *"><input className="input" value={veh.make}
@@ -174,12 +181,16 @@ export default function PortalBook() {
             <div className="elevated" style={{ padding: 14, fontSize: 14 }}>
               <Row k="When" v={`${new Date(chosen.start).toLocaleDateString()} · ${fmt(chosen.start)}`} />
               <Row k="Vehicle" v={`${veh.year} ${veh.make} ${veh.model}`} />
-              <Row k="Customer" v={veh.customer_last_name} />
+              <Row k="Customer" v={[veh.customer_first_name, veh.customer_last_name].filter(s => s.trim()).join(" ")} />
               <Row k="Total" v={`$${priceFor(calType).toFixed(2)}`} bold />
               <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
                 Charge to card on file occurs on the same day as job completion.
               </div>
             </div>
+            <F label="Notes (optional)">
+              <textarea className="input" rows={3} value={veh.notes}
+                onChange={e => setVeh({...veh, notes: e.target.value})} data-testid="b-notes" />
+            </F>
             <Nav onBack={() => setStep(3)} onNext={submit}
               nextLabel={submitting ? "Booking…" : "Confirm Booking"} nextDisabled={submitting} />
           </Card>
