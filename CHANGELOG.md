@@ -15,6 +15,32 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — route map tiles, booking notes, re-geocode (2026-11-11)
+CARTO's public `dark_all` raster URL now returns one "API KEY REQUIRED" watermark
+for every tile (same PNG, etag `wm-da89c20e77c1-dark`). The dispatch route map and
+the shop day map use Esri World Dark Gray instead (street canvas plus a label
+overlay). Those tiles load with no key. Attribution is Esri, HERE, Garmin,
+OpenStreetMap contributors, and the GIS user community.
+
+`POST /api/public/book` (and `POST /api/portal/book`, which calls it) accepts
+optional `notes` (max 4000) and `customer_first_name` (max 80). Blank text is
+stored as null. Both are written on the job; the first name is also on the
+vehicle. The public page `/book/:token` collects them, including when an owner
+opens Book a job and sets a custom time. The shop portal booking form does too.
+Dispatch cards, the field job screen, and the portal job page show them.
+A completion note replaces booking notes only when the technician types one.
+Confirmation SMS is unchanged. Nothing new is emailed or texted.
+
+`POST /api/admin/regeocode` is owner-only. With no query it re-geocodes every
+shop and every job and writes coordinates and zone. Shops use `lat`/`lng`;
+jobs use `job_lat`/`job_lng`. With `GOOGLE_MAPS_API_KEY` set it calls Google
+and counts a failure as `failed` without writing the mock centroid. With no
+key it uses the mock geocoder. `?date=YYYY-MM-DD` limits the run to jobs on
+that America/Phoenix day and does not touch shops. The body is
+`{"date": null, "shops": {"updated", "unchanged", "skipped", "failed"}, "jobs": {...}}`
+(`shops` is null on a dated run). It does not send SMS or email and does not
+change job status. A point outside the metro moves the pin and leaves zone as it was.
+
 ### Fixed — public booking and Phoenix slot clocks (2026-11-11)
 `/book/:token` is routed. Logged-out visitors and a logged-in owner both reach
 `PublicBooking`; the catch-all no longer sends that URL to the dashboard.

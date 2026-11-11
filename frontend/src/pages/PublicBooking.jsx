@@ -40,8 +40,8 @@ export default function PublicBooking() {
   const [customTime, setCustomTime] = useState("");
   const isOwner = getStoredAuth()?.role === "owner";
   const [vehicle, setVehicle] = useState({
-    customer_last_name: "", year: new Date().getFullYear(), make: "", model: "",
-    trim: "", vin: "", adas_system: "forward_camera",
+    customer_first_name: "", customer_last_name: "", year: new Date().getFullYear(), make: "", model: "",
+    trim: "", vin: "", adas_system: "forward_camera", notes: "",
   });
   const [calType, setCalType] = useState("static");
   const [notifyPhone, setNotifyPhone] = useState("");
@@ -88,7 +88,10 @@ export default function PublicBooking() {
     try {
       const { data } = await api.post("/public/book", {
         booking_token: token, job_address: address, scheduled_start: chosenSlot.start,
-        customer_last_name: vehicle.customer_last_name, year: Number(vehicle.year),
+        customer_last_name: vehicle.customer_last_name,
+        customer_first_name: vehicle.customer_first_name.trim() || null,
+        notes: vehicle.notes.trim() || null,
+        year: Number(vehicle.year),
         make: vehicle.make, model: vehicle.model, trim: vehicle.trim || null,
         vin: vehicle.vin || null, adas_system: vehicle.adas_system,
         calibration_type: calType, notification_phone: notifyPhone,
@@ -203,11 +206,18 @@ export default function PublicBooking() {
 
         {step === 3 && (
           <Step title="Vehicle information">
-            <Field label="Customer last name *">
-              <input className="input" value={vehicle.customer_last_name}
-                onChange={e => setVehicle({...vehicle, customer_last_name: e.target.value})}
-                data-testid="vehicle-lastname" />
-            </Field>
+            <Row>
+              <Field label="Customer first name">
+                <input className="input" value={vehicle.customer_first_name}
+                  onChange={e => setVehicle({...vehicle, customer_first_name: e.target.value})}
+                  data-testid="vehicle-firstname" />
+              </Field>
+              <Field label="Customer last name *">
+                <input className="input" value={vehicle.customer_last_name}
+                  onChange={e => setVehicle({...vehicle, customer_last_name: e.target.value})}
+                  data-testid="vehicle-lastname" />
+              </Field>
+            </Row>
             <Row>
               <Field label="Year *"><input className="input" type="number" min="2010" max="2027"
                 value={vehicle.year} onChange={e => setVehicle({...vehicle, year: e.target.value})} data-testid="vehicle-year" /></Field>
@@ -258,10 +268,15 @@ export default function PublicBooking() {
               <SummaryRow k="When" v={`${formatDate(chosenSlot.start)} · ${formatTime(chosenSlot.start)}`} />
               <SummaryRow k="Address" v={address} />
               <SummaryRow k="Vehicle" v={`${vehicle.year} ${vehicle.make} ${vehicle.model}`} />
-              <SummaryRow k="Customer" v={vehicle.customer_last_name} />
+              <SummaryRow k="Customer" v={[vehicle.customer_first_name, vehicle.customer_last_name].filter(s => s.trim()).join(" ")} />
               <SummaryRow k="Service" v={CAL_LABELS[calType]} />
               <SummaryRow k="Price" v={`$${priceFor(calType).toFixed(2)}`} bold />
             </div>
+            <Field label="Notes (optional)">
+              <textarea className="input" rows={3} value={vehicle.notes}
+                onChange={e => setVehicle({...vehicle, notes: e.target.value})}
+                data-testid="booking-notes" />
+            </Field>
             <Field label="Notification phone (we'll text status updates here)">
               <input className="input" value={notifyPhone} onChange={e => setNotifyPhone(e.target.value)} data-testid="notify-phone" />
             </Field>

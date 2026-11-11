@@ -199,6 +199,9 @@ a { color: inherit; text-decoration: none; }
 .leaflet-control-attribution {
   background: rgba(42, 46, 55, 0.92) !important;
   color: var(--text-muted) !important;
+  max-width: min(280px, 70%);
+  white-space: normal !important;
+  line-height: 1.35;
 }
 .leaflet-control-attribution a { color: var(--accent-ink) !important; }
 

@@ -69,6 +69,11 @@ from business_time import (
     BUSINESS_TZ, business_date, business_day_bounds, clamp_start_to_business_day,
     offered_slot_starts, zone_window,
 )
+from booking_fields import completion_notes, job_customer_fields
+from regeocode import (
+    detect_zone, jobs_on_phoenix_day, location_set, regeocode_records,
+    regeocode_scope, zone_for_geocode,
+)
 # Module 9 — Partner Growth Engine (models only here; routes are wired conditionally near the
 # bottom of this file, only when GROWTH_MODULE_ENABLED, to avoid registering unused routes)
 from growth.models import PartnerContact, enforce_grid_caps
@@ -250,11 +255,6 @@ def mock_geocode(address: str) -> dict:
     in_metro = METRO_LAT_MIN < lat < METRO_LAT_MAX and METRO_LNG_MIN < lng < METRO_LNG_MAX
     return {"lat": round(lat, 6), "lng": round(lng, 6), "formatted_address": address, "in_metro": in_metro}
 
-def detect_zone(lng: float) -> str:
-    if lng < -112.0:
-        return "west"
-    return "east"  # Central also maps to East per spec
-
 def haversine_miles(lat1, lng1, lat2, lng2) -> float:
     R = 3958.8
     p1 = math.radians(lat1); p2 = math.radians(lat2)
@@ -296,6 +296,20 @@ async def geocode_address(address: str) -> dict:
         except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
             logger.error(f"[MAPS] geocode failed, falling back to mock: {e}")
     return mock_geocode(address)
+
+
+async def geocode_for_regeocode(address: str) -> dict:
+    """Geocode one stored address during a repair pass.
+
+    Booking still falls back to the mock so a Maps hiccup cannot block a job.
+    This pass must not do that: a failed Google call is an error, and the
+    caller leaves the existing pin alone. With no API key, the mock is the
+    current geocoder.
+    """
+    if not google_maps_enabled():
+        return mock_geocode(address)
+    data = await asyncio.to_thread(_google_geocode_request, address)
+    return parse_geocode_response(data, address)
 
 # In-flight real Distance Matrix calls, keyed like drive_time_cache. Concurrent day-map
 # lookups that share a rounded destination await one request instead of each paying for a miss.
@@ -614,6 +628,8 @@ class BookingIn(BaseModel):
     job_address: str
     scheduled_start: str  # ISO datetime
     customer_last_name: str
+    customer_first_name: Optional[str] = Field(default=None, max_length=80)
+    notes: Optional[str] = Field(default=None, max_length=4000)
     year: int
     make: str
     model: str
@@ -721,6 +737,55 @@ async def geocode(payload: dict):
     geo = await geocode_address(addr)
     zone = detect_zone(geo["lng"]) if geo["in_metro"] else None
     return {**geo, "zone": zone}
+
+
+def _regeocode_counts(result: dict) -> dict:
+    return {k: result[k] for k in ("updated", "unchanged", "skipped", "failed")}
+
+
+@api.post("/admin/regeocode")
+async def admin_regeocode(date: Optional[str] = None, tech=Depends(require_owner)):
+    """Re-geocode stored pins.
+
+    Omit `date` to refresh every shop and every job. Pass `date=YYYY-MM-DD` to
+    refresh only jobs scheduled on that America/Phoenix day (shops are skipped).
+    Writes coordinates and zone. Does not change status and does not send SMS or email.
+    A Google failure leaves that record unchanged (`failed`). No key uses the mock.
+    """
+    try:
+        scope = regeocode_scope(date)
+    except ValueError:
+        raise HTTPException(400, "Invalid date. Use YYYY-MM-DD.")
+
+    shop_result = None
+    if scope["shops"]:
+        shops = await db.shops.find({}, {"_id": 0}).to_list(5000)
+        shop_result = await regeocode_records(
+            shops, geocode_for_regeocode, "lat", "lng", "address", zone_for_geocode,
+        )
+    if scope["jobs"] == "all":
+        jobs = await db.jobs.find({}, {"_id": 0}).to_list(20000)
+    else:
+        jobs = await db.jobs.find(jobs_on_phoenix_day(scope["day"]), {"_id": 0}).to_list(20000)
+    job_result = await regeocode_records(
+        jobs, geocode_for_regeocode, "job_lat", "job_lng", "job_address", zone_for_geocode,
+    )
+
+    stamp = iso(now_utc())
+    if shop_result:
+        for change in shop_result["changes"]:
+            await db.shops.update_one(
+                {"id": change["id"]}, {"$set": location_set(change["set"], stamp)},
+            )
+    for change in job_result["changes"]:
+        await db.jobs.update_one(
+            {"id": change["id"]}, {"$set": location_set(change["set"], stamp)},
+        )
+    return {
+        "date": scope["day"].isoformat() if scope["day"] else None,
+        "shops": _regeocode_counts(shop_result) if shop_result else None,
+        "jobs": _regeocode_counts(job_result),
+    }
 
 # ---------- Shops ----------
 @api.get("/shops")
@@ -916,11 +981,14 @@ async def public_book(data: BookingIn):
     # Find owner technician
     owner = await db.technicians.find_one({"role": "owner"})
 
+    customer = job_customer_fields(notes=data.notes, customer_first_name=data.customer_first_name)
+
     # Create vehicle
     vehicle = {
         "id": gen_id(), "year": data.year, "make": data.make, "model": data.model,
         "trim": data.trim, "vin": data.vin, "adas_system": data.adas_system,
         "shop_id": shop["id"], "customer_last_name": data.customer_last_name,
+        "customer_first_name": customer["customer_first_name"],
         "created_at": iso(now_utc()),
     }
     await db.vehicles.insert_one(vehicle.copy())
@@ -951,7 +1019,7 @@ async def public_book(data: BookingIn):
         "status": "booked",
         "drive_time_minutes": dm["duration_minutes"],
         "actual_arrival": None, "actual_completion": None,
-        "result": None, "notes": None,
+        "result": None, "notes": customer["notes"],
         "price": price,
         "invoice_id": None, "invoice_status": "pending",
         "google_calendar_event_id": None,
@@ -959,6 +1027,7 @@ async def public_book(data: BookingIn):
         "notification_phone": data.notification_phone or shop.get("contact_phone"),
         "notification_email": data.notification_email or shop.get("contact_email"),
         "customer_last_name": data.customer_last_name,
+        "customer_first_name": customer["customer_first_name"],
         "vehicle_year": data.year, "vehicle_make": data.make, "vehicle_model": data.model, "vehicle_vin": data.vin,
         "created_at": iso(now_utc()), "updated_at": iso(now_utc()),
     }
@@ -1110,7 +1179,7 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
         "status": "complete",
         "actual_completion": iso(now_utc()),
         "result": body.result,
-        "notes": body.notes,
+        "notes": completion_notes(job.get("notes"), body.notes),
         "invoice_id": invoice["invoice_id"],
         "invoice_status": "draft",
         "updated_at": iso(now_utc()),

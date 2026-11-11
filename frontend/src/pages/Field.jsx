@@ -83,9 +83,17 @@ export default function Field() {
           </a>
           {j.notification_phone && <a className="btn btn-ghost" style={{ marginTop: 8, width: "100%" }} href={`tel:${j.notification_phone}`}>📞 Call shop</a>}
           <div style={{ marginTop: 16, fontSize: 14, padding: 10, background: "var(--bg-elevated)", borderRadius: 8 }}>
+            {(j.customer_first_name || j.customer_last_name) && (
+              <div><b>Customer:</b> {[j.customer_first_name, j.customer_last_name].filter(Boolean).join(" ")}</div>
+            )}
             <div><b>Service:</b> {j.calibration_label}</div>
             <div><b>Price:</b> ${j.price.toFixed(2)}</div>
             <div><b>Status:</b> <span className={`badge badge-${j.status}`}>{j.status.replace(/_/g, " ")}</span></div>
+            {j.notes && (
+              <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }} data-testid="job-booking-notes">
+                <b>Booking notes:</b> {j.notes}
+              </div>
+            )}
           </div>
 
           {j.status === "booked" && (

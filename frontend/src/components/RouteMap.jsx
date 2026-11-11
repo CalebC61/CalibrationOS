@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { formatTime } from "../lib/api";
-import { MapContainer, TileLayer, Marker, Polyline, Tooltip, useMap } from "react-leaflet";
+import { MapContainer, Marker, Polyline, Tooltip, useMap } from "react-leaflet";
+import DarkBasemap from "./DarkBasemap";
 import L from "leaflet";
 
 // Default marker icons break in webpack; use divIcon for numbered colored pins.
@@ -33,10 +34,7 @@ export default function RouteMap({ jobs }) {
   return (
     <div style={{ height: 380, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }} data-testid="route-map">
       <MapContainer center={center} zoom={10} style={{ height: "100%", width: "100%", background: "#0d1116" }}>
-        <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; OpenStreetMap &copy; CARTO'
-        />
+        <DarkBasemap />
         {westLine.length > 1 && <Polyline positions={westLine} pathOptions={{ color: "#FF5F1F", weight: 3, opacity: 0.7 }} />}
         {eastLine.length > 1 && <Polyline positions={eastLine} pathOptions={{ color: "#3B82F6", weight: 3, opacity: 0.7 }} />}
         {valid.map((j, idx) => (
