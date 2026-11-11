@@ -22,6 +22,14 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-10-27): Phoenix day boundaries.** Job-by-date queries (`/portal/day-map`, `/jobs`,
+  `/dashboard/summary`, reorder, availability, public booking) use America/Phoenix midnight converted
+  to UTC, not UTC midnight. Default "today" is the Phoenix date. The portal day map and booking
+  date limits use that date too. Zone clock times stay UTC wall times; a saved zone that starts
+  before 07:00 UTC no longer offers those starts on the requested Phoenix day (they were the
+  previous evening, so the booking disappeared from `/jobs` and the slot could be offered again).
+  Reorder clamps an early start up onto the day. Concurrent drive-time lookups that share a
+  rounded destination share one in-flight Google call. Details in `CHANGELOG.md`.
 - **Design guidance only, plus a small token/contrast pass.** Impeccable's skill
   text is vendored under `.cursor/skills/impeccable/` (Apache 2.0; scripts not
   included; no new npm/pip dependency). Brand fill is `#FF5F1F`. A few CSS
@@ -132,8 +140,8 @@ new integration to wire up, only account setup:
    are now live (previously a permanently-disabled "next iteration" button — verify **Charge Now**
    and **Skip / Bill Manually** both render and work against Stripe test mode, per the checklist
    above, before flipping to a live key).
-5. **Reconcile version numbers:** `CHANGELOG.md` says `0.0.3`, `frontend/package.json` says `0.1.0`.
-   Pick one scheme.
+5. **Version is 0.1.0** in both `CHANGELOG.md` and `frontend/package.json`. `[0.0.3]` is the
+   previous cut.
 6. **Module 9 is live** — no external credentials needed (dispatch reuses existing SMS/email
    helpers). If you want it off for any reason, set `GROWTH_MODULE_ENABLED=false` and
    `REACT_APP_GROWTH_MODULE_ENABLED=false` — the backend routes 404 and the frontend falls back to

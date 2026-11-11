@@ -48,6 +48,19 @@ export function todayStr() {
   const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,"0"); const day = String(d.getDate()).padStart(2,"0");
   return `${y}-${m}-${day}`;
 }
+
+// America/Phoenix civil date (UTC−7, no DST). Intl is built in; formatToParts avoids
+// locale-dependent string order. Pass an instant to format a specific moment.
+export function phoenixTodayStr(instant = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(instant);
+  const get = (type) => parts.find((p) => p.type === type).value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
 export function dateStr(d) {
   const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,"0"); const day = String(d.getDate()).padStart(2,"0");
   return `${y}-${m}-${day}`;
