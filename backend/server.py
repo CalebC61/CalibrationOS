@@ -70,6 +70,7 @@ from business_time import (
     offered_slot_starts, zone_window,
 )
 from booking_fields import completion_notes, job_customer_fields
+from job_edits import changed_keys, is_upcoming, prepare_edit, shift_scheduled_end
 from regeocode import (
     detect_zone, jobs_on_phoenix_day, location_set, regeocode_records,
     regeocode_scope, zone_for_geocode,
@@ -640,6 +641,22 @@ class BookingIn(BaseModel):
     notification_phone: Optional[str] = None
     notification_email: Optional[str] = None
 
+class JobEditIn(BaseModel):
+    job_address: Optional[str] = None
+    customer_first_name: Optional[str] = None
+    customer_last_name: Optional[str] = None
+    notification_phone: Optional[str] = None
+    notification_email: Optional[str] = None
+    vehicle_year: Optional[int] = None
+    vehicle_make: Optional[str] = None
+    vehicle_model: Optional[str] = None
+    vehicle_vin: Optional[str] = None
+    calibration_type: Optional[Literal["static", "dynamic", "dual", "triple", "tesla"]] = None
+    price: Optional[float] = None
+    scheduled_start: Optional[str] = None
+    zone: Optional[Literal["west", "east"]] = None
+    notes: Optional[str] = None
+
 class JobStatusUpdate(BaseModel):
     status: Literal["driving", "on_site", "complete", "cancelled"]
 
@@ -824,10 +841,16 @@ async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner
     if not shop:
         raise HTTPException(404, "Shop not found")
     update = data.model_dump(exclude_unset=True)
-    if "address" in update and update["address"] != shop["address"]:
-        geo = await geocode_address(update["address"])
-        update["lat"] = geo["lat"]; update["lng"] = geo["lng"]
-        update["zone"] = detect_zone(geo["lng"])
+    if "address" in update and (update["address"] or "").strip() != (shop.get("address") or "").strip():
+        try:
+            geo = await geocode_for_regeocode(update["address"])
+        except (GoogleMapsError, requests.RequestException):
+            raise HTTPException(400, "Could not locate that address.")
+        update["lat"] = geo["lat"]
+        update["lng"] = geo["lng"]
+        zone = zone_for_geocode(geo)
+        if zone:
+            update["zone"] = zone
     update["updated_at"] = iso(now_utc())
     await db.shops.update_one({"id": shop_id}, {"$set": update})
     fresh = await db.shops.find_one({"id": shop_id}, {"_id": 0})
@@ -1067,6 +1090,62 @@ async def public_book(data: BookingIn):
     return {"job_id": job["id"], "booking_reference": job["id"][:8].upper(),
             "scheduled_start": job["scheduled_start"], "zone": zone, "price": price}
 
+async def _shop_for_booking_token(token: str) -> dict:
+    shop = await db.shops.find_one(
+        {"booking_link_token": token, "status": "active"}, {"_id": 0},
+    )
+    if not shop:
+        raise HTTPException(404, "This booking link is not active.")
+    return shop
+
+async def _job_for_shop_token(token: str, job_id: str) -> tuple:
+    shop = await _shop_for_booking_token(token)
+    job = await db.jobs.find_one({"id": job_id, "shop_id": shop["id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Booking not found")
+    return shop, job
+
+@api.get("/public/bookings/{token}")
+async def public_booking_list(token: str):
+    """Upcoming jobs for this booking link only. Other shops' jobs are not included."""
+    shop = await _shop_for_booking_token(token)
+    jobs = await db.jobs.find({"shop_id": shop["id"]}, {"_id": 0}).to_list(500)
+    upcoming = [job for job in jobs if is_upcoming(job)]
+    upcoming.sort(key=lambda job: job.get("scheduled_start") or "")
+    return upcoming
+
+@api.patch("/public/bookings/{token}/{job_id}")
+async def public_booking_edit(token: str, job_id: str, body: JobEditIn):
+    """Shop edit via its booking token. Price and zone stay owner-only. No messages."""
+    shop, job = await _job_for_shop_token(token, job_id)
+    try:
+        fields = prepare_edit(body.model_dump(exclude_unset=True), allow_price=False, allow_zone=False)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return await _apply_job_edit(
+        job, fields, {"kind": "shop", "id": shop["id"], "name": shop["name"]},
+    )
+
+@api.post("/public/bookings/{token}/{job_id}/cancel")
+async def public_booking_cancel(token: str, job_id: str):
+    """Cancel one of this shop's jobs. Does not send SMS or email."""
+    shop, job = await _job_for_shop_token(token, job_id)
+    if job.get("status") == "cancelled":
+        raise HTTPException(400, "Job is already cancelled")
+    if job.get("status") == "complete":
+        raise HTTPException(400, "A completed job cannot be cancelled here")
+    now = iso(now_utc())
+    entry = {
+        "at": now,
+        "who": {"kind": "shop", "id": shop["id"], "name": shop["name"]},
+        "fields": ["status"],
+    }
+    await db.jobs.update_one(
+        {"id": job["id"]},
+        {"$set": {"status": "cancelled", "updated_at": now}, "$push": {"edit_history": entry}},
+    )
+    return await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+
 # ---------- Jobs (dispatcher + field) ----------
 def annotate_at_risk(jobs: List[dict]) -> List[dict]:
     """Mark jobs that are running late or are next-up after a late job."""
@@ -1117,6 +1196,72 @@ async def get_job(job_id: str, tech=Depends(get_current_tech)):
     if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
         raise HTTPException(403, "Not your job")
     return job
+
+_VEHICLE_FIELD_MAP = {
+    "vehicle_year": "year",
+    "vehicle_make": "make",
+    "vehicle_model": "model",
+    "vehicle_vin": "vin",
+    "customer_last_name": "customer_last_name",
+    "customer_first_name": "customer_first_name",
+}
+
+async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
+    """Write a job edit. Does not send SMS or email and does not touch status."""
+    if "job_address" in fields and fields["job_address"] != (job.get("job_address") or ""):
+        try:
+            geo = await geocode_for_regeocode(fields["job_address"])
+        except (GoogleMapsError, requests.RequestException):
+            raise HTTPException(400, "Could not locate that address.")
+        fields["job_lat"] = geo["lat"]
+        fields["job_lng"] = geo["lng"]
+        if "zone" not in fields:
+            zone = zone_for_geocode(geo)
+            if zone:
+                fields["zone"] = zone
+    if "calibration_type" in fields:
+        fields["calibration_label"] = STANDARD_PRICING[fields["calibration_type"]]["label"]
+    if "scheduled_start" in fields:
+        new_start = datetime.fromisoformat(fields["scheduled_start"])
+        if new_start.tzinfo is None:
+            new_start = new_start.replace(tzinfo=timezone.utc)
+        fields["scheduled_end"] = shift_scheduled_end(job, new_start).isoformat()
+    changed = changed_keys(job, fields)
+    if not changed:
+        return job
+    now = iso(now_utc())
+    entry = {"at": now, "who": who, "fields": changed}
+    await db.jobs.update_one(
+        {"id": job["id"]},
+        {"$set": {**{key: fields[key] for key in changed}, "updated_at": now},
+         "$push": {"edit_history": entry}},
+    )
+    vehicle_updates = {
+        _VEHICLE_FIELD_MAP[key]: fields[key]
+        for key in changed if key in _VEHICLE_FIELD_MAP
+    }
+    if vehicle_updates and job.get("vehicle_id"):
+        await db.vehicles.update_one({"id": job["vehicle_id"]}, {"$set": vehicle_updates})
+    fresh = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+    return fresh
+
+@api.patch("/jobs/{job_id}")
+async def patch_job(job_id: str, body: JobEditIn, tech=Depends(get_current_tech)):
+    """Owner or assigned technician override. Never sends a message or changes status."""
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if tech["role"] not in ("owner", "contractor"):
+        raise HTTPException(403, "Not allowed")
+    if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
+        raise HTTPException(403, "Not your job")
+    try:
+        fields = prepare_edit(body.model_dump(exclude_unset=True), allow_price=True, allow_zone=True)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return await _apply_job_edit(
+        job, fields, {"kind": tech["role"], "id": tech["id"], "name": tech["name"]},
+    )
 
 @api.post("/jobs/{job_id}/status")
 async def update_status(job_id: str, body: JobStatusUpdate, tech=Depends(get_current_tech)):

@@ -44,9 +44,12 @@ export default function ShopsList() {
                 <Td><span style={{ textTransform: "capitalize" }}>{s.pricing_tier}</span></Td>
                 <Td><span className="badge badge-booked" style={{ textTransform: "capitalize" }}>{s.status}</span></Td>
                 <Td>
-                  <button className="btn btn-ghost" onClick={() => copyLink(s.booking_link_token)} data-testid={`copy-link-${s.id}`}>
-                    Copy Link
-                  </button>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Link to={`/shops/${s.id}`} className="btn btn-ghost" data-testid={`edit-shop-${s.id}`}>Edit</Link>
+                    <button className="btn btn-ghost" onClick={() => copyLink(s.booking_link_token)} data-testid={`copy-link-${s.id}`}>
+                      Copy Link
+                    </button>
+                  </div>
                 </Td>
               </tr>
             ))}

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr } from "../lib/api";
+import JobEditModal from "../components/JobEditModal";
 
 /** Mobile-optimized PWA technician field view. Works on phone or desktop. */
 export default function Field() {
@@ -13,6 +14,7 @@ export default function Field() {
   const [notes, setNotes] = useState("");
   const [docName, setDocName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
 
   const [offers, setOffers] = useState([]);
 
@@ -74,6 +76,8 @@ export default function Field() {
         <div className="surface page-fade" style={{ padding: 18, margin: 12 }} data-testid="job-detail">
           <div className="muted" style={{ fontSize: 12 }}>{formatTime(j.scheduled_start)}</div>
           <div className="h2" style={{ marginTop: 4 }}>{j.shop_name}</div>
+          <button className="btn btn-ghost" style={{ marginTop: 12, width: "100%" }}
+            onClick={() => setEditing(true)} data-testid="job-edit">Edit</button>
           <div className="muted" style={{ fontSize: 14, marginTop: 4 }}>
             {j.vehicle_year} {j.vehicle_make} {j.vehicle_model}
           </div>
@@ -157,6 +161,7 @@ export default function Field() {
             </div>
           )}
         </div>
+        <JobEditModal open={editing} job={j} onClose={() => setEditing(false)} onDone={load} />
       </Phone>
     );
   }

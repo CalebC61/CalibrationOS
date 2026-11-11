@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, formatTime, formatDate, getStoredAuth, phoenixTodayStr } from "../lib/api";
 import Brand from "../components/Brand";
+import JobEditModal from "../components/JobEditModal";
 
 const ADAS_OPTIONS = [
   { v: "forward_camera", l: "Forward-Facing Camera (most common)", default: "static" },
@@ -47,12 +48,24 @@ export default function PublicBooking() {
   const [notifyPhone, setNotifyPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
+  const [bookings, setBookings] = useState([]);
+  const [editingBooking, setEditingBooking] = useState(null);
+
+  const loadBookings = useCallback(async () => {
+    try {
+      const { data } = await api.get(`/public/bookings/${token}`);
+      setBookings(data);
+    } catch {
+      setBookings([]);
+    }
+  }, [token]);
 
   useEffect(() => {
     api.get(`/public/shop/${token}`)
       .then(r => { setShop(r.data); setAddress(r.data.address); setNotifyPhone(r.data.contact_phone || ""); })
       .catch(e => setError(e.response?.data?.detail || "Booking link not active"));
-  }, [token]);
+    loadBookings();
+  }, [token, loadBookings]);
   async function geocodeAddr() {
     if (!address) return;
     const { data } = await api.post("/geocode", { address });
@@ -97,6 +110,7 @@ export default function PublicBooking() {
         calibration_type: calType, notification_phone: notifyPhone,
       });
       setConfirmation(data);
+      loadBookings();
     } catch (e) {
       alert(e.response?.data?.detail || "Booking failed");
     } finally { setSubmitting(false); }
@@ -135,6 +149,23 @@ export default function PublicBooking() {
         <div className="muted" style={{ textAlign: "center", marginBottom: 24, fontSize: 14 }}>
           Booking for <b style={{ color: "var(--text-primary)" }}>{shop.name}</b>
         </div>
+
+        <ShopBookings
+          bookings={bookings}
+          onEdit={setEditingBooking}
+          onCancel={async (id) => {
+            if (!window.confirm("Cancel this booking? This does not send a message.")) return;
+            try {
+              await api.post(`/public/bookings/${token}/${id}/cancel`);
+              loadBookings();
+            } catch (e) {
+              const detail = e.response?.data?.detail;
+              alert(typeof detail === "string" ? detail : "Could not cancel this booking. Try again.");
+            }
+          }}
+        />
+        <JobEditModal open={!!editingBooking} job={editingBooking} token={token}
+          onClose={() => setEditingBooking(null)} onDone={loadBookings} />
 
         {/* Step indicator */}
         <Steps step={step} />
@@ -315,6 +346,41 @@ const NavBtns = ({ onBack, onNext, nextDisabled, nextLabel = "Continue →", dat
     <button className="btn btn-primary" onClick={onNext} disabled={nextDisabled} data-testid={dataTestId || "step-next"}>{nextLabel}</button>
   </div>
 );
+function ShopBookings({ bookings, onEdit, onCancel }) {
+  return (
+    <section style={{ marginBottom: 24 }} data-testid="your-bookings">
+      <h2 className="h3" style={{ marginBottom: 10 }}>Your bookings</h2>
+      {bookings.length === 0 ? (
+        <div className="surface muted" style={{ padding: 16, textAlign: "center" }}>No upcoming bookings.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {bookings.map((job) => (
+            <div key={job.id} className="surface" style={{ padding: 14 }} data-testid={`booking-${job.id}`}>
+              <div style={{ fontWeight: 600 }}>
+                {job.vehicle_year} {job.vehicle_make} {job.vehicle_model}
+              </div>
+              <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
+                {[job.customer_first_name, job.customer_last_name].filter(Boolean).join(" ")}
+                {" · "}{formatDate(job.scheduled_start)} · {formatTime(job.scheduled_start)}
+              </div>
+              <div style={{ fontSize: 13, marginTop: 4 }}>{job.job_address}</div>
+              {job.notes && (
+                <div style={{ fontSize: 13, marginTop: 6, whiteSpace: "pre-wrap" }}>{job.notes}</div>
+              )}
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <button type="button" className="btn btn-ghost" onClick={() => onEdit(job)}
+                  data-testid={`booking-edit-${job.id}`}>Edit</button>
+                <button type="button" className="btn btn-ghost" onClick={() => onCancel(job.id)}
+                  data-testid={`booking-cancel-${job.id}`}>Cancel booking</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 const Steps = ({ step }) => (
   <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 20 }}>
     {[1,2,3,4,5].map(i => (
