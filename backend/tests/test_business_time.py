@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/
 from business_time import (  # noqa: E402
     BUSINESS_TZ, business_date, business_day_bounds, clamp_start_to_business_day,
-    offered_slot_starts,
+    offered_slot_starts, zone_window,
 )
 
 PHOENIX_DAY = date(2026, 10, 27)
@@ -61,10 +61,9 @@ def test_one_am_utc_is_still_the_previous_phoenix_date():
 
 
 def test_existing_utc_slot_clocks_stay_on_the_labeled_phoenix_day():
-    """Zone windows are still combined as UTC clock times (08:00–19:00 UTC).
+    """An older instant stored as 08:00 UTC is 1:00 AM Phoenix, still that civil date.
 
-    Those instants are 1:00 AM–12:00 PM Phoenix, which is inside the same
-    Phoenix civil date. Widening the query window must not drop them.
+    The day query must keep finding those rows. New slots use zone_window.
     """
     start, end = business_day_bounds(PHOENIX_DAY)
     for hour in (8, 14, 19):
@@ -127,6 +126,40 @@ def test_default_0800_utc_zone_still_offers_its_first_slot():
     assert starts[0] == datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc)
     assert len(starts) == 7
     assert all(business_date(s) == day for s in starts)
+
+
+def test_west_0800_phoenix_is_1500_utc_and_offered_as_8am():
+    """West Valley 08:00–14:00 is Phoenix local, not a UTC wall clock.
+
+    08:00 UTC displays as 1:00 AM in Phoenix. The first offered start must be
+    08:00 Phoenix (15:00 UTC) and its ISO form must sort inside that Phoenix day.
+    """
+    day = date(2026, 10, 27)
+    start, end = zone_window(day, time(8, 0), time(14, 0))
+    assert start == datetime(2026, 10, 27, 15, 0, tzinfo=timezone.utc)
+    assert end == datetime(2026, 10, 27, 21, 0, tzinfo=timezone.utc)
+    starts = offered_slot_starts(day, start, end, slot_minutes=45, limit=1)
+    assert starts[0] == start
+    assert starts[0].astimezone(BUSINESS_TZ).strftime("%H:%M") == "08:00"
+    day_start, day_end = business_day_bounds(day)
+    stored = starts[0].isoformat()
+    assert day_start.isoformat() <= stored < day_end.isoformat()
+
+
+def test_east_1430_to_1900_phoenix_crosses_utc_midnight_on_the_same_day():
+    day = date(2026, 10, 27)
+    start, end = zone_window(day, time(14, 30), time(19, 0))
+    assert start == datetime(2026, 10, 27, 21, 30, tzinfo=timezone.utc)
+    assert end == datetime(2026, 10, 28, 2, 0, tzinfo=timezone.utc)
+    day_start, day_end = business_day_bounds(day)
+    assert day_start <= start < day_end
+    assert start < end <= day_end
+    starts = offered_slot_starts(day, start, end, slot_minutes=45)
+    assert starts[0].astimezone(BUSINESS_TZ).strftime("%H:%M") == "14:30"
+    assert starts[-1].astimezone(BUSINESS_TZ).strftime("%H:%M") == "18:15"
+    for slot in starts:
+        assert day_start <= slot < day_end
+        assert day_start.isoformat() <= slot.isoformat() < day_end.isoformat()
 
 
 def test_nonpositive_slot_minutes_is_rejected():

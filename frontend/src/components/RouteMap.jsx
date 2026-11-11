@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { formatTime } from "../lib/api";
 import { MapContainer, TileLayer, Marker, Polyline, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 
@@ -44,7 +45,7 @@ export default function RouteMap({ jobs }) {
             <Tooltip direction="top" offset={[0, -10]}>
               <div style={{ fontSize: 12 }}>
                 <b>#{idx + 1} · {j.shop_name}</b><br />
-                {new Date(j.scheduled_start).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+                {formatTime(j.scheduled_start)}
               </div>
             </Tooltip>
           </Marker>
