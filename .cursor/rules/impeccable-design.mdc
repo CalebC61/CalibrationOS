@@ -1,0 +1,37 @@
+---
+description: Design rules for CalibrationOS screens. Read before editing frontend UI.
+globs: frontend/**/*.{js,jsx,css}
+alwaysApply: false
+---
+
+# CalibrationOS UI
+
+Future UI work follows the vendored Impeccable skill at
+`.cursor/skills/impeccable/SKILL.md` (Apache 2.0, Paul Bakaus; see `LICENSE`
+and `NOTICE` in that directory). Read that file before a visual change. Read
+`reference/craft-floor.md` immediately before editing UI. Do not run
+`scripts/impeccable` — those scripts are not vendored. Use the skill's
+launcher-unavailable path. Do not add the `impeccable` package as a dependency,
+and do not install its git hooks.
+
+This product is **Operate** mode: dispatch, shop portal, admin. Precision and
+restraint. Do not turn a task screen into a marketing page.
+
+## Brand
+
+- Orange **#FF5F1F** is the brand fill: buttons, the OS block, focus rings.
+  Token: `--accent`. Near-black `#0a0a0a` text on that fill (white fails ~3:1).
+- Orange text on gunsteel uses `--accent-ink` (**#FF7E1E**). #FF5F1F as small
+  text is about 4.47:1 on `#2A2E37` and 3.85:1 on `#343843`.
+- Text on an orange-tinted chip uses `--accent-on-tint` (**#FFD0B8**).
+  Blue text on a blue-tinted chip uses `--blue-ink` (**#C5DBFF**).
+- Keep the incumbent world: gunsteel surfaces, Saira Stencil wordmark, DM Sans
+  body, JetBrains Mono for data. Do not swap in Inter, Roboto, Geist, or a
+  purple gradient.
+
+## Floor (from the skill; do not restate a redesign)
+
+No eyebrow kicker above a heading. No gradient text. No thick side-tab border
+on a card. No nested cards. Body and placeholder text at least 4.5:1. Functional
+text at least 12px. Do not skip a heading level. Verify the rendered screen
+after a visual change.

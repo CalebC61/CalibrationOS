@@ -111,7 +111,7 @@ export default function Assist() {
             display: "flex", justifyContent: "space-between", alignItems: "center",
             background: "var(--bg-elevated)",
           }}>
-            <div style={{ fontFamily: "'Barlow Semi Condensed', sans-serif", fontWeight: 600 }}>
+            <div style={{ fontFamily: "'Saira Stencil One', sans-serif", letterSpacing: "0.04em" }}>
               <span className="accent">ASSIST</span>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
@@ -155,7 +155,7 @@ export default function Assist() {
                 {m.pending && (
                   <div data-testid={`assist-confirm-${m.pending.id}`} style={{
                     marginTop: 6, padding: 10, borderRadius: 10,
-                    border: "1px solid rgba(249,115,22,0.45)", background: "rgba(249,115,22,0.08)",
+                    border: "1px solid rgba(255,95,31,0.45)", background: "rgba(255,95,31,0.08)",
                   }}>
                     <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>
                       {m.pending.summary}

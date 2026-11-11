@@ -157,7 +157,7 @@ export default function Field() {
     <Phone>
       <Header name={auth?.name} onLogout={logout} />
       <div style={{ padding: 12 }}>
-        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Today</div>
+        <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4 }}>Today</div>
         <h1 className="h1" style={{ marginBottom: 12, fontSize: 28 }}>
           {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
         </h1>
@@ -165,7 +165,7 @@ export default function Field() {
 
         {offers.length > 0 && (
           <div style={{ marginBottom: 16 }} data-testid="pending-offers">
-            <div className="label" style={{ color: "var(--accent)" }}>Pending offers ({offers.length})</div>
+            <div className="label" style={{ color: "var(--accent-ink)" }}>Pending offers ({offers.length})</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {offers.map(o => (
                 <div key={o.id} className="card-job-new card-job" data-testid={`offer-${o.id}`}>

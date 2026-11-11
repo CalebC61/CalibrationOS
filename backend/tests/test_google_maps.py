@@ -3,6 +3,7 @@
 These are pure (stdlib only) and run anywhere — no server, MongoDB, or Google API key needed:
     cd backend && pytest tests/test_google_maps.py -v
 """
+import asyncio
 import os
 import sys
 import pytest
@@ -10,7 +11,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/
 from google_maps import (  # noqa: E402
     GoogleMapsError, in_metro, parse_geocode_response, parse_distance_matrix_response,
-    geocode_request_params, distance_matrix_request_params, drive_time_cache_key,
+    geocode_request_params, distance_matrix_request_params, drive_time_cache_key, coalesce,
 )
 
 GEOCODE_OK = {
@@ -122,3 +123,77 @@ def test_cache_key_changes_on_new_day():
     key_day1 = drive_time_cache_key(33.3062, -111.789, 33.45, -112.02, "2026-07-21")
     key_day2 = drive_time_cache_key(33.3062, -111.789, 33.45, -112.02, "2026-07-22")
     assert key_day1 != key_day2
+
+
+def test_coalesce_runs_one_factory_for_concurrent_same_key():
+    async def scenario():
+        pending = {}
+        calls = 0
+
+        async def factory():
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.01)
+            return {"duration_minutes": 12}
+
+        results = await asyncio.gather(*(coalesce(pending, "same", factory) for _ in range(5)))
+        assert results == [{"duration_minutes": 12}] * 5
+        assert calls == 1
+        assert pending == {}
+        # A later call is not stuck on the finished task.
+        await coalesce(pending, "same", factory)
+        assert calls == 2
+
+    asyncio.run(scenario())
+
+
+def test_coalesce_shares_a_rounded_drive_time_key_and_isolates_others():
+    async def scenario():
+        # Same origin, destinations that round to one cache key, plus a different pin.
+        day = "2026-10-27"
+        shared = drive_time_cache_key(33.4484, -112.0740, 33.30621, -111.78901, day)
+        also_shared = drive_time_cache_key(33.4484, -112.0740, 33.30619, -111.78899, day)
+        other = drive_time_cache_key(33.4484, -112.0740, 33.4500, -112.0200, day)
+        assert shared == also_shared
+        assert shared != other
+
+        pending = {}
+        calls = []
+
+        def make(name):
+            async def factory():
+                calls.append(name)
+                await asyncio.sleep(0)
+                return name
+            return factory
+
+        results = await asyncio.gather(
+            coalesce(pending, shared, make("a")),
+            coalesce(pending, also_shared, make("b")),
+            coalesce(pending, other, make("c")),
+        )
+        assert results[0] == results[1]
+        assert sorted(calls) == ["a", "c"] or sorted(calls) == ["b", "c"]
+        assert len(calls) == 2
+        assert pending == {}
+
+    asyncio.run(scenario())
+
+
+def test_coalesce_clears_the_key_after_a_failure():
+    async def scenario():
+        pending = {}
+
+        async def boom():
+            raise RuntimeError("maps down")
+
+        with pytest.raises(RuntimeError):
+            await coalesce(pending, "k", boom)
+        assert pending == {}
+
+        async def ok():
+            return "recovered"
+
+        assert await coalesce(pending, "k", ok) == "recovered"
+
+    asyncio.run(scenario())

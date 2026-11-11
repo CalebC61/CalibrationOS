@@ -13,24 +13,24 @@
   --bg-input: #404653;
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.16);
-  --border-active: rgba(249, 115, 22, 0.45);
+  --border-active: rgba(255, 95, 31, 0.45);
 
-  /* Brand orange — unchanged */
-  --accent: #F97316;
-  --accent-dim: rgba(249, 115, 22, 0.14);
-  /* Calibration cyan: the colour of laser lines and targets. Info, East Valley, in-transit. */
-  --blue: #38BDF8;
-  --cyan: #38BDF8;
-  --green: #22C55E;
+  /* Brand orange #FF5F1F is the fill (buttons, the OS block, focus).
+     As small text on gunsteel it is about 4.47:1 on #2A2E37 and 3.85:1 on #343843,
+     so text uses a nearby ink that clears WCAG AA. Tinted chips need a lighter ink. */
+  --accent: #FF5F1F;
+  --accent-ink: #FF7E1E;
+  --accent-on-tint: #FFD0B8;
+  --accent-dim: rgba(255, 95, 31, 0.14);
+  --blue: #3B82F6;
+  --blue-ink: #C5DBFF;
+  --green: #10B981;
   --red: #EF4444;
-  /* Contractor jobs: cool steel instead of off-brand purple */
-  --purple: #A5B4CB;
-  /* Warning is a clear yellow so it never reads as brand orange */
-  --yellow: #FACC15;
-  --radius-ui: 8px;
+  --purple: #8B5CF6;
+  --yellow: #F59E0B;
 
   --text-primary: #F5F5F5;
-  --text-muted: #9CA0AB;
+  --text-muted: #B4B8C2;          /* #9CA0AB was 4.48:1 on #343843 */
   --text-subtle: #6B7280;
 
   /* shadcn tokens — overridden to gunsteel */
@@ -40,23 +40,23 @@
   --card-foreground: 0 0% 96%;
   --popover: 222 12% 28%;
   --popover-foreground: 0 0% 96%;
-  --primary: 24 95% 53%;
-  --primary-foreground: 0 0% 100%;
+  --primary: 17 100% 56%;          /* #FF5F1F */
+  --primary-foreground: 0 0% 4%;   /* near-black; white on #FF5F1F is ~3:1 */
   --secondary: 222 12% 24%;
   --secondary-foreground: 0 0% 96%;
   --muted: 222 12% 24%;
-  --muted-foreground: 220 8% 64%;
-  --accent-c: 24 95% 53%;
+  --muted-foreground: 220 8% 73%;
+  --accent-c: 17 100% 56%;
   --accent-foreground: 0 0% 100%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
   --border: 220 10% 28%;
   --input: 220 10% 30%;
-  --ring: 24 95% 53%;
-  --radius: 0.5rem;
+  --ring: 17 100% 56%;
+  --radius: 0.75rem;
 }
 
-@import url('https://fonts.googleapis.com/css2?family=Saira+Stencil+One&family=Barlow+Semi+Condensed:wght@500;600;700&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Saira+Stencil+One&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 * { box-sizing: border-box; }
 
@@ -65,15 +65,12 @@ html, body, #root {
   color: var(--text-primary);
   font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: 'tnum' 0;
   margin: 0;
   min-height: 100vh;
 }
 
-/* Headings: Barlow Semi Condensed (precise, instrument-panel feel). Saira Stencil is reserved for the logo. */
-.font-display { font-family: 'Barlow Semi Condensed', 'DM Sans', sans-serif; font-weight: 600; letter-spacing: 0; }
-/* Numbers: the text face with tabular figures, not a monospace 'tech' voice */
-.font-mono   { font-family: 'DM Sans', sans-serif; font-variant-numeric: tabular-nums; }
+.font-display { font-family: 'Saira Stencil One', sans-serif; letter-spacing: 0.02em; }
+.font-mono   { font-family: 'JetBrains Mono', monospace; }
 
 /* Brand wordmark — matches the logo treatment exactly */
 .brand-mark {
@@ -83,31 +80,30 @@ html, body, #root {
   align-items: baseline;
   line-height: 1;
 }
-.brand-mark .brand-word { color: var(--accent); }
+.brand-mark .brand-word { color: var(--accent-ink); }
 .brand-mark .brand-suffix {
   background: var(--accent);
-  color: var(--bg-primary);
+  color: #0a0a0a;
   padding: 0.05em 0.32em 0.1em;
   margin-left: 0.2em;
   border-radius: 2px;
 }
 
 /* Utility classes */
-.surface { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-ui); }
-.elevated { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-ui); }
+.surface { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px; }
+.elevated { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; }
 .muted { color: var(--text-muted); }
 .subtle { color: var(--text-subtle); }
-.accent { color: var(--accent); }
+.accent { color: var(--accent-ink); }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
-  padding: 0.625rem 1rem; border-radius: var(--radius-ui); min-height: 44px; font-weight: 600; font-size: 0.875rem;
-  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease; cursor: pointer; border: 1px solid transparent;
+  padding: 0.625rem 1rem; border-radius: 8px; font-weight: 600; font-size: 0.875rem;
+  transition: all 150ms ease; cursor: pointer; border: 1px solid transparent;
   white-space: nowrap;
 }
 .btn-primary { background: var(--accent); color: #0a0a0a; }
-.btn-primary:hover { filter: brightness(1.08); }
-.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; filter: none; }
 .btn-ghost { background: transparent; color: var(--text-primary); border-color: var(--border); }
 .btn-ghost:hover { background: var(--bg-elevated); border-color: var(--border-active); }
@@ -116,41 +112,40 @@ html, body, #root {
 
 .input {
   background: var(--bg-input); border: 1px solid var(--border);
-  border-radius: var(--radius-ui); padding: 0.625rem 0.875rem; min-height: 44px; color: var(--text-primary);
+  border-radius: 8px; padding: 0.625rem 0.875rem; color: var(--text-primary);
   font-size: 0.9375rem; width: 100%; transition: border-color 150ms ease;
   font-family: inherit;
 }
 .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
 .input::placeholder { color: var(--text-subtle); }
 
-.label { display: block; font-size: 0.875rem;
-  color: var(--text-muted); margin-bottom: 0.375rem; font-weight: 500; }
+.label { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-muted); margin-bottom: 0.375rem; font-weight: 600; }
 
 .badge {
   display: inline-flex; align-items: center; gap: 0.25rem;
-  padding: 0.125rem 0.5rem; border-radius: 999px; font-size: 0.75rem;
-  font-weight: 600;
+  padding: 0.125rem 0.5rem; border-radius: 999px; font-size: 0.6875rem;
+  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
 }
-.badge-west { background: rgba(249,115,22,0.15); color: var(--accent); border: 1px solid rgba(249,115,22,0.3); }
-.badge-east { background: rgba(56,189,248,0.15); color: var(--blue); border: 1px solid rgba(56,189,248,0.3); }
+.badge-west { background: rgba(255,95,31,0.15); color: var(--accent-on-tint); border: 1px solid rgba(255,95,31,0.3); }
+.badge-east { background: rgba(59,130,246,0.15); color: var(--blue-ink); border: 1px solid rgba(59,130,246,0.3); }
 .badge-booked { background: rgba(136,136,136,0.15); color: #c4c4c4; border: 1px solid rgba(255,255,255,0.1); }
-.badge-driving { background: rgba(56,189,248,0.15); color: var(--blue); border: 1px solid rgba(56,189,248,0.3); }
-.badge-on_site { background: rgba(250,204,21,0.15); color: var(--yellow); border: 1px solid rgba(250,204,21,0.3); }
-.badge-complete { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+.badge-driving { background: rgba(59,130,246,0.15); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); }
+.badge-on_site { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+.badge-complete { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
 .badge-cancelled { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
-.badge-dispatched_to_contractor { background: rgba(165,180,203,0.15); color: var(--purple); border: 1px solid rgba(165,180,203,0.3); }
+.badge-dispatched_to_contractor { background: rgba(139,92,246,0.15); color: var(--purple); border: 1px solid rgba(139,92,246,0.3); }
 .badge-pending { background: rgba(136,136,136,0.15); color: #c4c4c4; border: 1px solid rgba(255,255,255,0.1); }
-.badge-draft { background: rgba(250,204,21,0.15); color: var(--yellow); border: 1px solid rgba(250,204,21,0.3); }
+.badge-draft { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
 
 .card-job {
-  background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-ui);
-  padding: 1rem; transition: border-color 150ms ease;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1rem; transition: all 150ms ease;
 }
 .card-job:hover { border-color: var(--border-active); }
 
 .card-job-new {
   border-color: var(--accent);
-  box-shadow: inset 4px 0 0 var(--accent);
 }
 .card-job-dropzone {
   border-color: var(--accent) !important;
@@ -159,16 +154,14 @@ html, body, #root {
 }
 .card-job-at-risk {
   border-color: var(--red);
-  box-shadow: inset 4px 0 0 var(--red);
+  box-shadow: 0 0 0 1px var(--red), 0 0 16px rgba(239,68,68,0.18);
 }
 .card-job[draggable="true"] { cursor: grab; }
 .card-job[draggable="true"]:active { cursor: grabbing; }
-
-.pulse-dot { animation: pulseDot 1.4s ease-out infinite; }
+.pulse-dot { animation: pulseDot 1.4s ease-in-out infinite; }
 @keyframes pulseDot {
-  0%   { box-shadow: 0 0 0 0 rgba(249,115,22,0.6); }
-  70%  { box-shadow: 0 0 0 10px rgba(249,115,22,0); }
-  100% { box-shadow: 0 0 0 0 rgba(249,115,22,0); }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 .divider { height: 1px; background: var(--border); border: none; margin: 1rem 0; }
@@ -181,34 +174,36 @@ html, body, #root {
 
 /* Page transition */
 .page-fade { animation: fadeIn 200ms ease both; }
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; transform: none; } }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* Layout helpers */
 .container-app { max-width: 1400px; margin: 0 auto; padding: 1rem 1.5rem; }
 @media (max-width: 640px) { .container-app { padding: 1rem; } }
 
 .zone-header {
-  font-family: 'Barlow Semi Condensed', 'DM Sans', sans-serif; font-weight: 600; font-size: 1.0625rem;
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-ui); margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;
+  font-family: 'Saira Stencil One', sans-serif; font-weight: 400; font-size: 0.95rem;
+  text-transform: uppercase; letter-spacing: 0.14em; padding: 0.75rem 1rem;
+  border-radius: 8px; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;
   justify-content: space-between;
 }
-.zone-header-west { background: rgba(249,115,22,0.08); color: var(--accent); border: 1px solid rgba(249,115,22,0.2); }
-.zone-header-east { background: rgba(56,189,248,0.08); color: var(--blue); border: 1px solid rgba(56,189,248,0.2); }
+.zone-header-west { background: rgba(255,95,31,0.08); color: var(--accent-ink); border: 1px solid rgba(255,95,31,0.2); }
+.zone-header-east { background: rgba(59,130,246,0.08); color: var(--blue-ink); border: 1px solid rgba(59,130,246,0.2); }
 
-.h1 { font-family: 'Barlow Semi Condensed', 'DM Sans', sans-serif; font-weight: 700; font-size: 2rem; line-height: 1.15; letter-spacing: 0; }
-.h2 { font-family: 'Barlow Semi Condensed', 'DM Sans', sans-serif; font-weight: 600; font-size: 1.5rem; line-height: 1.2; letter-spacing: 0; }
+.h1 { font-family: 'Saira Stencil One', sans-serif; font-weight: 400; font-size: 2rem; letter-spacing: 0.02em; }
+.h2 { font-family: 'Saira Stencil One', sans-serif; font-weight: 400; font-size: 1.5rem; letter-spacing: 0.02em; }
 .h3 { font-family: 'DM Sans', sans-serif; font-weight: 700; font-size: 1.125rem; letter-spacing: 0; }
 
 a { color: inherit; text-decoration: none; }
+
+/* Leaflet's attribution sits on the map tiles and fails contrast. Keep it readable. */
+.leaflet-control-attribution {
+  background: rgba(42, 46, 55, 0.92) !important;
+  color: var(--text-muted) !important;
+}
+.leaflet-control-attribution a { color: var(--accent-ink) !important; }
 
 /* Tabs */
 .tab-btn { padding: 0.5rem 0; margin-right: 1.5rem; border-bottom: 2px solid transparent;
   color: var(--text-muted); font-weight: 600; cursor: pointer; transition: all 150ms; }
 .tab-btn.active { color: var(--text-primary); border-bottom-color: var(--accent); }
 .tab-btn:hover { color: var(--text-primary); }
-
-
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
-}

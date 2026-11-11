@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { phoenixTodayStr } from "../lib/api";
 import { portalApi, getPortalAuth } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
@@ -117,8 +118,8 @@ export default function PortalBook() {
         {step === 2 && (
           <Card title="Pick a date">
             <input className="input" type="date" value={date}
-              min={new Date().toISOString().slice(0,10)}
-              max={new Date(Date.now() + 21*86400000).toISOString().slice(0,10)}
+              min={phoenixTodayStr()}
+              max={phoenixTodayStr(new Date(Date.now() + 21 * 86400000))}
               onChange={e => { setDate(e.target.value); loadSlots(e.target.value); }} data-testid="b-date" />
             {slotsMsg && <div className="muted" style={{ marginTop: 10, fontSize: 14, color: "var(--yellow)" }}>{slotsMsg}</div>}
             {slots.length > 0 && (

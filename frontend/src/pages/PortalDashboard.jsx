@@ -2,14 +2,15 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { MapContainer, TileLayer, Marker, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
+import { phoenixTodayStr } from "../lib/api";
 import { portalApi, getPortalAuth } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
-function pinIcon(num, color, ghost = false) {
+function pinIcon(num, color, ghost = false, text = "#fff") {
   const opacity = ghost ? 0.55 : 1;
   return L.divIcon({
     className: "route-pin",
-    html: `<div style="background:${color};color:#fff;border-radius:999px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border:2px solid #111;opacity:${opacity};font-family:'DM Sans',sans-serif;">${num}</div>`,
+    html: `<div style="background:${color};color:${text};border-radius:999px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border:2px solid #111;opacity:${opacity};font-family:'JetBrains Mono',monospace;">${num}</div>`,
     iconSize: [26, 26], iconAnchor: [13, 13],
   });
 }
@@ -28,7 +29,7 @@ const fmt = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeri
 export default function PortalDashboard() {
   const auth = getPortalAuth();
   const [data, setData] = useState(null);
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => phoenixTodayStr());
 
   useEffect(() => {
     portalApi.get(`/portal/day-map?date_str=${date}`).then(r => setData(r.data));
@@ -56,7 +57,7 @@ export default function PortalDashboard() {
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
         <div>
-          <div className="muted" style={{ fontSize: 12 }}>Day map</div>
+          <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase" }}>Day map</div>
           <h1 className="h1" style={{ margin: "4px 0" }}>
             {new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
           </h1>
@@ -72,7 +73,7 @@ export default function PortalDashboard() {
               attribution='&copy; OpenStreetMap &copy; CARTO' />
             {own.map((j, idx) => (
               <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-                icon={pinIcon(`Y${idx + 1}`, j.zone === "west" ? "#F97316" : "#0EA5E9")}>
+                icon={pinIcon(`Y${idx + 1}`, j.zone === "west" ? "#FF5F1F" : "#1E40AF", false, j.zone === "west" ? "#0a0a0a" : "#fff")}>
                 <Tooltip>
                   <div style={{ fontSize: 12 }}>
                     <b>Your job · {fmt(j.scheduled_start)}</b><br />

@@ -37,7 +37,7 @@ export default function ShopsList() {
           <tbody>
             {filtered.map(s => (
               <tr key={s.id} style={{ borderTop: "1px solid var(--border)" }} data-testid={`shop-row-${s.id}`}>
-                <Td><Link to={`/shops/${s.id}`} style={{ color: "var(--accent)" }}>{s.name}</Link>
+                <Td><Link to={`/shops/${s.id}`} style={{ color: "var(--accent-ink)" }}>{s.name}</Link>
                   <div className="muted" style={{ fontSize: 12 }}>{s.address}</div>
                 </Td>
                 <Td><span className={`badge badge-${s.zone}`}>{s.zone}</span></Td>
@@ -60,6 +60,6 @@ export default function ShopsList() {
   );
 }
 
-const Th = ({ children }) => <th style={{ padding: "10px 14px", fontSize: 12,
+const Th = ({ children }) => <th style={{ padding: "10px 14px", fontSize: 11, textTransform: "uppercase",
   letterSpacing: "0.08em", color: "var(--text-muted)", fontWeight: 600 }}>{children}</th>;
 const Td = ({ children, colSpan, style }) => <td colSpan={colSpan} style={{ padding: "12px 14px", fontSize: 14, ...(style || {}) }}>{children}</td>;

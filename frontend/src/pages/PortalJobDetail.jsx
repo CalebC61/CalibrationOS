@@ -39,7 +39,7 @@ export default function PortalJobDetail() {
         {j.vehicle_vin && <Row k="VIN" v={j.vehicle_vin} />}
       </div>
 
-      <h3 className="h3" style={{ marginBottom: 8 }}>Documentation</h3>
+      <h2 className="h3" style={{ marginBottom: 8 }}>Documentation</h2>
       {data.documents.length === 0 ? (
         <div className="surface muted" style={{ padding: 16, textAlign: "center" }}>
           {j.status === "complete" ? "Document upload pending." : "Available after completion."}
@@ -55,7 +55,7 @@ export default function PortalJobDetail() {
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{d.file_name}</div>
                 <div className="muted" style={{ fontSize: 12 }}>{(d.size_bytes / 1024).toFixed(1)} KB · {d.content_type}</div>
               </div>
-              <span style={{ color: "var(--accent)" }}>Download ↓</span>
+              <span style={{ color: "var(--accent-ink)" }}>Download ↓</span>
             </a>
           ))}
         </div>
