@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { api, formatTime, phoenixTodayStr, dateStr, getStoredAuth } from "../lib/api";
+import { api, formatTime, phoenixTodayStr, dateStr, getStoredAuth, jobStatusLabel } from "../lib/api";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
@@ -61,6 +61,14 @@ export default function Dashboard() {
       await api.post(`/jobs/${jobId}/status`, { status });
     }
     load();
+  }
+  async function decideApproval(jobId, approve) {
+    try {
+      await api.post(`/jobs/${jobId}/${approve ? "approve" : "decline"}`);
+      load();
+    } catch (e) {
+      alert(e.response?.data?.detail || "Could not update that request.");
+    }
   }
   async function manualRespond(offerId, accept) {
     await api.post(`/contractor-offers/${offerId}/respond`, { accept });
@@ -199,6 +207,7 @@ export default function Dashboard() {
             onDispatch={setDispatchTarget} onRespond={manualRespond}
             onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
             onEdit={isOwner ? setEditTarget : null}
+            onDecide={isOwner ? decideApproval : null}
             dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
         ))}
       </div>
@@ -273,7 +282,7 @@ function Metric({ label, value, highlight }) {
 }
 
 function ZonePanel({ title, subtitle, zone, jobs, onStatus, accent, newJobIds, offerByJob,
-                    onDispatch, onRespond, onReschedule, onEdit, dragOver, setDragOver, onDrop }) {
+                    onDispatch, onRespond, onReschedule, onEdit, onDecide, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className="zone-header">
@@ -291,6 +300,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, accent, newJobIds, o
           <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
             onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule} onEdit={onEdit}
+            onDecide={onDecide}
             zone={zone} dropIndex={idx}
             isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
             onDragOver={(e) => { e.preventDefault(); setDragOver({ zone, idx }); }}
@@ -317,10 +327,10 @@ function OfferCountdown({ expiresAt }) {
   return <span className="font-mono">{min}:{String(sec).padStart(2, "0")}</span>;
 }
 
-function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule, onEdit,
+function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDecide,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
-  const isLocked = job.status === "complete" || job.status === "cancelled";
+  const isLocked = job.status === "complete" || job.status === "cancelled" || job.status === "declined" || job.status === "requested";
   return (
     <div
       className={"card-job" + (isNew ? " card-job-new" : "") + (isDragOver ? " card-job-dropzone" : "") + (job.is_at_risk ? " card-job-at-risk" : "")}
@@ -338,7 +348,7 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
               background: "var(--bg-elevated)", padding: "2px 8px", borderRadius: 6,
               fontSize: 12, fontWeight: 600,
             }}>#{index}</span>
-            <span className={`badge badge-${job.status}`}>{job.status.replace(/_/g, " ")}</span>
+            <span className={`badge badge-${job.status}`}>{jobStatusLabel(job.status)}</span>
             {isNew && <span className="badge" style={{ background: "var(--accent)", color: "#0a0a0a", border: "1px solid var(--accent)" }} data-testid="badge-new">NEW</span>}
             {job.invoice_status === "draft" && <span className="badge badge-draft">Invoice: Draft</span>}
             {offer && (
@@ -378,6 +388,11 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
         <div style={{ textAlign: "right" }}>
           <div className="font-display" style={{ fontSize: 18, fontWeight: 700 }}>{formatTime(job.scheduled_start)}</div>
           <div className="muted" style={{ fontSize: 12 }}>{job.drive_time_minutes} min drive</div>
+          {job.status === "requested" && job.extra_drive_minutes != null && (
+            <div className="muted" style={{ fontSize: 12, marginTop: 4, maxWidth: 180 }}>
+              About {job.extra_drive_minutes} min extra driving. Day ends about {job.later_finish_minutes} min later.
+            </div>
+          )}
           <div className="font-mono" style={{ fontSize: 13, marginTop: 4 }}>${job.price.toFixed(2)}</div>
         </div>
       </div>
@@ -385,6 +400,14 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
         {onEdit && (
           <button className="btn btn-ghost" onClick={() => onEdit(job)}
             data-testid={`job-edit-${job.id}`}>Edit</button>
+        )}
+        {onDecide && job.status === "requested" && (
+          <>
+            <button className="btn btn-primary" onClick={() => onDecide(job.id, true)}
+              data-testid={`job-approve-${job.id}`}>Approve</button>
+            <button className="btn btn-ghost" onClick={() => onDecide(job.id, false)}
+              data-testid={`job-decline-${job.id}`}>Decline</button>
+          </>
         )}
         {flow && (
           <button className="btn btn-primary" onClick={() => onStatus(job.id, flow.next)}

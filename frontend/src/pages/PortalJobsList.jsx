@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { jobStatusLabel } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
@@ -12,7 +13,7 @@ export default function PortalJobsList() {
   useEffect(() => { portalApi.get("/portal/jobs").then(r => setJobs(r.data)); }, []);
 
   const filtered = filter === "all" ? jobs :
-    filter === "upcoming" ? jobs.filter(j => ["booked", "driving", "on_site", "dispatched_to_contractor"].includes(j.status)) :
+    filter === "upcoming" ? jobs.filter(j => ["booked", "requested", "driving", "on_site", "dispatched_to_contractor"].includes(j.status)) :
     filter === "completed" ? jobs.filter(j => j.status === "complete") :
     jobs.filter(j => j.status === "cancelled");
 
@@ -37,7 +38,7 @@ export default function PortalJobsList() {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
               <div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                  <span className={`badge badge-${j.status}`}>{j.status.replace(/_/g, " ")}</span>
+                  <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
                 </div>
                 <div className="h3">{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
                 <div className="muted" style={{ fontSize: 13 }}>{j.calibration_label} · {j.customer_last_name}</div>

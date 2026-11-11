@@ -35,6 +35,13 @@ export function setStoredAuth(d) {
   }
 }
 
+export function jobStatusLabel(status) {
+  if (status === "requested") return "Pending approval";
+  if (status === "declined") return "Declined";
+  if (!status) return "";
+  return String(status).replace(/_/g, " ");
+}
+
 export function formatTime(iso) {
   const d = new Date(iso);
   return d.toLocaleTimeString(undefined, {

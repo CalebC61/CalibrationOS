@@ -119,7 +119,7 @@ new integration to wire up, only account setup:
 
 ### Action items for you (Emergent) — everything else, in rough priority order
 1. **Turn on real Google Maps:** set `GOOGLE_MAPS_API_KEY` in Emergent's env settings (a Google
-   Cloud API key with the **Geocoding API** and **Distance Matrix API** enabled + billing on the
+   Cloud API key with the **Geocoding API** and **Routes API** enabled + billing on the
    project — this is a paid API past its free tier, budget accordingly). That's the only step: the
    backend self-activates (geocoding + drive times go real, daily-cached) and Settings →
    Integrations reflects it. No key = mock exactly as before, nothing breaks either way. Also
@@ -177,9 +177,9 @@ new integration to wire up, only account setup:
   instead of the `*` default.
 
 **Added for real Google Maps (2026-07-21):**
-- `GOOGLE_MAPS_API_KEY` — a Google Cloud API key with the **Geocoding API** and **Distance Matrix
-  API** enabled and billing active on the project. Without it, geocoding and drive-time stay on the
-  existing mock exactly as before — the app never fails to start or run over this.
+- `GOOGLE_MAPS_API_KEY` — a Google Cloud API key with the **Geocoding API** and **Routes API**
+  (`computeRoutes` with `TRAFFIC_AWARE`) enabled and billing active on the project. Without it,
+  geocoding and drive-time stay on the mileage estimate — the app never fails to start over this.
 
 **Added for Step 1 (Xero):**
 - `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` — from your Xero developer app.

@@ -32,3 +32,16 @@ Built and hosted on **Emergent AI** (FastAPI + MongoDB backend, React/CRACO fron
 cd backend  && uvicorn server:app --host 0.0.0.0 --port 8001 --reload   # API (routes under /api)
 cd frontend && yarn start                                                # web app
 ```
+
+## Google Maps key
+
+`GOOGLE_MAPS_API_KEY` is read by the API (Render). It is not a browser key.
+
+Enable these on that Google Cloud project:
+
+- **Geocoding API** — shop and job addresses.
+- **Routes API** — drive times. The scheduler calls `computeRoutes` with `routingPreference: TRAFFIC_AWARE` and the leg's `departureTime`, so a morning rush and a midday hop are different. That feature bills as **Routes: Compute Routes Pro**.
+
+The legacy Distance Matrix API is not used for new drive times. If the key is missing, Routes is not enabled, or a call fails, the API logs it and uses the mileage estimate (about 2.2 minutes per mile plus 5, at least 10). Results are cached for 12 hours by rounded coordinates and a 15-minute departure bucket.
+
+Rough cost at 5–10 jobs a day: on the order of 2,000–8,000 route requests a month, about **$20–$80** at $10 per 1,000 Pro requests, before the $200 monthly Maps credit. At this volume the credit usually covers it. Confirm the current price on the Google Maps Platform pricing page; Google changes it.

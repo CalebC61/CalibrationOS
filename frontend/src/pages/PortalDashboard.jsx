@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { MapContainer, Marker, Tooltip, useMap } from "react-leaflet";
 import DarkBasemap from "../components/DarkBasemap";
 import L from "leaflet";
-import { phoenixTodayStr } from "../lib/api";
+import { phoenixTodayStr, jobStatusLabel } from "../lib/api";
 import { portalApi, getPortalAuth } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
@@ -114,7 +114,7 @@ export default function PortalDashboard() {
                   <div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
                       <span className="font-mono" style={{ background: "var(--bg-elevated)", padding: "2px 8px", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>Y{idx + 1}</span>
-                      <span className={`badge badge-${j.status}`}>{j.status.replace(/_/g, " ")}</span>
+                      <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
                       {j.is_at_risk && <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)" }}>⚠ AT RISK</span>}
                     </div>
                     <div className="h3" style={{ marginTop: 4 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>

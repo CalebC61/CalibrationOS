@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { jobStatusLabel } from "../lib/api";
 import { portalApi, API } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
@@ -24,7 +25,10 @@ export default function PortalJobDetail() {
       <Link to="/portal/jobs" className="muted" style={{ fontSize: 14 }}>← Back to jobs</Link>
       <h1 className="h1" style={{ marginTop: 8, marginBottom: 8 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</h1>
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        <span className={`badge badge-${j.status}`}>{j.status.replace(/_/g, " ")}</span>
+        <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
+        {j.status === "requested" && (
+          <span className="muted" style={{ fontSize: 13 }}>This time is held until the owner approves it.</span>
+        )}
         <span className={`badge badge-${j.zone}`}>{j.zone}</span>
       </div>
 

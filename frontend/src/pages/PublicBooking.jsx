@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, formatTime, formatDate, getStoredAuth, phoenixTodayStr } from "../lib/api";
+import { api, formatTime, formatDate, getStoredAuth, jobStatusLabel, phoenixTodayStr } from "../lib/api";
 import Brand from "../components/Brand";
 import JobEditModal from "../components/JobEditModal";
 
@@ -125,17 +125,27 @@ export default function PublicBooking() {
   if (!shop) return <Center><div className="muted">Loading…</div></Center>;
 
   if (confirmation) {
+    const pending = confirmation.requires_approval || confirmation.status === "requested";
+    const appointmentDay = new Date(confirmation.scheduled_start).toLocaleDateString("en-CA", { timeZone: "America/Phoenix" });
+    const texted = !pending && appointmentDay !== phoenixTodayStr();
     return <Center>
       <div className="surface" style={{ padding: 30, maxWidth: 540, textAlign: "center" }} data-testid="booking-confirmed">
-        <div style={{ fontSize: 48, color: "var(--green)", marginBottom: 8 }}>✓</div>
-        <div className="h2" style={{ marginBottom: 6 }}>Booking Confirmed</div>
+        {!pending && <div style={{ fontSize: 48, color: "var(--green)", marginBottom: 8 }}>✓</div>}
+        <div className="h2" style={{ marginBottom: 6 }}>{pending ? "Pending owner approval" : "Booking Confirmed"}</div>
         <div className="muted" style={{ marginBottom: 16 }}>Ref #{confirmation.booking_reference}</div>
         <div className="elevated" style={{ padding: 16, textAlign: "left", fontSize: 14 }}>
           <div>{formatDate(confirmation.scheduled_start)} · {formatTime(confirmation.scheduled_start)}</div>
           <div className="muted" style={{ marginTop: 6 }}>{vehicle.year} {vehicle.make} {vehicle.model}</div>
           <div className="muted">{CAL_LABELS[calType]} · ${confirmation.price.toFixed(2)}</div>
+          {pending && (
+            <div style={{ marginTop: 8 }} data-testid="booking-pending-note">
+              This time is held until the owner approves it.
+            </div>
+          )}
         </div>
-        <div className="muted" style={{ fontSize: 13, marginTop: 16 }}>A confirmation SMS has been sent to {notifyPhone}.</div>
+        {texted && (
+          <div className="muted" style={{ fontSize: 13, marginTop: 16 }}>A confirmation SMS has been sent to {notifyPhone}.</div>
+        )}
       </div>
     </Center>;
   }
@@ -212,8 +222,12 @@ export default function PublicBooking() {
                   {slots.map(s => (
                     <button key={s.start} type="button"
                       className={"btn " + (chosenSlot?.start === s.start ? "btn-primary" : "btn-ghost")}
-                      onClick={() => { setCustomTime(""); setChosenSlot(s); }} data-testid={`slot-${s.start}`}>
-                      {formatTime(s.start)}
+                      onClick={() => { setCustomTime(""); setChosenSlot(s); }} data-testid={`slot-${s.start}`}
+                      style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minHeight: 44 }}>
+                      <span>{formatTime(s.start)}</span>
+                      {s.requires_approval && (
+                        <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>Pending approval</span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -295,6 +309,11 @@ export default function PublicBooking() {
 
         {step === 5 && (
           <Step title="Review & confirm">
+            {chosenSlot.requires_approval && (
+              <div style={{ fontSize: 14, marginBottom: 12 }} data-testid="review-pending-note">
+                Pending owner approval. This time is held until the owner approves it.
+              </div>
+            )}
             <div className="elevated" style={{ padding: 16, fontSize: 14, marginBottom: 16 }}>
               <SummaryRow k="When" v={`${formatDate(chosenSlot.start)} · ${formatTime(chosenSlot.start)}`} />
               <SummaryRow k="Address" v={address} />
@@ -312,7 +331,9 @@ export default function PublicBooking() {
               <input className="input" value={notifyPhone} onChange={e => setNotifyPhone(e.target.value)} data-testid="notify-phone" />
             </Field>
             <NavBtns onBack={() => setStep(4)}
-              onNext={submitBooking} nextLabel={submitting ? "Booking…" : "Confirm Booking"} nextDisabled={submitting}
+              onNext={submitBooking}
+              nextLabel={submitting ? "Booking…" : (chosenSlot.requires_approval ? "Request this time" : "Confirm Booking")}
+              nextDisabled={submitting}
               dataTestId="confirm-booking" />
           </Step>
         )}
@@ -364,6 +385,11 @@ function ShopBookings({ bookings, onEdit, onCancel }) {
                 {" · "}{formatDate(job.scheduled_start)} · {formatTime(job.scheduled_start)}
               </div>
               <div style={{ fontSize: 13, marginTop: 4 }}>{job.job_address}</div>
+              <div style={{ marginTop: 8 }}>
+                <span className={`badge badge-${job.status}`} data-testid={`booking-status-${job.id}`}>
+                  {jobStatusLabel(job.status)}
+                </span>
+              </div>
               {job.notes && (
                 <div style={{ fontSize: 13, marginTop: 6, whiteSpace: "pre-wrap" }}>{job.notes}</div>
               )}

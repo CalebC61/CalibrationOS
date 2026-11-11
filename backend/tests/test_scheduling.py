@@ -56,6 +56,47 @@ def job(start, point, duration=20, job_id="j"):
     }
 
 
+def test_early_first_stop_does_not_wait_on_the_drive_from_home():
+    """6:00 AM is bookable on an empty day. 8:00 still waits for the drive from home."""
+    six = datetime(2026, 11, 12, 13, 0, tzinfo=timezone.utc)  # 6:00 AM Phoenix
+    eight = DAY
+    slots = candidate_slots(
+        day_start=eight, offer_end=OFFER_END, home=HOME, jobs=[],
+        new_point=SURPRISE, drive=drive, duration=20, buffer=15,
+        grid_start=six, earliest_public=six, waive_home_drive_before=eight,
+    )
+    starts = [slot["start"] for slot in slots]
+    assert six.isoformat() in starts
+    assert eight.isoformat() not in starts
+    assert at("9:30").isoformat() in starts
+
+
+def test_early_request_still_respects_the_drive_between_jobs():
+    first = job(at("6:00"), SURPRISE, job_id="early")
+    error = placement_error(
+        start=at("6:30"), duration=20, buffer=15,
+        day_start=DAY, offer_end=OFFER_END, home=HOME,
+        jobs=[first], new_point=SANTAN, drive=drive,
+        earliest_public=at("6:00"),
+        waive_home_drive_before=DAY,
+    )
+    assert error
+    assert "next" in error.lower() or "previous" in error.lower() or "overlap" in error.lower()
+
+
+def test_public_arrival_before_6am_is_rejected():
+    five_thirty = datetime(2026, 11, 12, 12, 30, tzinfo=timezone.utc)
+    error = placement_error(
+        start=five_thirty, duration=20, buffer=15,
+        day_start=DAY, offer_end=OFFER_END, home=HOME, jobs=[],
+        new_point=SANTAN, drive=drive,
+        earliest_public=datetime(2026, 11, 12, 13, 0, tzinfo=timezone.utc),
+        waive_home_drive_before=DAY,
+    )
+    assert error
+    assert "6:00" in error
+
+
 def test_empty_day_surprise_is_not_offered_at_8am():
     slots = candidate_slots(
         day_start=DAY, offer_end=OFFER_END, home=HOME, jobs=[],

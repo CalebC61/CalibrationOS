@@ -60,9 +60,10 @@ from xero_invoice import xero_invoice_body, line_two_description, due_date_strin
 from charging import cents, chargeable_reason, interpret_payment_intent, decline_message
 # Google Maps (real-if-configured, else mock — same pattern; see geocode_address()/get_drive_time())
 from google_maps import (
-    GEOCODE_URL, DISTANCE_MATRIX_URL, GoogleMapsError,
+    GEOCODE_URL, DISTANCE_MATRIX_URL, ROUTES_COMPUTE_URL, ROUTES_FIELD_MASK, GoogleMapsError,
     geocode_request_params, distance_matrix_request_params,
-    parse_geocode_response, parse_distance_matrix_response, drive_time_cache_key, coalesce,
+    parse_geocode_response, parse_distance_matrix_response, parse_routes_response,
+    routes_request_body, drive_time_cache_key, departure_bucket, coalesce,
     METRO_LAT_MIN, METRO_LAT_MAX, METRO_LNG_MIN, METRO_LNG_MAX,
 )
 from business_time import (
@@ -80,7 +81,11 @@ from routing import (
     is_routing_tech, next_tech_color, owner_routing_updates, tech_schedule,
 )
 from scheduling import (
-    BUFFER_MINUTES, DURATION_MINUTES, block_minutes, candidate_slots, placement_error,
+    BUFFER_MINUTES, DURATION_MINUTES, block_minutes, candidate_slots, insertion_cost,
+    placement_error, round_up, schedule_drive_queries,
+)
+from addons import (
+    arrival_band, policy_from_tech, request_kind, same_day_closed_message, slot_decision,
 )
 # Module 9 — Partner Growth Engine (models only here; routes are wired conditionally near the
 # bottom of this file, only when GROWTH_MODULE_ENABLED, to avoid registering unused routes)
@@ -291,6 +296,21 @@ def _google_distance_matrix_request(o_lat, o_lng, d_lat, d_lng) -> dict:
     resp.raise_for_status()
     return resp.json()
 
+def _google_routes_request(o_lat, o_lng, d_lat, d_lng, departure_iso: str) -> dict:
+    """computeRoutes with TRAFFIC_AWARE. The key stays in a header so it is not part of the URL."""
+    resp = requests.post(
+        ROUTES_COMPUTE_URL,
+        headers={
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+            "X-Goog-FieldMask": ROUTES_FIELD_MASK,
+        },
+        json=routes_request_body(o_lat, o_lng, d_lat, d_lng, departure_iso),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
 async def geocode_address(address: str) -> dict:
     """Geocode an address — real Google Geocoding API when configured, otherwise the mock.
 
@@ -319,35 +339,103 @@ async def geocode_for_regeocode(address: str) -> dict:
     data = await asyncio.to_thread(_google_geocode_request, address)
     return parse_geocode_response(data, address)
 
-# In-flight real Distance Matrix calls, keyed like drive_time_cache. Concurrent day-map
-# lookups that share a rounded destination await one request instead of each paying for a miss.
+# In-flight Routes API calls, keyed like drive_time_cache. Concurrent lookups that share a
+# rounded leg and departure bucket await one request instead of each paying for a miss.
 _DRIVE_TIME_INFLIGHT: dict = {}
+_LOGGED_MISSING_MAPS_KEY = False
+_LOGGED_PAST_DEPARTURE = False
+# Traffic-aware predictions are reused for 12 hours. The Mongo TTL (2 days) is only a backstop.
+TRAFFIC_CACHE_SECONDS = 12 * 3600
 
-async def get_drive_time(o_lat, o_lng, d_lat, d_lng) -> dict:
-    """Drive time between two points — real Google Distance Matrix when configured, else mock.
+def _log_drive_fallback(reason: str):
+    global _LOGGED_MISSING_MAPS_KEY, _LOGGED_PAST_DEPARTURE
+    if reason == "no-key":
+        if _LOGGED_MISSING_MAPS_KEY:
+            return
+        _LOGGED_MISSING_MAPS_KEY = True
+        logger.warning(
+            "[MAPS] GOOGLE_MAPS_API_KEY is not set. Using the mileage estimate for drive time."
+        )
+        return
+    if reason == "departure is not in the future":
+        if _LOGGED_PAST_DEPARTURE:
+            return
+        _LOGGED_PAST_DEPARTURE = True
+    logger.warning("[MAPS] drive time fell back to the mileage estimate: %s", reason)
 
-    Real lookups are cached per Phoenix calendar day (rounded coordinates) in `drive_time_cache`.
-    The day bucket follows America/Phoenix so it does not roll at 5 PM local. Callers that miss
-    the cache together share one in-flight request per cache key. The mock path is not cached
-    (it is a local haversine). Falls back to the mock on any error.
+def _cache_is_fresh(cached: dict) -> bool:
+    raw = cached.get("cached_at")
+    if isinstance(raw, datetime):
+        seen = raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    else:
+        try:
+            seen = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return False
+        if seen.tzinfo is None:
+            seen = seen.replace(tzinfo=timezone.utc)
+    age = (now_utc() - seen.astimezone(timezone.utc)).total_seconds()
+    return 0 <= age <= TRAFFIC_CACHE_SECONDS
+
+def _departure_for_routes(depart_at: datetime | None) -> datetime | None:
+    """A future departure Google will accept, or None when we should not call Routes.
+
+    computeRoutes rejects a departureTime in the past. Callers that omit one
+    mean 'leave now'. A past instant (a job that already ended) uses the estimate.
     """
-    if not google_maps_enabled():
+    now = now_utc()
+    if depart_at is None:
+        depart_at = now + timedelta(minutes=2)
+    if depart_at.tzinfo is None:
+        depart_at = depart_at.replace(tzinfo=timezone.utc)
+    depart_at = depart_at.astimezone(timezone.utc)
+    if depart_at <= now + timedelta(seconds=30):
+        return None
+    return depart_at
+
+async def get_drive_time(o_lat, o_lng, d_lat, d_lng, depart_at: datetime | None = None) -> dict:
+    """Drive time for one leg — Routes API with traffic when a key is set, else the mileage estimate.
+
+    The Routes call is computeRoutes with TRAFFIC_AWARE and that leg's departure time,
+    so a morning rush and a midday hop do not share a number. Results are cached by
+    rounded coordinates and a 15-minute departure bucket for 12 hours. Any failure,
+    a missing key, or a departure already in the past logs and uses mock_distance_matrix
+    (about 2.2 minutes per mile plus 5, at least 10).
+    """
+    if (o_lat, o_lng) == (d_lat, d_lng):
+        return {"distance_miles": 0.0, "duration_minutes": 0}
+    depart = _departure_for_routes(depart_at)
+    if not google_maps_enabled() or depart is None:
+        _log_drive_fallback("no-key" if not google_maps_enabled() else "departure is not in the future")
         return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
-    key = drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, business_date().isoformat())
+    bucket = departure_bucket(depart)
+    key = drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, business_date(depart).isoformat(), bucket)
+    departure_iso = depart.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     async def _load():
-        cached = await db.drive_time_cache.find_one({"_id": key})
-        if cached:
+        try:
+            cached = await db.drive_time_cache.find_one({"_id": key})
+        except Exception as exc:
+            logger.warning("[MAPS] drive-time cache read failed, calling Routes: %s", exc)
+            cached = None
+        if cached and _cache_is_fresh(cached):
             return {"distance_miles": cached["distance_miles"], "duration_minutes": cached["duration_minutes"]}
         try:
-            data = await asyncio.to_thread(_google_distance_matrix_request, o_lat, o_lng, d_lat, d_lng)
-            result = parse_distance_matrix_response(data)
-            await db.drive_time_cache.update_one(
-                {"_id": key}, {"$set": {**result, "cached_at": now_utc()}}, upsert=True
+            data = await asyncio.to_thread(
+                _google_routes_request, o_lat, o_lng, d_lat, d_lng, departure_iso,
             )
+            result = parse_routes_response(data)
+            try:
+                await db.drive_time_cache.update_one(
+                    {"_id": key},
+                    {"$set": {**result, "cached_at": now_utc(), "departure_bucket": bucket}},
+                    upsert=True,
+                )
+            except Exception as exc:
+                logger.warning("[MAPS] drive-time cache write failed: %s", exc)
             return result
-        except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
-            logger.error(f"[MAPS] distance matrix failed, falling back to mock: {e}")
+        except (GoogleMapsError, requests.RequestException, KeyError, IndexError, ValueError) as exc:
+            _log_drive_fallback(str(exc))
             return mock_distance_matrix(o_lat, o_lng, d_lat, d_lng)
 
     return await coalesce(_DRIVE_TIME_INFLIGHT, key, _load)
@@ -687,6 +775,13 @@ class RoutingTechIn(BaseModel):
     day_end: str = "19:00"
     slot_minutes: int = 45
     max_jobs: int = 14
+    job_duration_minutes: int = 20
+    buffer_minutes: int = 15
+    same_day_bookings_enabled: bool = True
+    same_day_cutoff: str = "13:00"
+    same_day_max_extra_drive_minutes: int = 20
+    same_day_max_later_finish_minutes: int = 45
+    same_day_over_limit: Literal["pending", "hide"] = "pending"
 
 class RoutingTechUpdate(BaseModel):
     name: Optional[str] = None
@@ -700,6 +795,13 @@ class RoutingTechUpdate(BaseModel):
     max_jobs: Optional[int] = None
     is_active: Optional[bool] = None
     routes_jobs: Optional[bool] = None
+    job_duration_minutes: Optional[int] = None
+    buffer_minutes: Optional[int] = None
+    same_day_bookings_enabled: Optional[bool] = None
+    same_day_cutoff: Optional[str] = None
+    same_day_max_extra_drive_minutes: Optional[int] = None
+    same_day_max_later_finish_minutes: Optional[int] = None
+    same_day_over_limit: Optional[Literal["pending", "hide"]] = None
 
 class ReorderIn(BaseModel):
     zone: Optional[Literal["west", "east"]] = None
@@ -944,31 +1046,61 @@ def _tech_home(tech: dict | None) -> tuple:
     return (CALEB_HOME["lat"], CALEB_HOME["lng"])
 
 
-async def _drive_lookup(pairs: list):
-    """Minutes for each (origin, destination) pair. Same callable for offer and recheck."""
-    table = {}
-    for origin, dest in pairs:
-        if origin == dest:
-            table[(origin, dest)] = 0
-            continue
-        dm = await get_drive_time(origin[0], origin[1], dest[0], dest[1])
-        table[(origin, dest)] = dm["duration_minutes"]
+def _leg_key(origin, dest, depart):
+    if depart is None:
+        stamp = ""
+    else:
+        if depart.tzinfo is None:
+            depart = depart.replace(tzinfo=timezone.utc)
+        stamp = depart.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+    return (
+        round(float(origin[0]), 5), round(float(origin[1]), 5),
+        round(float(dest[0]), 5), round(float(dest[1]), 5),
+        stamp,
+    )
 
-    def drive(origin, dest):
-        return table[(origin, dest)]
+
+async def _drive_lookup(queries: list):
+    """Minutes for each (origin, destination, depart) leg. Same callable for offer and recheck.
+
+    Each leg is fetched with that departure so rush hour is not a flat number.
+    A leg the schedule asks for that was not prefetched uses the mileage estimate.
+    """
+    unique = []
+    seen = set()
+    for origin, dest, depart in queries:
+        if not origin or not dest or origin[0] is None or dest[0] is None:
+            continue
+        key = _leg_key(origin, dest, depart)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((origin, dest, depart, key))
+    sem = asyncio.Semaphore(8)
+
+    async def one(item):
+        origin, dest, depart, key = item
+        async with sem:
+            if (origin[0], origin[1]) == (dest[0], dest[1]):
+                return key, 0
+            dm = await get_drive_time(origin[0], origin[1], dest[0], dest[1], depart_at=depart)
+            return key, dm["duration_minutes"]
+
+    rows = await asyncio.gather(*(one(item) for item in unique)) if unique else []
+    table = dict(rows)
+
+    def drive(origin, dest, depart=None):
+        if not origin or not dest or origin[0] is None or dest[0] is None:
+            return 0
+        if (origin[0], origin[1]) == (dest[0], dest[1]):
+            return 0
+        key = _leg_key(origin, dest, depart)
+        if key not in table:
+            logger.warning("[MAPS] drive leg was not prefetched; using the mileage estimate")
+            return mock_distance_matrix(origin[0], origin[1], dest[0], dest[1])["duration_minutes"]
+        return table[key]
 
     return drive
-
-
-def _route_pairs(home, new_point, jobs):
-    pairs = [(home, new_point)]
-    for job in jobs:
-        point = (job.get("job_lat"), job.get("job_lng"))
-        if point[0] is None or point[1] is None:
-            continue
-        pairs.append((point, new_point))
-        pairs.append((new_point, point))
-    return pairs
 
 
 async def _route_jobs(tech_id: str, day: date, ignore_job_id: str | None = None):
@@ -976,56 +1108,226 @@ async def _route_jobs(tech_id: str, day: date, ignore_job_id: str | None = None)
     found = await db.jobs.find({
         "technician_id": tech_id,
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
-        "status": {"$nin": ["cancelled"]},
+        "status": {"$nin": ["cancelled", "declined"]},
     }, {"_id": 0}).to_list(200)
     if ignore_job_id:
         found = [job for job in found if job.get("id") != ignore_job_id]
     return found
 
 
-async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_lng: float, tech: dict = None):
+def _live_anchor(tech: dict | None, now: datetime):
+    """Where the technician is, when a fresh live position is stored. Not a saved job."""
+    if not tech or tech.get("live_lat") is None or tech.get("live_lng") is None or not tech.get("live_at"):
+        return None
+    try:
+        seen = datetime.fromisoformat(str(tech["live_at"]).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    if abs((now - seen.astimezone(timezone.utc)).total_seconds()) > 45 * 60:
+        return None
+    return {
+        "id": f"live-{tech.get('id')}",
+        "job_lat": tech["live_lat"],
+        "job_lng": tech["live_lng"],
+        "scheduled_start": iso(now),
+        "scheduled_end": iso(now),
+        "duration_minutes": 0,
+        "status": "booked",
+    }
+
+
+def _clocks_for(day: date, schedule: dict, now: datetime, kind: str) -> dict:
+    """Public grid, leave-home time, and the early-arrival waiver.
+
+    Advance days offer 6:00 AM–5:00 PM. Leaving home for a normal first stop
+    is still the technician's day start (default 8:00). Arrivals before 8:00
+    skip that wait. Same-day offers start at the next grid time from now, and
+    the drive leaves from now once the normal day has started.
+    """
+    early_start, offer_end = zone_window(day, time(6, 0), time(17, 0))
+    auto_at, _ignored = zone_window(day, time(8, 0), time(17, 0))
+    home_leave, _end = zone_window(day, parse_time_str(schedule["day_start"]), time(17, 0))
+    if kind == "same_day":
+        grid_start = max(early_start, round_up(now))
+        if now > home_leave:
+            home_leave = now
+    else:
+        grid_start = early_start
+    # A first stop before 8:00 does not wait on the drive from home. The
+    # technician leaves early. Drive time between jobs still applies.
+    waive = auto_at
+    return {
+        "grid_start": grid_start,
+        "day_start": home_leave,
+        "offer_end": offer_end,
+        "earliest_public": early_start,
+        "waive_home_drive_before": waive,
+        "home_ready": home_leave,
+    }
+
+
+async def notify_booking_approval(job: dict, event: str) -> None:
+    """HOOK: shop and owner notifications for a time that needs approval.
+
+    event is "requested", "approved", or "declined".
+    This release does not send SMS or email. Wire texting here when that flow is ready.
+    Do not call mock_send_sms or send_email from this function.
+    """
+    logger.info(
+        "[NOTIFY HOOK] booking %s job=%s status=%s kind=%s reason=%s (no SMS or email sent)",
+        event, job.get("id"), job.get("status"), job.get("booking_kind"), job.get("approval_reason"),
+    )
+
+
+def _too_far_message(extra: int, later: int) -> str:
+    return (
+        "That time doesn't fit today's route. "
+        f"It adds about {extra} minutes of driving and would finish about {later} minutes later."
+    )
+
+
+def _aware_start(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+async def _route_context(tech, day: date, new_point: tuple, jobs: list, now: datetime, duration: int | None = None):
+    """Drive table and clock window for one address on one technician's day."""
+    schedule = tech_schedule(tech)
+    kind = request_kind(day, now)
+    clocks = _clocks_for(day, schedule, now, kind)
+    anchor = _live_anchor(tech, now) if kind == "same_day" else None
+    had_route = bool(jobs) or anchor is not None
+    planned = list(jobs)
+    if anchor:
+        planned = planned + [anchor]
+    duration = schedule["job_duration_minutes"] if duration is None else int(duration)
+    buffer = schedule["buffer_minutes"]
+    queries = schedule_drive_queries(
+        day_start=clocks["day_start"], offer_end=clocks["offer_end"], home=_tech_home(tech),
+        jobs=planned, new_point=new_point, duration=duration, buffer=buffer,
+        grid_start=clocks["grid_start"], home_ready=clocks["home_ready"],
+    )
+    drive = await _drive_lookup(queries)
+    return {
+        "schedule": schedule, "kind": kind, "clocks": clocks, "had_route": had_route,
+        "jobs": planned, "duration": duration, "buffer": buffer, "drive": drive,
+        "home": _tech_home(tech), "policy": policy_from_tech(tech), "new_point": new_point,
+    }
+
+
+def _decide_one(ctx: dict, start: datetime, *, allow_outside: bool) -> dict | None:
+    """None when the slot must not be offered. Otherwise status and approval fields."""
+    start = _aware_start(start)
+    clocks = ctx["clocks"]
+    message = placement_error(
+        start=start, duration=ctx["duration"], buffer=ctx["buffer"],
+        day_start=clocks["day_start"], offer_end=clocks["offer_end"], home=ctx["home"],
+        jobs=ctx["jobs"], new_point=ctx["new_point"], drive=ctx["drive"],
+        allow_after_offer_end=allow_outside,
+        earliest_public=clocks["earliest_public"],
+        waive_home_drive_before=clocks["waive_home_drive_before"],
+    )
+    if message:
+        return {"error": message}
+    cost = insertion_cost(
+        start=start, duration=ctx["duration"], buffer=ctx["buffer"],
+        home=ctx["home"], home_ready=clocks["home_ready"], jobs=ctx["jobs"],
+        new_point=ctx["new_point"], drive=ctx["drive"],
+    )
+    had_route = ctx["had_route"] and not cost["empty_route"]
+    decision = slot_decision(
+        band=arrival_band(start), kind=ctx["kind"], had_route=had_route,
+        extra=cost["extra_drive_minutes"], later=cost["later_finish_minutes"],
+        policy=ctx["policy"], allow_outside=allow_outside,
+    )
+    if decision is None:
+        return {
+            "error": _too_far_message(cost["extra_drive_minutes"], cost["later_finish_minutes"]),
+            "hidden": True,
+        }
+    booking_kind = "addon" if ctx["kind"] == "same_day" else "standard"
+    return {
+        "error": None,
+        "status": decision["status"],
+        "requires_approval": decision["requires_approval"],
+        "approval_reason": decision["approval_reason"],
+        "booking_kind": booking_kind,
+        "drive_time_minutes": cost["to_stop_minutes"],
+        "extra_drive_minutes": cost["extra_drive_minutes"] if had_route else None,
+        "later_finish_minutes": cost["later_finish_minutes"] if had_route else None,
+    }
+
+
+async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_lng: float, tech: dict = None, now: datetime = None):
     """Open arrivals on one technician's route, including gaps between jobs.
 
     `zone_key` is ignored. East/West no longer has its own clock.
+    Returns (slots, message, booking_kind).
     """
     del zone_key
-    schedule = tech_schedule(tech)
-    # Leave home at the technician's day start. Shops cannot be offered an arrival after 5:00 PM.
-    day_start, offer_end = zone_window(day, parse_time_str(schedule["day_start"]), time(17, 0))
+    now = now or now_utc()
+    kind = request_kind(day, now)
+    policy = policy_from_tech(tech)
+    if kind == "same_day":
+        closed = same_day_closed_message(now, policy)
+        if closed:
+            return [], closed, "addon"
     jobs = []
     if tech and tech.get("id"):
         jobs = await _route_jobs(tech["id"], day)
-    home = _tech_home(tech)
-    new_point = (job_lat, job_lng)
-    drive = await _drive_lookup(_route_pairs(home, new_point, jobs))
+    ctx = await _route_context(tech, day, (job_lat, job_lng), jobs, now)
     raw = candidate_slots(
-        day_start=day_start, offer_end=offer_end, home=home, jobs=jobs,
-        new_point=new_point, drive=drive, duration=DURATION_MINUTES, buffer=BUFFER_MINUTES,
+        day_start=ctx["clocks"]["day_start"], offer_end=ctx["clocks"]["offer_end"],
+        home=ctx["home"], jobs=ctx["jobs"], new_point=ctx["new_point"], drive=ctx["drive"],
+        duration=ctx["duration"], buffer=ctx["buffer"],
+        grid_start=ctx["clocks"]["grid_start"],
+        earliest_public=ctx["clocks"]["earliest_public"],
+        waive_home_drive_before=ctx["clocks"]["waive_home_drive_before"],
     )
     slots = []
+    hidden = 0
     for slot in raw:
         start = datetime.fromisoformat(slot["start"])
+        decided = _decide_one(ctx, start, allow_outside=False)
+        if decided.get("error"):
+            if decided.get("hidden"):
+                hidden += 1
+            continue
+        label = start.astimezone(BUSINESS_TZ).strftime("%-I:%M %p")
         slots.append({
             "start": slot["start"],
             "end": slot["end"],
-            "drive_time_minutes": drive(home, new_point),
-            "label": start.astimezone(BUSINESS_TZ).strftime("%-I:%M %p"),
+            "drive_time_minutes": decided["drive_time_minutes"],
+            "label": label,
+            "requires_approval": decided["requires_approval"],
         })
-    return slots
+    message = None
+    if not slots and hidden:
+        message = "No times left that fit today's route."
+    return slots, message, "addon" if kind == "same_day" else "standard"
 
 
-async def _reject_if_route_conflicts(tech, day, start: datetime, new_point: tuple, jobs: list, duration: int, allow_after_offer_end: bool):
-    schedule = tech_schedule(tech)
-    day_start, offer_end = zone_window(day, parse_time_str(schedule["day_start"]), time(17, 0))
-    home = _tech_home(tech)
-    drive = await _drive_lookup(_route_pairs(home, new_point, jobs))
-    message = placement_error(
-        start=start, duration=duration, buffer=BUFFER_MINUTES,
-        day_start=day_start, offer_end=offer_end, home=home, jobs=jobs,
-        new_point=new_point, drive=drive, allow_after_offer_end=allow_after_offer_end,
-    )
-    if message:
-        raise HTTPException(400, message)
+async def _arrival_plan(tech, day, start: datetime, new_point: tuple, jobs: list, *, allow_outside: bool, now: datetime = None, duration: int | None = None) -> dict:
+    """Server-side recheck for a book or an edit. Raises 400 when the time does not fit."""
+    now = now or now_utc()
+    start = _aware_start(start)
+    kind = request_kind(day, now)
+    if kind == "past" and not allow_outside:
+        raise HTTPException(400, "That date is in the past.")
+    if kind == "same_day" and not allow_outside:
+        closed = same_day_closed_message(now, policy_from_tech(tech))
+        if closed:
+            raise HTTPException(400, closed)
+    ctx = await _route_context(tech, day, new_point, jobs, now, duration=duration)
+    decided = _decide_one(ctx, start, allow_outside=allow_outside)
+    if decided.get("error"):
+        raise HTTPException(400, decided["error"])
+    decided["duration_minutes"] = ctx["duration"]
+    return decided
 
 @api.post("/public/availability")
 async def public_availability(query: SlotQuery):
@@ -1044,7 +1346,8 @@ async def public_availability(query: SlotQuery):
     except ValueError:
         raise HTTPException(400, "Invalid date")
     # Validate: not Sunday, not past, not > 21 days out. "Today" is the Phoenix date.
-    today = business_date()
+    now = now_utc()
+    today = business_date(now)
     if day.weekday() == 6:
         return {"zone": zone, "in_metro": True, "slots": [], "message": "No availability on Sundays."}
     if day < today:
@@ -1052,14 +1355,20 @@ async def public_availability(query: SlotQuery):
     if (day - today).days > 21:
         return {"zone": zone, "in_metro": True, "slots": [], "message": "Bookings are only available 21 days out."}
     # One technician covers every in-valley address. Extra technicians split by home base.
+    # Today uses the stricter same-day limits. A later date stays on the advance rules.
     tech = await _assigned_tech(geo["lat"], geo["lng"])
-    slots = await compute_available_slots(zone, day, geo["lat"], geo["lng"], tech=tech)
-    return {
+    slots, closed_message, _kind = await compute_available_slots(
+        zone, day, geo["lat"], geo["lng"], tech=tech, now=now,
+    )
+    payload = {
         "zone": zone, "in_metro": True, "slots": slots,
         "job_lat": geo["lat"], "job_lng": geo["lng"],
         "technician_id": tech.get("id") if tech else None,
         "technician_name": tech.get("name") if tech else None,
     }
+    if not slots and closed_message:
+        payload["message"] = closed_message
+    return payload
 
 @api.post("/public/book")
 async def public_book(data: BookingIn):
@@ -1078,32 +1387,18 @@ async def public_book(data: BookingIn):
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
     tech = await _assigned_tech(geo["lat"], geo["lng"])
-    schedule = tech_schedule(tech)
-    end_dt = start_dt + timedelta(minutes=DURATION_MINUTES)
+    now = now_utc()
     route_day = business_date(start_dt)
     route_jobs = await _route_jobs(tech.get("id"), route_day) if tech and tech.get("id") else []
-    await _reject_if_route_conflicts(
+    plan = await _arrival_plan(
         tech, route_day, start_dt, (geo["lat"], geo["lng"]), route_jobs,
-        DURATION_MINUTES, allow_after_offer_end=False,
+        allow_outside=False, now=now,
     )
+    end_dt = start_dt + timedelta(minutes=plan["duration_minutes"])
 
-    # Previous job and sequence follow this technician's day, not an East/West zone.
-    day_start, day_end = business_day_bounds(business_date(start_dt))
+    # Sequence follows this technician's day, not an East/West zone.
+    day_start, day_end = business_day_bounds(route_day)
     tech_id = tech.get("id") if tech else None
-    prev_query = {
-        "scheduled_start": {"$gte": iso(day_start), "$lt": iso(start_dt)},
-        "status": {"$nin": ["cancelled"]},
-    }
-    if tech_id:
-        prev_query["technician_id"] = tech_id
-    prev = await db.jobs.find(prev_query, {"_id": 0}).sort("scheduled_start", -1).limit(1).to_list(1)
-    if prev:
-        origin = (prev[0]["job_lat"], prev[0]["job_lng"])
-    elif tech and tech.get("home_lat") is not None:
-        origin = (tech["home_lat"], tech["home_lng"])
-    else:
-        origin = (CALEB_HOME["lat"], CALEB_HOME["lng"])
-    dm = await get_drive_time(origin[0], origin[1], geo["lat"], geo["lng"])
 
     # Find owner technician (alerts still go to the owner, not a hired tech)
     owner = await db.technicians.find_one({"role": "owner"})
@@ -1126,7 +1421,7 @@ async def public_book(data: BookingIn):
     # Sequence is this technician's jobs that Phoenix day, on either side of the valley.
     seq_query = {
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
-        "status": {"$nin": ["cancelled"]},
+        "status": {"$nin": ["cancelled", "declined"]},
     }
     if tech_id:
         seq_query["technician_id"] = tech_id
@@ -1145,11 +1440,15 @@ async def public_book(data: BookingIn):
         "calibration_label": STANDARD_PRICING[data.calibration_type]["label"],
         "scheduled_start": iso(start_dt),
         "scheduled_end": iso(end_dt),
-        "duration_minutes": DURATION_MINUTES,
+        "duration_minutes": plan["duration_minutes"],
         "job_address": data.job_address,
         "job_lat": geo["lat"], "job_lng": geo["lng"],
-        "status": "booked",
-        "drive_time_minutes": dm["duration_minutes"],
+        "status": plan["status"],
+        "booking_kind": plan["booking_kind"],
+        "approval_reason": plan["approval_reason"],
+        "extra_drive_minutes": plan["extra_drive_minutes"],
+        "later_finish_minutes": plan["later_finish_minutes"],
+        "drive_time_minutes": plan["drive_time_minutes"],
         "actual_arrival": None, "actual_completion": None,
         "result": None, "notes": customer["notes"],
         "price": price,
@@ -1165,15 +1464,21 @@ async def public_book(data: BookingIn):
     }
     await db.jobs.insert_one(job.copy())
 
-    # Mock confirmation SMS. The log uses Phoenix wall time; nothing is sent for real.
+    # Confirmed advance bookings keep today's mock SMS. A time that needs
+    # approval, and any booking for today, does not text or email. The hook
+    # below is where that message will go.
+    confirmed_advance = job["status"] == "booked" and job.get("booking_kind") == "standard"
     when = start_dt.astimezone(BUSINESS_TZ).strftime("%a %b %d at %-I:%M %p")
-    msg = (f"Booking confirmed with The Calibration Crew. "
-           f"{when} for your {data.year} {data.make} {data.model}. "
-           f"Questions? Reply to this message.")
-    if job["notification_phone"]:
-        await mock_send_sms(job["notification_phone"], msg, kind="booking_confirmed", job_id=job["id"])
+    if confirmed_advance:
+        msg = (f"Booking confirmed with The Calibration Crew. "
+               f"{when} for your {data.year} {data.make} {data.model}. "
+               f"Questions? Reply to this message.")
+        if job["notification_phone"]:
+            await mock_send_sms(job["notification_phone"], msg, kind="booking_confirmed", job_id=job["id"])
+    elif job["status"] == "requested":
+        await notify_booking_approval(job, "requested")
 
-    # Notify owner of the new booking (alert + mock SMS)
+    # In-app alert so the owner sees the job. SMS to the owner only for a confirmed advance booking.
     if owner:
         await db.new_booking_alerts.insert_one({
             "id": gen_id(),
@@ -1187,17 +1492,21 @@ async def public_book(data: BookingIn):
             "vehicle": f"{data.year} {data.make} {data.model}",
             "price": price,
         })
-        owner_msg = (
-            f"🎉 New booking from {shop['name']}: "
-            f"{when} — "
-            f"{data.year} {data.make} {data.model} (${price:.0f}). "
-            f"View on dispatch board."
-        )
-        if owner.get("phone"):
+        if confirmed_advance and owner.get("phone"):
+            owner_msg = (
+                f"🎉 New booking from {shop['name']}: "
+                f"{when} — "
+                f"{data.year} {data.make} {data.model} (${price:.0f}). "
+                f"View on dispatch board."
+            )
             await mock_send_sms(owner["phone"], owner_msg, kind="owner_new_booking", job_id=job["id"])
 
-    return {"job_id": job["id"], "booking_reference": job["id"][:8].upper(),
-            "scheduled_start": job["scheduled_start"], "zone": zone, "price": price}
+    return {
+        "job_id": job["id"], "booking_reference": job["id"][:8].upper(),
+        "scheduled_start": job["scheduled_start"], "zone": zone, "price": price,
+        "status": job["status"],
+        "requires_approval": job["status"] == "requested",
+    }
 
 async def _shop_for_booking_token(token: str) -> dict:
     shop = await db.shops.find_one(
@@ -1291,7 +1600,10 @@ async def list_jobs(date_str: Optional[str] = None, tech=Depends(get_current_tec
     else:
         d = business_date()
     day_start, day_end = business_day_bounds(d)
-    q = {"scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)}}
+    q = {
+        "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
+        "status": {"$nin": ["declined"]},
+    }
     if tech["role"] == "contractor":
         q["technician_id"] = tech["id"]
     jobs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_start", 1).to_list(500)
@@ -1316,7 +1628,12 @@ _VEHICLE_FIELD_MAP = {
 }
 
 async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
-    """Write a job edit. Does not send SMS or email and does not touch status."""
+    """Write a job edit. Does not send SMS or email.
+
+    Status stays put unless the new time is before 8:00 AM or no longer fits
+    today's route without approval. Those become requested or booked. Driving,
+    on site, complete, cancelled, and declined are left alone.
+    """
     if "job_address" in fields and fields["job_address"] != (job.get("job_address") or ""):
         try:
             geo = await geocode_for_regeocode(fields["job_address"])
@@ -1357,12 +1674,21 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
         if person is None:
             person = await _assigned_tech(merged.get("job_lat"), merged.get("job_lng"))
         siblings = await _route_jobs(person["id"], business_date(start), ignore_job_id=job.get("id")) if person else []
-        await _reject_if_route_conflicts(
+        plan = await _arrival_plan(
             person, business_date(start), start,
             (merged.get("job_lat"), merged.get("job_lng")),
-            siblings, block_minutes(merged),
-            allow_after_offer_end=(who.get("kind") == "owner"),
+            siblings, allow_outside=(who.get("kind") == "owner"),
+            duration=block_minutes(merged),
         )
+        if job.get("status") in ("booked", "requested"):
+            if plan["status"] != job.get("status") or plan.get("approval_reason") != job.get("approval_reason"):
+                fields["status"] = plan["status"]
+                fields["approval_reason"] = plan["approval_reason"]
+                fields["booking_kind"] = plan["booking_kind"]
+                fields["extra_drive_minutes"] = plan["extra_drive_minutes"]
+                fields["later_finish_minutes"] = plan["later_finish_minutes"]
+                fields["drive_time_minutes"] = plan["drive_time_minutes"]
+        changed = changed_keys(job, fields)
     now = iso(now_utc())
     entry = {"at": now, "who": who, "fields": changed}
     await db.jobs.update_one(
@@ -1393,6 +1719,35 @@ async def patch_job(job_id: str, body: JobEditIn, tech=Depends(require_owner)):
         job, fields, {"kind": tech["role"], "id": tech["id"], "name": tech["name"]},
     )
 
+@api.post("/jobs/{job_id}/approve")
+async def approve_requested_job(job_id: str, tech=Depends(require_owner)):
+    """Owner confirms a time that was not auto-confirmed. No SMS or email."""
+    return await _decide_requested_job(job_id, tech, approve=True)
+
+@api.post("/jobs/{job_id}/decline")
+async def decline_requested_job(job_id: str, tech=Depends(require_owner)):
+    """Owner turns down a held time and frees it. No SMS or email."""
+    return await _decide_requested_job(job_id, tech, approve=False)
+
+async def _decide_requested_job(job_id: str, tech: dict, *, approve: bool) -> dict:
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") != "requested":
+        raise HTTPException(400, "That job is not waiting for approval.")
+    now = iso(now_utc())
+    status = "booked" if approve else "declined"
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "status": status,
+        "approved_at": now if approve else None,
+        "approved_by": tech["id"] if approve else None,
+        "declined_at": None if approve else now,
+        "updated_at": now,
+    }})
+    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    await notify_booking_approval(fresh, "approved" if approve else "declined")
+    return fresh
+
 @api.post("/jobs/{job_id}/status")
 async def update_status(job_id: str, body: JobStatusUpdate, tech=Depends(get_current_tech)):
     job = await db.jobs.find_one({"id": job_id})
@@ -1400,6 +1755,8 @@ async def update_status(job_id: str, body: JobStatusUpdate, tech=Depends(get_cur
         raise HTTPException(404, "Job not found")
     if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
         raise HTTPException(403, "Not your job")
+    if job.get("status") in ("requested", "declined"):
+        raise HTTPException(400, "The owner has to approve this time before the job can move.")
     update = {"status": body.status, "updated_at": iso(now_utc())}
     if body.status == "driving":
         msg = (f"Your technician is on the way to {job['job_address']}. "
@@ -1498,7 +1855,7 @@ async def dashboard_summary(date_str: Optional[str] = None, tech=Depends(require
     day_start, day_end = business_day_bounds(d)
     jobs = await db.jobs.find({
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
-        "status": {"$ne": "cancelled"},
+        "status": {"$nin": ["cancelled", "declined"]},
     }, {"_id": 0}).to_list(500)
     revenue = sum(j["price"] for j in jobs)
     drive_min = sum((j.get("drive_time_minutes") or 0) for j in jobs)
@@ -1946,6 +2303,10 @@ def _tech_public(person: dict) -> dict:
         "id", "name", "role", "phone", "email", "home_address", "home_lat", "home_lng",
         "service_radius_miles", "day_start", "day_end", "slot_minutes", "max_jobs",
         "is_active", "color", "routes_jobs",
+        "job_duration_minutes", "buffer_minutes",
+        "same_day_bookings_enabled", "same_day_cutoff",
+        "same_day_max_extra_drive_minutes", "same_day_max_later_finish_minutes",
+        "same_day_over_limit",
     )
     return {key: person.get(key) for key in keys}
 
@@ -1962,6 +2323,29 @@ def _check_routing_fields(fields: dict):
     start, end = fields.get("day_start"), fields.get("day_end")
     if start and end and start >= end:
         raise HTTPException(400, "Day start must be before day end.")
+    duration = fields.get("job_duration_minutes")
+    if duration is not None and not (10 <= int(duration) <= 90):
+        raise HTTPException(400, "Job length must be between 10 and 90 minutes.")
+    buffer = fields.get("buffer_minutes")
+    if buffer is not None and not (0 <= int(buffer) <= 90):
+        raise HTTPException(400, "Buffer must be between 0 and 90 minutes.")
+    extra = fields.get("same_day_max_extra_drive_minutes")
+    if extra is not None and int(extra) < 0:
+        raise HTTPException(400, "Extra drive limit cannot be negative.")
+    later = fields.get("same_day_max_later_finish_minutes")
+    if later is not None and int(later) < 0:
+        raise HTTPException(400, "Later-finish limit cannot be negative.")
+    cutoff = fields.get("same_day_cutoff")
+    if cutoff:
+        parts = str(cutoff).split(":")
+        if len(parts) != 2 or not all(part.isdigit() for part in parts):
+            raise HTTPException(400, "Cutoff must be HH:MM.")
+        hour, minute = int(parts[0]), int(parts[1])
+        if hour > 23 or minute > 59:
+            raise HTTPException(400, "Cutoff must be HH:MM.")
+    over = fields.get("same_day_over_limit")
+    if over is not None and over not in ("pending", "hide"):
+        raise HTTPException(400, "Choose approval or hide when a same-day time is over the limit.")
 
 @api.get("/routing-techs")
 async def list_routing_techs_route(tech=Depends(require_owner)):
@@ -2000,6 +2384,13 @@ async def create_routing_tech(body: RoutingTechIn, tech=Depends(require_owner)):
         "day_end": body.day_end,
         "slot_minutes": body.slot_minutes,
         "max_jobs": body.max_jobs,
+        "job_duration_minutes": body.job_duration_minutes,
+        "buffer_minutes": body.buffer_minutes,
+        "same_day_bookings_enabled": body.same_day_bookings_enabled,
+        "same_day_cutoff": body.same_day_cutoff,
+        "same_day_max_extra_drive_minutes": body.same_day_max_extra_drive_minutes,
+        "same_day_max_later_finish_minutes": body.same_day_max_later_finish_minutes,
+        "same_day_over_limit": body.same_day_over_limit,
         "is_active": True,
         "routes_jobs": True,
         "color": next_tech_color(used),
@@ -2075,7 +2466,7 @@ async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
         "id": {"$in": data.ordered_job_ids},
         **scope,
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
-        "status": {"$nin": ["cancelled", "complete"]},
+        "status": {"$nin": ["cancelled", "complete", "declined", "requested"]},
     }, {"_id": 0}).to_list(100)
     by_id = {j["id"]: j for j in jobs}
     if set(data.ordered_job_ids) - set(by_id.keys()):
@@ -2088,7 +2479,7 @@ async def reorder_jobs(data: ReorderIn, tech=Depends(require_owner)):
     updates = []
     for seq, jid in enumerate(data.ordered_job_ids, start=1):
         j = by_id[jid]
-        dm = await get_drive_time(origin[0], origin[1], j["job_lat"], j["job_lng"])
+        dm = await get_drive_time(origin[0], origin[1], j["job_lat"], j["job_lng"], depart_at=cursor)
         # Earliest start = cursor + drive, rounded up to next 15-min boundary
         earliest = cursor + timedelta(minutes=dm["duration_minutes"])
         minute = (earliest.minute // 15) * 15
@@ -2413,7 +2804,7 @@ async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_
     day_start, day_end = business_day_bounds(d)
     all_jobs = await db.jobs.find({
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
-        "status": {"$ne": "cancelled"},
+        "status": {"$nin": ["cancelled", "declined"]},
     }, {"_id": 0}).sort("scheduled_start", 1).to_list(500)
     # This shop's coordinates as drive-window origin
     shop = await db.shops.find_one({"id": su["shop_id"]})
@@ -2427,9 +2818,12 @@ async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_
             other_jobs.append(j)
 
     async def _anon(j):
-        # Real lookups hit drive_time_cache (rounded coords, Phoenix day). Run them together
-        # so a cold cache does not wait on one Distance Matrix call per other-shop job.
-        dm = await get_drive_time(origin_lat, origin_lng, j["job_lat"], j["job_lng"])
+        # Real lookups hit drive_time_cache (rounded coords and departure bucket). Run them together
+        # so a cold cache does not wait on one Routes call per other-shop job.
+        dm = await get_drive_time(
+            origin_lat, origin_lng, j["job_lat"], j["job_lng"],
+            depart_at=datetime.fromisoformat(str(j["scheduled_start"]).replace("Z", "+00:00")),
+        )
         return {
             "id": j["id"],
             "scheduled_start": j["scheduled_start"],

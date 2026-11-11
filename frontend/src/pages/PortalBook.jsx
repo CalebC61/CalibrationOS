@@ -94,14 +94,22 @@ export default function PortalBook() {
     finally { setSubmitting(false); }
   }
 
-  if (confirmation) return <PortalShell>
-    <div className="surface" style={{ padding: 30, maxWidth: 560, margin: "20px auto", textAlign: "center" }} data-testid="portal-confirm">
-      <div style={{ fontSize: 48, color: "var(--green)" }}>✓</div>
-      <div className="h2">Booking Confirmed</div>
-      <div className="muted">Ref #{confirmation.booking_reference}</div>
-      <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={() => nav("/portal/jobs")}>View My Jobs</button>
-    </div>
-  </PortalShell>;
+  if (confirmation) {
+    const pending = confirmation.requires_approval || confirmation.status === "requested";
+    return <PortalShell>
+      <div className="surface" style={{ padding: 30, maxWidth: 560, margin: "20px auto", textAlign: "center" }} data-testid="portal-confirm">
+        {!pending && <div style={{ fontSize: 48, color: "var(--green)" }}>✓</div>}
+        <div className="h2">{pending ? "Pending owner approval" : "Booking Confirmed"}</div>
+        <div className="muted">Ref #{confirmation.booking_reference}</div>
+        {pending && (
+          <div style={{ marginTop: 12, fontSize: 14 }} data-testid="portal-pending-note">
+            This time is held until the owner approves it.
+          </div>
+        )}
+        <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={() => nav("/portal/jobs")}>View My Jobs</button>
+      </div>
+    </PortalShell>;
+  }
 
   return (
     <PortalShell>
@@ -132,7 +140,13 @@ export default function PortalBook() {
                   {slots.map(s => (
                     <button key={s.start} type="button"
                       className={"btn " + (chosen?.start === s.start ? "btn-primary" : "btn-ghost")}
-                      onClick={() => setChosen(s)} data-testid={`b-slot-${s.start}`}>{fmt(s.start)}</button>
+                      onClick={() => setChosen(s)} data-testid={`b-slot-${s.start}`}
+                      style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minHeight: 44 }}>
+                      <span>{fmt(s.start)}</span>
+                      {s.requires_approval && (
+                        <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.2 }}>Pending approval</span>
+                      )}
+                    </button>
                   ))}
                 </div>
               </div>
@@ -178,6 +192,11 @@ export default function PortalBook() {
                 </button>
               ))}
             </div>
+            {chosen?.requires_approval && (
+              <div style={{ fontSize: 14, marginBottom: 12 }}>
+                Pending owner approval. This time is held until the owner approves it.
+              </div>
+            )}
             <div className="elevated" style={{ padding: 14, fontSize: 14 }}>
               <Row k="When" v={`${new Date(chosen.start).toLocaleDateString()} · ${fmt(chosen.start)}`} />
               <Row k="Vehicle" v={`${veh.year} ${veh.make} ${veh.model}`} />
@@ -192,7 +211,8 @@ export default function PortalBook() {
                 onChange={e => setVeh({...veh, notes: e.target.value})} data-testid="b-notes" />
             </F>
             <Nav onBack={() => setStep(3)} onNext={submit}
-              nextLabel={submitting ? "Booking…" : "Confirm Booking"} nextDisabled={submitting} />
+              nextLabel={submitting ? "Booking…" : (chosen?.requires_approval ? "Request this time" : "Confirm Booking")}
+              nextDisabled={submitting} />
           </Card>
         )}
       </div>
