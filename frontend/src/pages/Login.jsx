@@ -4,8 +4,8 @@ import { api, setStoredAuth } from "../lib/api";
 import Brand from "../components/Brand";
 
 export default function Login() {
-  const [email, setEmail] = useState("caleb@thecalibrationcrew.us");
-  const [password, setPassword] = useState("Owner123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const nav = useNavigate();
@@ -34,22 +34,18 @@ export default function Login() {
         <form onSubmit={submit} className="surface" style={{ padding: 28 }} data-testid="login-form">
           <div style={{ marginBottom: 18 }}>
             <label className="label">Email</label>
-            <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)}
+            <input className="input" type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)}
               required data-testid="login-email" />
           </div>
           <div style={{ marginBottom: 18 }}>
             <label className="label">Password</label>
-            <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)}
+            <input className="input" type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)}
               required data-testid="login-password" />
           </div>
           {err && <div style={{ color: "var(--red)", fontSize: 14, marginBottom: 14 }} data-testid="login-error">{err}</div>}
           <button className="btn btn-primary" style={{ width: "100%" }} disabled={loading} data-testid="login-submit">
             {loading ? "Signing in…" : "Sign In"}
           </button>
-          <div className="muted" style={{ marginTop: 18, fontSize: 12, lineHeight: 1.6 }}>
-            <div><b>Owner demo:</b> caleb@thecalibrationcrew.us / Owner123!</div>
-            <div><b>Contractor demo:</b> contractor@thecalibrationcrew.us / Contractor123!</div>
-          </div>
         </form>
       </div>
     </div>

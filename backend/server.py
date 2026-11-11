@@ -26,6 +26,21 @@ import bcrypt
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+
+def _env(name: str, default: str = "") -> str:
+    """Read one env var. A missing or blank value uses default."""
+    return (os.environ.get(name) or "").strip() or default
+
+
+def cors_allow_origins() -> list[str]:
+    """Comma-separated CORS_ORIGINS, with spaces and empty entries removed.
+
+    A blank setting matches the historical default of '*'. security_self_check warns on that.
+    """
+    origins = [part.strip() for part in os.environ.get("CORS_ORIGINS", "*").split(",") if part.strip()]
+    return origins or ["*"]
+
+
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
@@ -35,7 +50,7 @@ import stripe as stripe_sdk
 import resend as resend_sdk
 stripe_sdk.api_key = os.environ.get('STRIPE_API_KEY', 'sk_test_emergent')
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
-SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+SENDER_EMAIL = _env('SENDER_EMAIL', 'onboarding@resend.dev')
 if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
 
@@ -59,8 +74,8 @@ from growth.models import PartnerContact, enforce_grid_caps
 XERO_CLIENT_ID = os.environ.get('XERO_CLIENT_ID', '')
 XERO_CLIENT_SECRET = os.environ.get('XERO_CLIENT_SECRET', '')
 XERO_REDIRECT_URI = os.environ.get('XERO_REDIRECT_URI', '')
-XERO_SALES_ACCOUNT_CODE = os.environ.get('XERO_SALES_ACCOUNT_CODE', '200')
-XERO_POST_CONNECT_REDIRECT = os.environ.get('XERO_POST_CONNECT_REDIRECT', '/settings')
+XERO_SALES_ACCOUNT_CODE = _env('XERO_SALES_ACCOUNT_CODE', '200')
+XERO_POST_CONNECT_REDIRECT = _env('XERO_POST_CONNECT_REDIRECT', '/settings')
 XERO_SCOPES = "openid profile email accounting.transactions accounting.contacts offline_access"
 XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
@@ -105,10 +120,10 @@ IS_PRODUCTION = APP_ENV in ("production", "prod")
 # is set it is also the source of truth: security-hardened seed_data() rotates an already-seeded
 # account whose stored password no longer matches, so the historically-exposed default can be
 # fixed by setting OWNER_PASSWORD / CONTRACTOR_PASSWORD in Emergent and restarting.
-SEED_OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "caleb@thecalibrationcrew.us").strip()
-SEED_OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD", "")
-SEED_CONTRACTOR_EMAIL = os.environ.get("CONTRACTOR_EMAIL", "contractor@thecalibrationcrew.us").strip()
-SEED_CONTRACTOR_PASSWORD = os.environ.get("CONTRACTOR_PASSWORD", "")
+SEED_OWNER_EMAIL = _env("OWNER_EMAIL", "caleb@thecalibrationcrew.us")
+SEED_OWNER_PASSWORD = _env("OWNER_PASSWORD")
+SEED_CONTRACTOR_EMAIL = _env("CONTRACTOR_EMAIL", "contractor@thecalibrationcrew.us")
+SEED_CONTRACTOR_PASSWORD = _env("CONTRACTOR_PASSWORD")
 # Dev-only fallback passwords: used only outside production when no env password is given, so the
 # local dev flow and the existing test suite are unchanged.
 _DEV_OWNER_PASSWORD = "Owner123!"
@@ -1120,7 +1135,7 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
         f"<p>Review and approve it in Xero.</p>"
     )
     await send_email(
-        os.environ.get("ADMIN_EMAIL", "admin@thecalibrationcrew.us"),
+        _env("ADMIN_EMAIL", "admin@thecalibrationcrew.us"),
         admin_subject, admin_html, kind="invoice_notification",
         meta={"job_id": job_id, "invoice_id": invoice.get("invoice_id"), "provider": provider},
     )
@@ -2231,7 +2246,7 @@ def security_self_check():
         warnings.append("JWT_SECRET is the public dev default — set a strong random JWT_SECRET.")
     if not (stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent")):
         warnings.append("STRIPE_API_KEY is the placeholder — real card charges stay disabled until a live key is set.")
-    if os.environ.get("CORS_ORIGINS", "*").strip() == "*":
+    if cors_allow_origins() == ["*"]:
         warnings.append("CORS_ORIGINS is '*' (any site) — set it to your app domain(s).")
     if IS_PRODUCTION and not SEED_OWNER_PASSWORD:
         warnings.append("OWNER_PASSWORD is not set — the owner login has no env-managed password.")
@@ -2261,6 +2276,12 @@ async def startup():
     # it on a database that already has the index raises IndexOptionsConflict.
     await db.drive_time_cache.create_index("cached_at", expireAfterSeconds=172800)
 
+@api.get("/health")
+async def health():
+    """Unauthenticated liveness probe for Render / uptime checks."""
+    return {"status": "ok"}
+
+
 # Include router
 if GROWTH_MODULE_ENABLED:
     from growth.routes import build_growth_router
@@ -2276,7 +2297,7 @@ app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=cors_allow_origins(),
     allow_methods=["*"],
     allow_headers=["*"],
 )

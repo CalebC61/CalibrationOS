@@ -72,8 +72,8 @@ to `GET /api/integrations/status`.
 - `ASSIST_MODULE_ENABLED` / `REACT_APP_ASSIST_MODULE_ENABLED` *(optional, default on)* — kill
   switches.
 - `ASSIST_MODEL` *(optional, default `gemini-2.5-flash`)*, `ASSIST_PENDING_TTL_SECONDS`
-  *(optional, default 300)*, `ASSIST_SELF_BASE_URL` *(optional, default
-  `http://127.0.0.1:8001` — the app calling itself; only tests override this)*.
+  *(optional, default 300)*, `ASSIST_SELF_BASE_URL` *(optional; blank calls
+  `http://127.0.0.1:$PORT`, or port 8001 when `PORT` is unset)*.
 - New Python deps: `google-genai`, `httpx` (neither touches FastAPI/Starlette versions).
 
 ## v1 scope boundary (fast-follow candidates)
