@@ -118,12 +118,16 @@ def placement_error(
     allow_after_offer_end: bool = False,
     earliest_public: datetime | None = None,
     waive_home_drive_before: datetime | None = None,
+    earliest_home_departure: datetime | None = None,
 ):
     """None when `start` fits on this route. Otherwise a message for the shop or owner.
 
-    `day_start` is when the technician leaves home for the first stop of a normal
-    day. `waive_home_drive_before` lets an early first stop skip that wait: the
-    technician leaves home early. Drive time between jobs still applies.
+    On a future day, `earliest_home_departure` is the first minute the technician
+    may leave home (6:00 AM). A first stop is legal when arrival minus the drive
+    is still at or after that minute. An 8:00 AM arrival with a 96-minute drive
+    leaves at 6:24 AM and is legal. `waive_home_drive_before` is the same-day
+    path: a first stop before that clock skips the home-drive check. Drive time
+    between jobs still applies either way.
     `allow_after_offer_end` is the owner override for the public window
     (before the first public minute, and after 5:00 PM).
     """
@@ -152,6 +156,16 @@ def placement_error(
         origin = (previous[0]["job_lat"], previous[0]["job_lng"])
         earliest = leave + timedelta(minutes=drive_minutes(drive, origin, new_point, leave))
         if start < earliest:
+            return (
+                "That arrival doesn't fit this technician's route. "
+                "The drive from the previous stop doesn't leave enough room."
+            )
+    elif earliest_home_departure is not None:
+        # Future day, no previous stop. Leave = arrival minus the drive.
+        # That leave has to be at or after the earliest allowed departure.
+        floor = _aware(earliest_home_departure)
+        minutes = drive_minutes(drive, home, new_point, floor)
+        if start - timedelta(minutes=minutes) < floor:
             return (
                 "That arrival doesn't fit this technician's route. "
                 "The drive from the previous stop doesn't leave enough room."
@@ -242,6 +256,7 @@ def candidate_slots(
     grid_start: datetime | None = None,
     earliest_public: datetime | None = None,
     waive_home_drive_before: datetime | None = None,
+    earliest_home_departure: datetime | None = None,
 ) -> list:
     """Every grid arrival that fits in some gap, including between jobs.
 
@@ -258,6 +273,7 @@ def candidate_slots(
             jobs=jobs, new_point=new_point, drive=drive,
             earliest_public=earliest_public,
             waive_home_drive_before=waive_home_drive_before,
+            earliest_home_departure=earliest_home_departure,
         ) is None:
             slots.append({
                 "start": cursor.isoformat(),
@@ -280,6 +296,7 @@ def schedule_drive_queries(
     grid: int = GRID_MINUTES,
     grid_start: datetime | None = None,
     home_ready: datetime | None = None,
+    earliest_home_departure: datetime | None = None,
 ) -> list:
     """Legs a slot check will ask for, including the direct leg a detour replaces.
 
@@ -291,6 +308,8 @@ def schedule_drive_queries(
     ready = _aware(home_ready or day_start)
     ordered = _ordered(jobs)
     queries = [(home, new_point, day_start), (home, new_point, ready)]
+    if earliest_home_departure is not None:
+        queries.append((home, new_point, _aware(earliest_home_departure)))
     for _job, job_start, job_duration in ordered:
         leave = job_start + timedelta(minutes=job_duration + buffer)
         point = (_job["job_lat"], _job["job_lng"])

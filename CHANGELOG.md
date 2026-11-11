@@ -15,6 +15,14 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — first stop on an empty future day, and Routes 403 logs (2026-11-11)
+On an empty future day the technician may leave home at 6:00 AM. A first stop
+is offered when arrival minus the drive is still at or after 6:00. An 8:00 AM
+Surprise arrival with a 96-minute drive leaves at 6:24 AM and is confirmed.
+Times before 8:00 AM that still fit stay pending approval. Same-day limits
+are unchanged. A failed `computeRoutes` call, including HTTP 403, logs the
+response body with the API key removed.
+
 ### Added — early arrivals, traffic-aware drive times, and today's route limits (2026-11-11)
 Shops keep one booking page. The scheduler decides from the Phoenix date.
 

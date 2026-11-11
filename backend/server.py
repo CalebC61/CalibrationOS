@@ -63,7 +63,8 @@ from google_maps import (
     GEOCODE_URL, DISTANCE_MATRIX_URL, ROUTES_COMPUTE_URL, ROUTES_FIELD_MASK, GoogleMapsError,
     geocode_request_params, distance_matrix_request_params,
     parse_geocode_response, parse_distance_matrix_response, parse_routes_response,
-    routes_request_body, drive_time_cache_key, departure_bucket, coalesce,
+    routes_request_body, routes_request_headers, routes_http_failure,
+    drive_time_cache_key, departure_bucket, coalesce,
     METRO_LAT_MIN, METRO_LAT_MAX, METRO_LNG_MIN, METRO_LNG_MAX,
 )
 from business_time import (
@@ -297,18 +298,21 @@ def _google_distance_matrix_request(o_lat, o_lng, d_lat, d_lng) -> dict:
     return resp.json()
 
 def _google_routes_request(o_lat, o_lng, d_lat, d_lng, departure_iso: str) -> dict:
-    """computeRoutes with TRAFFIC_AWARE. The key stays in a header so it is not part of the URL."""
+    """computeRoutes with TRAFFIC_AWARE. The key stays in a header so it is not part of the URL.
+
+    A non-2xx response, including 403, is logged with the response body and the
+    key stripped, then raised so the caller can use the mileage estimate.
+    """
     resp = requests.post(
         ROUTES_COMPUTE_URL,
-        headers={
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
-            "X-Goog-FieldMask": ROUTES_FIELD_MASK,
-        },
+        headers=routes_request_headers(GOOGLE_MAPS_API_KEY),
         json=routes_request_body(o_lat, o_lng, d_lat, d_lng, departure_iso),
         timeout=10,
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        detail = routes_http_failure(resp.status_code, resp.text or "", GOOGLE_MAPS_API_KEY)
+        logger.warning("[MAPS] Routes computeRoutes failed: %s", detail)
+        raise GoogleMapsError(detail)
     return resp.json()
 
 async def geocode_address(address: str) -> dict:
@@ -1153,17 +1157,22 @@ def _clocks_for(day: date, schedule: dict, now: datetime, kind: str) -> dict:
         grid_start = max(early_start, round_up(now))
         if now > home_leave:
             home_leave = now
+        # Same-day first stops before 8:00 still skip the home-drive check.
+        waive = auto_at
+        home_floor = None
     else:
         grid_start = early_start
-    # A first stop before 8:00 does not wait on the drive from home. The
-    # technician leaves early. Drive time between jobs still applies.
-    waive = auto_at
+        waive = None
+        # Future day: the technician may leave home at 6:00 AM. A first stop
+        # is legal when arrival minus the drive is still at or after 6:00.
+        home_floor = early_start
     return {
         "grid_start": grid_start,
         "day_start": home_leave,
         "offer_end": offer_end,
         "earliest_public": early_start,
         "waive_home_drive_before": waive,
+        "earliest_home_departure": home_floor,
         "home_ready": home_leave,
     }
 
@@ -1210,6 +1219,7 @@ async def _route_context(tech, day: date, new_point: tuple, jobs: list, now: dat
         day_start=clocks["day_start"], offer_end=clocks["offer_end"], home=_tech_home(tech),
         jobs=planned, new_point=new_point, duration=duration, buffer=buffer,
         grid_start=clocks["grid_start"], home_ready=clocks["home_ready"],
+        earliest_home_departure=clocks["earliest_home_departure"],
     )
     drive = await _drive_lookup(queries)
     return {
@@ -1230,6 +1240,7 @@ def _decide_one(ctx: dict, start: datetime, *, allow_outside: bool) -> dict | No
         allow_after_offer_end=allow_outside,
         earliest_public=clocks["earliest_public"],
         waive_home_drive_before=clocks["waive_home_drive_before"],
+        earliest_home_departure=clocks["earliest_home_departure"],
     )
     if message:
         return {"error": message}
@@ -1287,6 +1298,7 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
         grid_start=ctx["clocks"]["grid_start"],
         earliest_public=ctx["clocks"]["earliest_public"],
         waive_home_drive_before=ctx["clocks"]["waive_home_drive_before"],
+        earliest_home_departure=ctx["clocks"]["earliest_home_departure"],
     )
     slots = []
     hidden = 0

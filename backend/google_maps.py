@@ -20,6 +20,9 @@ METRO_LNG_MIN, METRO_LNG_MAX = -112.9, -111.4
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 DISTANCE_MATRIX_URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
 ROUTES_COMPUTE_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+# Top-level route fields only. These are valid on computeRoutes. A mask that
+# names a field the method does not return is rejected; do not add tolls,
+# polylines, or leg details here unless the call needs them.
 ROUTES_FIELD_MASK = "routes.duration,routes.distanceMeters"
 
 
@@ -107,6 +110,34 @@ def drive_time_cache_key(o_lat, o_lng, d_lat, d_lng, day_iso: str, departure_buc
     if departure_bucket:
         return f"{base}|{departure_bucket}"
     return base
+
+
+def routes_request_headers(api_key: str) -> dict:
+    """Headers for computeRoutes. The key is a header, not a query parameter, so it stays out of the URL."""
+    return {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": ROUTES_FIELD_MASK,
+    }
+
+
+def redact_maps_secret(text: str, api_key: str) -> str:
+    """Remove the API key from a log line. The response body itself is kept."""
+    if not text:
+        return ""
+    if api_key:
+        text = text.replace(api_key, "[redacted]")
+    return text
+
+
+def routes_http_failure(status_code: int, body: str, api_key: str = "") -> str:
+    """One log line for a non-2xx computeRoutes response. Includes the body, never the key."""
+    detail = redact_maps_secret(body or "", api_key).strip()
+    if len(detail) > 2000:
+        detail = detail[:2000]
+    if not detail:
+        return f"HTTP {status_code} with an empty body"
+    return f"HTTP {status_code}: {detail}"
 
 
 def routes_request_body(o_lat, o_lng, d_lat, d_lng, departure_iso: str) -> dict:

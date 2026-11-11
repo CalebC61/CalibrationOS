@@ -56,8 +56,46 @@ def job(start, point, duration=20, job_id="j"):
     }
 
 
+def test_long_first_stop_drive_offers_8am_through_930():
+    """Empty future weekday. Gilbert to Surprise is 96 minutes on the fallback.
+
+    Leaving at 6:24 AM for an 8:00 arrival is legal. 8:00 through 9:30 are
+    offered. A 6:00 arrival would mean leaving at 4:24 AM, which is not.
+    Friday 2026-11-13, 6:00 AM Phoenix is 13:00 UTC.
+    """
+    def long_drive(a, b, depart=None):
+        return 96
+
+    six = datetime(2026, 11, 13, 13, 0, tzinfo=timezone.utc)
+    eight = datetime(2026, 11, 13, 15, 0, tzinfo=timezone.utc)
+    offer_end = datetime(2026, 11, 14, 0, 0, tzinfo=timezone.utc)  # 5:00 PM Phoenix
+    slots = candidate_slots(
+        day_start=eight, offer_end=offer_end, home=HOME, jobs=[],
+        new_point=SURPRISE, drive=long_drive, duration=20, buffer=15,
+        grid_start=six, earliest_public=six, earliest_home_departure=six,
+    )
+    starts = [slot["start"] for slot in slots]
+    assert six.isoformat() not in starts
+
+    def friday(hhmm):
+        hour, minute = hhmm.split(":")
+        return six + timedelta(minutes=(int(hour) - 6) * 60 + int(minute))
+
+    for label in ("8:00", "8:15", "8:30", "8:45", "9:00", "9:15", "9:30"):
+        assert friday(label).isoformat() in starts
+    # 7:45 leaves at 6:09 AM, so it is offered. 7:30 would leave at 5:54 AM.
+    assert friday("7:45").isoformat() in starts
+    assert friday("7:30").isoformat() not in starts
+    assert placement_error(
+        start=eight, duration=20, buffer=15,
+        day_start=eight, offer_end=offer_end, home=HOME, jobs=[],
+        new_point=SURPRISE, drive=long_drive,
+        earliest_public=six, earliest_home_departure=six,
+    ) is None
+
+
 def test_early_first_stop_does_not_wait_on_the_drive_from_home():
-    """6:00 AM is bookable on an empty day. 8:00 still waits for the drive from home."""
+    """Same-day waiver: before 8:00 the home drive is skipped. 8:00 still uses day start plus drive."""
     six = datetime(2026, 11, 12, 13, 0, tzinfo=timezone.utc)  # 6:00 AM Phoenix
     eight = DAY
     slots = candidate_slots(
