@@ -21,6 +21,7 @@ export default function Shell({ children, hideNav }) {
               <nav style={{ display: "flex", gap: 4 }}>
                 {[
                   { to: "/dashboard", label: "Dispatch" },
+                  { to: "/days-off", label: "Days off" },
                   { to: "/shops", label: "Shops" },
                   { to: "/invites", label: "Invites" },
                   { to: "/charges", label: "Charges" },

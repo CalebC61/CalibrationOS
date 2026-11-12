@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, formatTime, formatDate, getStoredAuth, jobStatusLabel, phoenixTodayStr } from "../lib/api";
+import { api, formatTime, formatDate, getStoredAuth, jobStatusLabel } from "../lib/api";
 import Brand from "../components/Brand";
 import JobEditModal from "../components/JobEditModal";
 
@@ -37,6 +37,8 @@ export default function PublicBooking() {
   const [slots, setSlots] = useState([]);
   const [slotsMsg, setSlotsMsg] = useState("");
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsError, setSlotsError] = useState(false);
+  const [addressError, setAddressError] = useState("");
   const [chosenSlot, setChosenSlot] = useState(null);
   const [customTime, setCustomTime] = useState("");
   const isOwner = getStoredAuth()?.role === "owner";
@@ -68,18 +70,30 @@ export default function PublicBooking() {
   }, [token, loadBookings]);
   async function geocodeAddr() {
     if (!address) return;
-    const { data } = await api.post("/geocode", { address });
-    setZoneInfo(data);
+    setAddressError("");
+    try {
+      const { data } = await api.post("/geocode", { address });
+      setZoneInfo(data);
+    } catch (e) {
+      setZoneInfo(null);
+      const detail = e.response?.data?.detail;
+      setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
+    }
   }
 
   async function loadSlots(d) {
-    setSlotsLoading(true); setSlots([]); setSlotsMsg("");
+    setSlotsLoading(true); setSlots([]); setSlotsMsg(""); setSlotsError(false);
     try {
       const { data } = await api.post("/public/availability", {
         booking_token: token, job_address: address, date: d,
       });
-      setSlots(data.slots);
-      if (data.slots.length === 0) setSlotsMsg(data.message || "No availability for this date.");
+      setSlots(data.slots || []);
+      if ((data.slots || []).length === 0) setSlotsMsg(data.message || "No availability for this date.");
+    } catch (e) {
+      setSlots([]);
+      setSlotsError(true);
+      const detail = e.response?.data?.detail;
+      setSlotsMsg(typeof detail === "string" && detail ? detail : "Couldn't load times, try again");
     } finally { setSlotsLoading(false); }
   }
 
@@ -126,8 +140,6 @@ export default function PublicBooking() {
 
   if (confirmation) {
     const pending = confirmation.requires_approval || confirmation.status === "requested";
-    const appointmentDay = new Date(confirmation.scheduled_start).toLocaleDateString("en-CA", { timeZone: "America/Phoenix" });
-    const texted = !pending && appointmentDay !== phoenixTodayStr();
     return <Center>
       <div className="surface" style={{ padding: 30, maxWidth: 540, textAlign: "center" }} data-testid="booking-confirmed">
         {!pending && <div style={{ fontSize: 48, color: "var(--green)", marginBottom: 8 }}>✓</div>}
@@ -143,8 +155,8 @@ export default function PublicBooking() {
             </div>
           )}
         </div>
-        {texted && (
-          <div className="muted" style={{ fontSize: 13, marginTop: 16 }}>A confirmation SMS has been sent to {notifyPhone}.</div>
+        {confirmation.shop_email_delivered && (
+          <div className="muted" style={{ fontSize: 13, marginTop: 16 }}>Confirmation email sent.</div>
         )}
       </div>
     </Center>;
@@ -189,9 +201,14 @@ export default function PublicBooking() {
                 This address is in our Phoenix service area.
               </div>
             )}
+            {addressError && (
+              <div role="alert" style={{ marginTop: 10, color: "var(--red)", fontSize: 14 }} data-testid="address-error">
+                {addressError}
+              </div>
+            )}
             {zoneInfo && !zoneInfo.in_metro && (
               <div style={{ marginTop: 10, color: "var(--red)", fontSize: 14 }}>
-                This address is outside our current service area.
+                That address is outside the Phoenix Valley.
               </div>
             )}
             <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
@@ -214,7 +231,17 @@ export default function PublicBooking() {
               }}
               data-testid="booking-date" />
             {slotsLoading && <div className="muted" style={{ marginTop: 12, fontSize: 14 }}>Calculating available times…</div>}
-            {slotsMsg && !chosenSlot && <div style={{ marginTop: 12, color: "var(--yellow)", fontSize: 14 }}>{slotsMsg}</div>}
+            {slotsMsg && !chosenSlot && (
+              <div style={{ marginTop: 12, color: slotsError ? "var(--red)" : "var(--yellow)", fontSize: 14 }} data-testid="slots-message">
+                {slotsMsg}
+              </div>
+            )}
+            {slotsError && (
+              <button type="button" className="btn btn-ghost" style={{ marginTop: 12 }}
+                onClick={() => loadSlots(date)} data-testid="slots-retry">
+                Try again
+              </button>
+            )}
             {slots.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div className="label">Available times</div>
@@ -327,8 +354,9 @@ export default function PublicBooking() {
                 onChange={e => setVehicle({...vehicle, notes: e.target.value})}
                 data-testid="booking-notes" />
             </Field>
-            <Field label="Notification phone (we'll text status updates here)">
-              <input className="input" value={notifyPhone} onChange={e => setNotifyPhone(e.target.value)} data-testid="notify-phone" />
+            <Field label="Phone">
+              <input className="input" value={notifyPhone} onChange={e => setNotifyPhone(e.target.value)}
+                inputMode="tel" autoComplete="tel" placeholder="(480) 555-0100" data-testid="notify-phone" />
             </Field>
             <NavBtns onBack={() => setStep(4)}
               onNext={submitBooking}

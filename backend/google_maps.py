@@ -35,8 +35,20 @@ def in_metro(lat: float, lng: float) -> bool:
 
 
 def geocode_request_params(address: str, api_key: str) -> dict:
-    """Query params for a Geocoding API GET request."""
-    return {"address": address, "key": api_key}
+    """Query params for a Geocoding API GET request.
+
+    `bounds` biases the lookup to the Phoenix Valley. It does not hard-filter
+    results; callers still refuse anything outside the metro box. `components`
+    keeps the result in the United States.
+    """
+    bounds = f"{METRO_LAT_MIN},{METRO_LNG_MIN}|{METRO_LAT_MAX},{METRO_LNG_MAX}"
+    return {
+        "address": address,
+        "key": api_key,
+        "region": "us",
+        "bounds": bounds,
+        "components": "country:US",
+    }
 
 
 def distance_matrix_request_params(o_lat, o_lng, d_lat, d_lng, api_key: str) -> dict:
@@ -58,13 +70,17 @@ def parse_geocode_response(data: dict, original_address: str) -> dict:
     results = data.get("results") or []
     if data.get("status") != "OK" or not results:
         raise GoogleMapsError(f"geocode failed: status={data.get('status')}")
-    location = results[0]["geometry"]["location"]
+    geometry = results[0].get("geometry") or {}
+    location = geometry["location"]
     lat, lng = location["lat"], location["lng"]
     return {
         "lat": round(lat, 6),
         "lng": round(lng, 6),
         "formatted_address": results[0].get("formatted_address", original_address),
         "in_metro": in_metro(lat, lng),
+        "partial_match": bool(results[0].get("partial_match")),
+        "location_type": geometry.get("location_type"),
+        "source": "google",
     }
 
 
