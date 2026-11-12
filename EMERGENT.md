@@ -22,6 +22,12 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-12): cancelled jobs leave the owner and technician day list.**
+  `GET /api/jobs` now omits `cancelled` and `declined`. The jobs stay in Mongo.
+  `include_cancelled=true` is an opt-in for a future history view; the dashboard,
+  Field, tomorrow preview, and route map do not send it. Reschedule still moves
+  the same document, so it does not remain on the old date. The shop portal
+  list, including its Cancelled tab, is unchanged. No SMS or email.
 - **Session (2026-10-27): Phoenix day boundaries.** Job-by-date queries (`/portal/day-map`, `/jobs`,
   `/dashboard/summary`, reorder, availability, public booking) use America/Phoenix midnight converted
   to UTC, not UTC midnight. Default "today" is the Phoenix date. The portal day map and booking
