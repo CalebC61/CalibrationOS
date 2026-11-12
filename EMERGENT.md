@@ -181,6 +181,11 @@ new integration to wire up, only account setup:
   Blank uses `https://www.thecalibrationcrew.us`.
 - `SENDER_EMAIL` must be a verified address on `thecalibrationcrew.us`. The code default
   `onboarding@resend.dev` only delivers to the Resend account owner.
+- `SHOP_EMAILS_ENABLED` *(default false)* — shop and customer booking mail. While false,
+  confirmations and approve/decline/reschedule/cancel notices are stored in the email
+  outbox and are not sent. The owner dashboard shows "Shop emails: OFF (testing)".
+- `OWNER_EMAILS_ENABLED` *(default true)* — owner alert emails. Stays on when shop mail is off
+  so the approve links can be tested. Set `false` to hold those too.
 - `SEED_DEMO_DATA` *(optional; default `true` in dev, `false` in production)* — whether to seed the
   3 demo shops + demo partner contacts. Off in production so a real deployment starts clean.
   *(Note: this only stops NEW demo data from seeding; any demo shops already in the live DB should be

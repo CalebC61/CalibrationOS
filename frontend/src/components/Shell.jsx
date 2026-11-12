@@ -22,6 +22,7 @@ export default function Shell({ children, hideNav }) {
                 {[
                   { to: "/dashboard", label: "Dispatch" },
                   { to: "/days-off", label: "Days off" },
+                  { to: "/email-preview", label: "Email preview" },
                   { to: "/shops", label: "Shops" },
                   { to: "/invites", label: "Invites" },
                   { to: "/charges", label: "Charges" },

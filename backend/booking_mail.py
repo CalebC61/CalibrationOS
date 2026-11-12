@@ -1,8 +1,11 @@
 """Email copy for a booking, and the US phone check.
 
 The mailer is passed in. This module does not import Resend or the server.
+Shop mail stays off until SHOP_EMAILS_ENABLED is true. Owner alerts follow
+OWNER_EMAILS_ENABLED, which defaults to on.
 """
 import html
+import os
 import re
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
@@ -147,6 +150,34 @@ def owner_needs_alert(start: datetime, booking_kind: str, now: datetime) -> bool
     if booking_kind == "addon":
         return True
     return start.astimezone(BUSINESS_TZ).date() == now.astimezone(BUSINESS_TZ).date()
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def shop_emails_enabled() -> bool:
+    """False until testing is done. A blank value stays off."""
+    return _env_flag("SHOP_EMAILS_ENABLED", False)
+
+
+def owner_emails_enabled() -> bool:
+    """Owner alerts send unless this is explicitly turned off."""
+    return _env_flag("OWNER_EMAILS_ENABLED", True)
+
+
+def mail_route(audience: str) -> str:
+    """'send' may call Resend. 'hold' must not.
+
+    Shop and customer notices hold while SHOP_EMAILS_ENABLED is false.
+    Owner alerts follow OWNER_EMAILS_ENABLED and are independent of the shop flag.
+    """
+    if audience == "owner":
+        return "send" if owner_emails_enabled() else "hold"
+    return "send" if shop_emails_enabled() else "hold"
 
 
 async def deliver_message(send, message: dict):

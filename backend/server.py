@@ -75,8 +75,8 @@ from address_pin import (
     came_from_fallback, interpret_live_geocode, pin_refusal,
 )
 from booking_mail import (
-    booking_confirmation_email, normalize_us_phone, owner_alert_email,
-    owner_needs_alert, shop_event_email,
+    booking_confirmation_email, mail_route, normalize_us_phone, owner_alert_email,
+    owner_needs_alert, shop_emails_enabled, shop_event_email,
 )
 from days_off import closure_message, holiday_records, jobs_to_flag, parse_range
 from owner_links import assess_owner_link, mark_used, mint_owner_link, token_claims
@@ -1521,9 +1521,40 @@ def _shop_email(job: dict | None, shop: dict | None) -> str | None:
     return None
 
 
-async def _send_booking_message(message: dict | None):
+async def _hold_booking_message(message: dict, audience: str) -> dict:
+    """Save a shop or owner email that must not be sent. Does not call Resend."""
+    doc = {
+        "id": gen_id(),
+        "to": message["to"],
+        "subject": message["subject"],
+        "body": message.get("html") or "",
+        "created_at": iso(now_utc()),
+        "audience": audience,
+        "kind": message.get("kind") or "transactional",
+        "reply_to": message.get("reply_to"),
+        "delivered": False,
+    }
+    store = getattr(db, "email_outbox", None)
+    if store is not None:
+        try:
+            await store.insert_one(dict(doc))
+        except Exception as exc:
+            logger.warning("email outbox write failed: %s", exc)
+    else:
+        logger.info("[EMAIL HELD → %s] %s", message["to"], message["subject"])
+    return doc
+
+
+async def _send_booking_message(message: dict | None, audience: str = "shop"):
+    """Send or hold one booking email.
+
+    audience is 'shop' or 'owner'. Shop mail is held while SHOP_EMAILS_ENABLED
+    is false, and that path never calls send_email or Resend.
+    """
     if not message or not (message.get("to") or "").strip():
         return None
+    if mail_route(audience) == "hold":
+        return await _hold_booking_message(message, audience)
     return await send_email(
         message["to"], message["subject"], message["html"],
         kind=message.get("kind") or "transactional",
@@ -1544,7 +1575,7 @@ async def email_shop_confirmation(job: dict, shop: dict | None, pending: bool):
         pending=pending,
     )
     message["meta"] = {"job_id": job.get("id")}
-    return await _send_booking_message(message)
+    return await _send_booking_message(message, audience="shop")
 
 
 async def _issue_owner_link(job_id: str, action: str) -> dict:
@@ -1576,7 +1607,7 @@ async def email_owner_alert(job: dict, shop: dict | None, pending: bool, same_da
         decline_url=f"{PUBLIC_SITE_URL}/owner-action/{decline['token']}",
     )
     message["meta"] = {"job_id": job.get("id")}
-    return await _send_booking_message(message)
+    return await _send_booking_message(message, audience="owner")
 
 
 async def email_shop_event(job: dict, shop: dict | None, event: str):
@@ -1591,7 +1622,7 @@ async def email_shop_event(job: dict, shop: dict | None, event: str):
         price=job.get("price") or 0,
     )
     message["meta"] = {"job_id": job.get("id"), "event": event}
-    return await _send_booking_message(message)
+    return await _send_booking_message(message, audience="shop")
 
 
 async def _shop_for_job(job: dict) -> dict | None:
@@ -2347,6 +2378,7 @@ async def dashboard_summary(date_str: Optional[str] = None, tech=Depends(require
         "estimated_miles": miles,
         "done_by": done_by,
         "at_risk_count": at_risk,
+        "shop_emails_enabled": shop_emails_enabled(),
     }
 
 # ---------- Reschedule + cancel (with reason) ----------
@@ -3465,6 +3497,31 @@ async def email_log(tech=Depends(require_owner)):
         {"subject": {"$regex": "^\\[MANUAL SEND\\]"}}, {"_id": 0}
     ).sort("sent_at", -1).limit(50).to_list(50)
     return {"sent": logs, "pending_manual": pending}
+
+@api.get("/email-outbox")
+async def list_email_outbox(tech=Depends(require_owner)):
+    """Read-only list of emails that were held instead of sent."""
+    store = getattr(db, "email_outbox", None)
+    if store is None:
+        return []
+    try:
+        rows = await store.find({}, {"_id": 0}).to_list(200)
+    except Exception as exc:
+        logger.warning("email outbox unreadable: %s", exc)
+        return []
+    rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+    return [
+        {
+            "id": row.get("id"),
+            "to": row.get("to"),
+            "subject": row.get("subject"),
+            "body": row.get("body") or "",
+            "created_at": row.get("created_at"),
+            "audience": row.get("audience"),
+            "kind": row.get("kind"),
+        }
+        for row in rows[:100]
+    ]
 
 # ---------- Seed ----------
 async def seed_data():

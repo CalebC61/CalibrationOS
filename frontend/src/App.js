@@ -17,6 +17,7 @@ import Messages from "@/pages/Messages";
 import Settings from "@/pages/Settings";
 import DaysOff from "@/pages/DaysOff";
 import MapPins from "@/pages/MapPins";
+import EmailPreview from "@/pages/EmailPreview";
 import Invites from "@/pages/Invites";
 import ChargeQueue from "@/pages/ChargeQueue";
 import PortalLogin from "@/pages/PortalLogin";
@@ -82,6 +83,7 @@ function App() {
           <Route path="/settings" element={<Protected ownerOnly><Settings /></Protected>} />
           <Route path="/days-off" element={<Protected ownerOnly><DaysOff /></Protected>} />
           <Route path="/map-pins" element={<Protected ownerOnly><MapPins /></Protected>} />
+          <Route path="/email-preview" element={<Protected ownerOnly><EmailPreview /></Protected>} />
           <Route path="/field" element={<Protected><Field /></Protected>} />
           <Route path="*" element={<RoleRedirect />} />
         </Routes>

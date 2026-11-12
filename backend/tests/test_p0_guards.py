@@ -71,6 +71,7 @@ class _DB:
         self.shops = _Store()
         self.jobs = _Store()
         self.owner_action_tokens = _Store()
+        self.email_outbox = _Store()
 
 
 def test_creating_a_shop_refuses_a_failed_geocode(monkeypatch):
@@ -142,7 +143,10 @@ def test_approve_link_previews_then_works_once(monkeypatch):
             assert confirmed.status_code == 200, confirmed.text
             assert confirmed.json()["job"]["status"] == "booked"
             assert db.owner_action_tokens.docs[0]["used_at"]
-            assert emails and "shop@glass.example" in emails[0]
+            assert emails == []
+            held = [row for row in db.email_outbox.docs if row.get("to") == "shop@glass.example"]
+            assert held
+            assert "approved" in (held[0]["subject"] + held[0]["body"]).lower()
             again = await client.post(f"/api/public/owner-action/{minted['token']}")
             assert again.status_code == 400
             assert "already used" in again.json()["detail"].lower()

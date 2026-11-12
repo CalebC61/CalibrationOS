@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { api, formatTime, phoenixTodayStr, dateStr, getStoredAuth, jobStatusLabel } from "../lib/api";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
@@ -175,6 +176,15 @@ export default function Dashboard() {
         </div>
       )}
 
+      {summary && summary.shop_emails_enabled === false && (
+        <Link to="/email-preview" data-testid="shop-emails-off" style={{
+          display: "inline-block", marginBottom: 12, padding: "4px 10px", borderRadius: 999,
+          background: "rgba(245, 158, 11, 0.16)", color: "var(--yellow)",
+          fontSize: 13, fontWeight: 600, textDecoration: "none",
+        }}>
+          Shop emails: OFF (testing)
+        </Link>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>
         <div>
           <h1 className="h1" style={{ margin: "4px 0" }}>

@@ -40,6 +40,13 @@ stored coordinates still match a fallback so they can be looked up again.
 `PUBLIC_SITE_URL` is the host used in the owner links (default
 `https://www.thecalibrationcrew.us`).
 
+Shop and customer mail is off until `SHOP_EMAILS_ENABLED=true`. While it is
+false, those messages are stored in `email_outbox` and shown read-only at
+`/email-preview`. They are not sent through Resend. Owner alerts follow
+`OWNER_EMAILS_ENABLED`, which defaults to true, so the approve links can be
+tested. The dispatch board shows "Shop emails: OFF (testing)" while shop mail
+is held.
+
 ### Fixed — cancelled jobs leave the day list (2026-11-12)
 `GET /api/jobs` omitted `declined` and still returned `cancelled`. The owner
 dashboard, Field, the tomorrow preview, and the route map all read that list,
