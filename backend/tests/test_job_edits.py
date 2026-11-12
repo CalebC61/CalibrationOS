@@ -149,7 +149,10 @@ def world(monkeypatch):
     db.technicians.docs.append({"id": "tech-2", "role": "contractor", "name": "West Tech", "email": "west@example.com"})
     db.technicians.docs.append({"id": "tech-3", "role": "technician", "name": "Field Tech", "email": "field@example.com"})
     db.shops.docs.append(_shop())
-    db.shops.docs.append(_shop(id="shop-2", name="Other Shop", booking_link_token="tok-b"))
+    db.shops.docs.append(_shop(
+        id="shop-2", name="Other Shop", booking_link_token="tok-b",
+        contact_email="other@glass.example",
+    ))
     db.jobs.docs.append(_job(technician_id="tech-2"))
     db.jobs.docs.append(_job(id="job-other", shop_id="shop-2"))
     db.jobs.docs.append(_job(id="job-past", scheduled_start=PAST, scheduled_end=PAST))

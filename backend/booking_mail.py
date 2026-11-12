@@ -169,15 +169,30 @@ def owner_emails_enabled() -> bool:
     return _env_flag("OWNER_EMAILS_ENABLED", True)
 
 
-def mail_route(audience: str) -> str:
+# Invite and password-reset mail may still send to these addresses while shop mail is off.
+ALLOWLIST_EMAIL_KINDS = frozenset({"invite", "password_reset"})
+
+
+def test_email_allowlist() -> frozenset:
+    raw = os.environ.get("TEST_EMAIL_ALLOWLIST") or ""
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+def mail_route(audience: str, kind: str | None = None, to: str | None = None) -> str:
     """'send' may call Resend. 'hold' must not.
 
     Shop and customer notices hold while SHOP_EMAILS_ENABLED is false.
     Owner alerts follow OWNER_EMAILS_ENABLED and are independent of the shop flag.
+    An invite or password reset to TEST_EMAIL_ALLOWLIST may still send.
     """
     if audience == "owner":
         return "send" if owner_emails_enabled() else "hold"
-    return "send" if shop_emails_enabled() else "hold"
+    if shop_emails_enabled():
+        return "send"
+    address = (to or "").strip().lower()
+    if kind in ALLOWLIST_EMAIL_KINDS and address in test_email_allowlist():
+        return "send"
+    return "hold"
 
 
 async def deliver_message(send, message: dict):

@@ -75,12 +75,17 @@ def test_create_shop_and_zone(owner_token):
         "terms_signed_by": "Test Signer",
     }
     r = requests.post(f"{API}/shops", json=payload, headers=auth(owner_token), timeout=30)
-    assert r.status_code == 200
+    if r.status_code == 409 and isinstance(r.json().get("detail"), dict) and r.json()["detail"].get("code") == "needs_confirmation":
+        payload["address_confirmed"] = True
+        payload["confirmed_address"] = r.json()["detail"]["formatted_address"]
+        r = requests.post(f"{API}/shops", json=payload, headers=auth(owner_token), timeout=30)
+    assert r.status_code == 200, r.text
     shop = r.json()
     assert shop["zone"] == "east"
     assert shop["lng"] > -112.0
     assert shop["booking_link_token"]
-    assert shop["terms_signed_at"] is not None
+    assert shop["terms_signed_at"] is None
+    assert shop["requires_billing_setup"] is True
     # GET back
     g = requests.get(f"{API}/shops/{shop['id']}", headers=auth(owner_token), timeout=30)
     assert g.status_code == 200

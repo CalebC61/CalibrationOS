@@ -31,9 +31,24 @@ services:
       - { key: ADMIN_EMAIL, sync: false }
       - { key: CONTRACTOR_EMAIL, sync: false }
       - { key: CONTRACTOR_PASSWORD, sync: false }
+      # Shop and customer mail stays in the outbox until this is true.
+      - key: SHOP_EMAILS_ENABLED
+        value: "false"
+      # Comma-separated. Invite and password-reset mail can send to these addresses while shop mail is off.
+      - { key: TEST_EMAIL_ALLOWLIST, sync: false }
+      # Completing a job does not charge a card, and the late-fee sweep does not run, until this is true.
+      - key: BILLING_ENABLED
+        value: "false"
       - { key: RESEND_API_KEY, sync: false }
+      # Verified address on thecalibrationcrew.us. onboarding@resend.dev is logged as an error.
       - { key: SENDER_EMAIL, sync: false }
+      # Public site, no trailing path. Invite and reset links are built from this, not the browser.
+      - { key: FRONTEND_URL, sync: false }
+      - { key: OWNER_PHONE, sync: false }
+      # Prefer STRIPE_SECRET_KEY. STRIPE_API_KEY still works if the secret key is blank.
+      - { key: STRIPE_SECRET_KEY, sync: false }
       - { key: STRIPE_API_KEY, sync: false }
+      - { key: STRIPE_WEBHOOK_SECRET, sync: false }
       # Geocoding API + Routes API (computeRoutes, TRAFFIC_AWARE). Not a browser key.
       # Drive times fall back to a mileage estimate when this is blank. See README.
       - { key: GOOGLE_MAPS_API_KEY, sync: false }

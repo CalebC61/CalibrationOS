@@ -34,6 +34,7 @@ export default function Field() {
 
   const [uploadedDoc, setUploadedDoc] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [tripReason, setTripReason] = useState("bad_install");
 
   async function respondOffer(offerId, accept) {
     await api.post(`/contractor-offers/${offerId}/respond`, { accept });
@@ -102,15 +103,18 @@ export default function Field() {
             )}
           </div>
 
-          {j.status === "booked" && (
+          {auth?.role !== "owner" && j.status !== "complete" && (
+            <p className="muted" style={{ marginTop: 16 }}>Only Caleb can change this job.</p>
+          )}
+          {auth?.role === "owner" && j.status === "booked" && (
             <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
               onClick={() => setStatus(j.id, "driving")} data-testid="action-start-driving">Start Driving</button>
           )}
-          {j.status === "driving" && (
+          {auth?.role === "owner" && j.status === "driving" && (
             <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
               onClick={() => setStatus(j.id, "on_site")} data-testid="action-arrived">I&apos;ve Arrived</button>
           )}
-          {j.status === "on_site" && (
+          {auth?.role === "owner" && j.status === "on_site" && (
             <div style={{ marginTop: 16 }}>
               <div className="label">Result *</div>
               <div style={{ display: "flex", gap: 8 }}>
@@ -152,6 +156,40 @@ export default function Field() {
               <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
                 disabled={completing} onClick={() => complete(j.id)} data-testid="action-complete">
                 {completing ? "Submitting…" : "Submit Completion"}
+              </button>
+            </div>
+          )}
+          {auth?.role === "owner" && !j.invoice_id && !j.charged_at && j.payment_status !== "paid"
+            && j.status !== "cancelled" && j.status !== "declined" && (
+            <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+              <button className="btn btn-ghost" type="button" style={{ width: "100%", padding: 12 }}
+                onClick={async () => {
+                  try {
+                    await api.post(`/jobs/${j.id}/outside-service-area`, { enabled: !j.outside_service_area });
+                    load();
+                  } catch (err) {
+                    alert(err.response?.data?.detail || "Could not update the trip fee.");
+                  }
+                }}
+                data-testid="field-outside">
+                {j.outside_service_area ? "Remove outside-area $30" : "Outside service area, +$30"}
+              </button>
+              <select className="input" value={tripReason} onChange={e => setTripReason(e.target.value)}
+                data-testid="field-trip-reason">
+                <option value="bad_install">Bad install</option>
+                <option value="customer_vehicle">Customer or vehicle</option>
+              </select>
+              <button className="btn btn-ghost" type="button" style={{ width: "100%", padding: 12 }}
+                onClick={async () => {
+                  try {
+                    await api.post(`/jobs/${j.id}/trip-fee`, { reason: tripReason });
+                    load();
+                  } catch (err) {
+                    alert(err.response?.data?.detail || "Could not charge the trip fee.");
+                  }
+                }}
+                data-testid="field-trip-fee">
+                Couldn&apos;t calibrate, charge $30 trip fee
               </button>
             </div>
           )}

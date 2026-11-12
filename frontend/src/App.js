@@ -2,6 +2,10 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import "@/App.css";
 import { getStoredAuth } from "@/lib/api";
 import { getPortalAuth } from "@/lib/portalApi";
+import HomePage from "@/marketing/HomePage";
+import { AboutPage, AreaPage, FaqPage, PricingPage, ServicesPage } from "@/marketing/InfoPages";
+import ContactPage from "@/marketing/ContactPage";
+import SignupPage from "@/marketing/SignupPage";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import ShopsList from "@/pages/ShopsList";
@@ -28,6 +32,10 @@ import PortalJobsList from "@/pages/PortalJobsList";
 import PortalJobDetail from "@/pages/PortalJobDetail";
 import PortalBook from "@/pages/PortalBook";
 import PortalSettings from "@/pages/PortalSettings";
+import PortalReady from "@/pages/PortalReady";
+import PortalForgot from "@/pages/PortalForgot";
+import PortalReset from "@/pages/PortalReset";
+import Requests from "@/pages/Requests";
 
 function Protected({ children, ownerOnly }) {
   const loc = useLocation();
@@ -45,7 +53,7 @@ function PortalProtected({ children }) {
 
 function RoleRedirect() {
   const auth = getStoredAuth();
-  if (!auth) return <Navigate to="/login" replace />;
+  if (!auth) return <Navigate to="/" replace />;
   return <Navigate to={auth.role === "owner" ? "/dashboard" : "/field"} replace />;
 }
 
@@ -54,7 +62,14 @@ function App() {
     <div className="App">
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<RoleRedirect />} />
+          <Route path="/" element={<HomePage />} />
+          <Route path="/services" element={<ServicesPage />} />
+          <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/service-area" element={<AreaPage />} />
+          <Route path="/about" element={<AboutPage />} />
+          <Route path="/faq" element={<FaqPage />} />
+          <Route path="/contact" element={<ContactPage />} />
+          <Route path="/signup" element={<SignupPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/scorecard/:token" element={<PublicShopStatus />} />
           <Route path="/book/:token" element={<PublicBooking />} />
@@ -62,7 +77,10 @@ function App() {
 
           {/* Portal (shop user) */}
           <Route path="/portal/login" element={<PortalLogin />} />
+          <Route path="/portal/forgot" element={<PortalForgot />} />
+          <Route path="/portal/reset/:token" element={<PortalReset />} />
           <Route path="/portal/invite/:token" element={<PortalRegister />} />
+          <Route path="/portal/ready" element={<PortalProtected><PortalReady /></PortalProtected>} />
           <Route path="/portal/setup-return" element={<PortalProtected><PortalSetupReturn /></PortalProtected>} />
           <Route path="/portal" element={<PortalProtected><PortalDashboard /></PortalProtected>} />
           <Route path="/portal/jobs" element={<PortalProtected><PortalJobsList /></PortalProtected>} />
@@ -72,6 +90,8 @@ function App() {
 
           {/* Owner dashboard */}
           <Route path="/dashboard" element={<Protected ownerOnly><Dashboard /></Protected>} />
+          <Route path="/requests" element={<Protected ownerOnly><Requests /></Protected>} />
+          <Route path="/email-preview" element={<Protected ownerOnly><EmailPreview /></Protected>} />
           <Route path="/shops" element={<Protected ownerOnly><ShopsList /></Protected>} />
           <Route path="/shops/new" element={<Protected ownerOnly><ShopNew /></Protected>} />
           <Route path="/shops/:id" element={<Protected ownerOnly><ShopDetail /></Protected>} />
@@ -83,7 +103,6 @@ function App() {
           <Route path="/settings" element={<Protected ownerOnly><Settings /></Protected>} />
           <Route path="/days-off" element={<Protected ownerOnly><DaysOff /></Protected>} />
           <Route path="/map-pins" element={<Protected ownerOnly><MapPins /></Protected>} />
-          <Route path="/email-preview" element={<Protected ownerOnly><EmailPreview /></Protected>} />
           <Route path="/field" element={<Protected><Field /></Protected>} />
           <Route path="*" element={<RoleRedirect />} />
         </Routes>

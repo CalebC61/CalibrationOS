@@ -1,17 +1,57 @@
 import { useEffect, useState } from "react";
-import { portalApi, getPortalAuth, setPortalAuth } from "../lib/portalApi";
+import { portalApi, setPortalAuth, getPortalAuth } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
+import { CardSetup, ChargeAcceptance, CHARGE_ACCEPTANCE_FALLBACK } from "../components/CardSetup";
+import AgreementView from "../components/AgreementView";
 
 export default function PortalSettings() {
-  const auth = getPortalAuth();
   const [me, setMe] = useState(null);
+  const [clientSecret, setClientSecret] = useState("");
+  const [cardError, setCardError] = useState("");
+  const [needsAcceptance, setNeedsAcceptance] = useState(false);
+  const [acceptance, setAcceptance] = useState(CHARGE_ACCEPTANCE_FALLBACK);
+  const [accepting, setAccepting] = useState(false);
+  const [agreement, setAgreement] = useState(null);
 
-  useEffect(() => { portalApi.get("/portal/me").then(r => setMe(r.data)); }, []);
+  function load() { return portalApi.get("/portal/me").then(r => setMe(r.data)); }
+  useEffect(() => {
+    load();
+    portalApi.get("/public/agreement").then(r => {
+      if (r.data.acceptance) setAcceptance(r.data.acceptance);
+      setAgreement(r.data);
+    }).catch(() => {});
+  }, []);
 
-  async function addOrReplaceCard() {
-    // Reuse the setup flow by re-registering Stripe Checkout setup session
-    // (In production we'd add a dedicated endpoint; this MVP re-uses logic.)
-    alert("Card replacement flow coming next iteration — for now, use the invite-time setup. (Your card is already on file.)");
+  async function startCard() {
+    setCardError("");
+    try {
+      const { data } = await portalApi.post("/portal/setup-intent");
+      setClientSecret(data.client_secret);
+    } catch (err) {
+      setCardError(err.response?.data?.detail || "Could not start card setup.");
+    }
+  }
+
+  function cardSaved(shopUser) {
+    const auth = getPortalAuth();
+    if (auth) setPortalAuth({ ...auth, has_payment_method: true });
+    setClientSecret("");
+    setMe(prev => prev ? { ...prev, shop_user: shopUser } : prev);
+    if (!shopUser.charge_authorization_accepted_at) setNeedsAcceptance(true);
+    else load();
+  }
+
+  async function accept() {
+    setAccepting(true);
+    try {
+      await portalApi.post("/portal/accept-charge", { accepted: true });
+      setNeedsAcceptance(false);
+      load();
+    } catch (err) {
+      setCardError(err.response?.data?.detail || "Could not save that.");
+    } finally {
+      setAccepting(false);
+    }
   }
 
   if (!me) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
@@ -38,22 +78,34 @@ export default function PortalSettings() {
               </div>
               <span className="badge badge-complete">Active</span>
             </div>
-            <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>Card is charged after each completed calibration.</div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>Charged when a job is completed, unless you asked to be invoiced.</div>
+            <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={startCard} data-testid="add-card-btn">Replace card</button>
           </>
         ) : (
           <div>
-            <div className="muted" style={{ marginBottom: 12 }}>No card on file. Required to book new calibrations.</div>
-            <button className="btn btn-primary" onClick={addOrReplaceCard} data-testid="add-card-btn">Add Card</button>
+            <div className="muted" style={{ marginBottom: 12 }}>No card on file yet.</div>
+            <button className="btn btn-primary" onClick={startCard} data-testid="add-card-btn">Add card</button>
+          </div>
+        )}
+        {cardError && <div style={{ color: "var(--red)", marginTop: 12 }}>{cardError}</div>}
+        {clientSecret && (
+          <div style={{ marginTop: 16 }} data-testid="card-setup">
+            <CardSetup clientSecret={clientSecret} onSaved={cardSaved} />
           </div>
         )}
       </div>
 
-      <div className="surface" style={{ padding: 20, maxWidth: 560 }}>
-        <div className="h3" style={{ marginBottom: 12 }}>Terms agreement</div>
-        <div className="muted" style={{ fontSize: 13 }}>
-          Signed by <b style={{ color: "var(--text-primary)" }}>{su.terms_signature}</b> on {new Date(su.terms_signed_at).toLocaleDateString()}.
+      <div className="surface" style={{ padding: 20, maxWidth: 640 }}>
+        <h2 className="h2" style={{ fontSize: "1.35rem", marginBottom: 12 }}>Service agreement</h2>
+        <AgreementView sections={agreement?.sections} paragraphs={agreement?.paragraphs} />
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+          {su.terms_signed_at ? (
+            <>Signed by <b style={{ color: "var(--text-primary)" }}>{su.terms_signature}</b> on {new Date(su.terms_signed_at).toLocaleString()}.</>
+          ) : "Not signed yet."}
+          {su.charge_authorization_accepted_at && <div style={{ marginTop: 8 }}>Card charge accepted {new Date(su.charge_authorization_accepted_at).toLocaleString()}.</div>}
         </div>
       </div>
+      {needsAcceptance && <ChargeAcceptance text={acceptance} busy={accepting} onAccept={accept} />}
     </PortalShell>
   );
 }

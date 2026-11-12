@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { getStoredAuth, setStoredAuth } from "../lib/api";
 import Brand from "./Brand";
@@ -6,21 +7,28 @@ import Assist from "./Assist";
 export default function Shell({ children, hideNav }) {
   const auth = getStoredAuth();
   const nav = useNavigate();
+  const [menu, setMenu] = useState(false);
   function logout() { setStoredAuth(null); nav("/login"); }
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-primary)" }}>
       {!hideNav && (
-        <header style={{
+        <header className="shell-header" style={{
           borderBottom: "1px solid var(--border)", padding: "12px 24px",
           display: "flex", alignItems: "center", justifyContent: "space-between",
           background: "var(--bg-primary)", position: "sticky", top: 0, zIndex: 20,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap", width: "100%" }}>
             <Link to="/dashboard"><Brand size={22} /></Link>
             {auth?.role === "owner" && (
-              <nav style={{ display: "flex", gap: 4 }}>
+              <button className="btn btn-ghost nav-toggle" type="button" onClick={() => setMenu(v => !v)} aria-expanded={menu}>
+                Menu
+              </button>
+            )}
+            {auth?.role === "owner" && (
+              <nav className={"owner-nav" + (menu ? " open" : "")}>
                 {[
                   { to: "/dashboard", label: "Dispatch" },
+                  { to: "/requests", label: "Requests" },
                   { to: "/days-off", label: "Days off" },
                   { to: "/email-preview", label: "Email preview" },
                   { to: "/shops", label: "Shops" },

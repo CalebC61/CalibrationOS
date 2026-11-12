@@ -4,7 +4,7 @@ import { MapContainer, Marker, Tooltip, useMap } from "react-leaflet";
 import DarkBasemap from "../components/DarkBasemap";
 import L from "leaflet";
 import { phoenixTodayStr, jobStatusLabel } from "../lib/api";
-import { portalApi, getPortalAuth } from "../lib/portalApi";
+import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
 function pinIcon(num, color, ghost = false, text = "#fff") {
@@ -28,13 +28,16 @@ function FitBounds({ points }) {
 const fmt = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
 export default function PortalDashboard() {
-  const auth = getPortalAuth();
   const [data, setData] = useState(null);
+  const [setup, setSetup] = useState(null);
   const [date, setDate] = useState(() => phoenixTodayStr());
 
   useEffect(() => {
     portalApi.get(`/portal/day-map?date_str=${date}`).then(r => setData(r.data));
   }, [date]);
+  useEffect(() => {
+    portalApi.get("/portal/me").then(r => setSetup(r.data.setup));
+  }, []);
 
   if (!data) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
 
@@ -44,14 +47,18 @@ export default function PortalDashboard() {
 
   return (
     <PortalShell>
-      {!auth?.has_payment_method && (
+      {setup?.banner && (
         <div className="surface" style={{ padding: 14, marginBottom: 16, borderColor: "var(--yellow)" }} data-testid="no-card-banner">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div>
-              <div style={{ fontWeight: 600 }}>⚠ No card on file</div>
-              <div className="muted" style={{ fontSize: 13 }}>Add a payment method to continue booking. Required by Terms.</div>
+              <div style={{ fontWeight: 600 }}>{setup.grandfathered ? "Finish setup when you can" : "Finish setup to book"}</div>
+              <div className="muted" style={{ fontSize: 13 }}>
+                {setup.grandfathered
+                  ? "Your shop can keep booking. Sign the agreement and save a card so completed jobs can be charged or invoiced."
+                  : "Sign the agreement and save a card. Booking stays closed until both are done."}
+              </div>
             </div>
-            <Link to="/portal/settings" className="btn btn-primary" data-testid="add-card-cta">Add Card</Link>
+            <Link to="/portal/settings" className="btn btn-primary" data-testid="add-card-cta">Finish setup</Link>
           </div>
         </div>
       )}

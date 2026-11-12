@@ -15,6 +15,27 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Added — public site, shop requests, and card-on-file billing (2026-11-12)
+Logged-out `/` is the public site (home, services, pricing, service area, about, FAQ, contact, sign up). Staff login stays at `/login`.
+
+A shop requests an account (name, contact, mobile, email, Phoenix Valley address). That emails the owner and waits. Approve creates the shop and sends one invite. The owner can also add a shop directly: name, valley address he confirms, mobile, and email are required, and a duplicate name or email warns. He does not sign for the shop. The success screen sends the invite to the contact email.
+
+One agreement, version `2026-11-12`, is signed by the shop contact during invite setup (name, time, IP, user agent). Then they save a card with a Stripe SetupIntent. A modal records that they accept a charge after each completed job unless they asked to be invoiced, with a 7-day grace period and a $25 late fee. New shops cannot book until that is done. Shops already on file keep booking and see a banner. Password reset is a one-time emailed link. The server rejects passwords shorter than 8 characters.
+
+Invite mail uses `SENDER_EMAIL`, Reply-To the owner, and `FRONTEND_URL` (not the browser origin). Startup logs an error if the sender is `onboarding@resend.dev`. Each invite stores sent or failed. Resend issues a new 14-day token and revokes the old one. An expired link can request a new one and shows `OWNER_PHONE`. When setup finishes, the shop gets a welcome with the booking link and the owner gets "{shop} finished signup".
+
+Completing a job creates one invoice (Stripe when a customer exists, otherwise a local record) and emails it. Charge-on-completion also creates one off-session PaymentIntent, idempotent per attempt, and does not open a second Xero invoice. Invoice mode does not charge until the owner presses Charge card now. A shop can tick "Please invoice me instead" while booking. A daily sweep adds one $25 late fee to unpaid invoice-mode jobs after 7 days. Card declines mark the job payment failed and email the owner and the shop. `POST /api/stripe/webhook` verifies `STRIPE_WEBHOOK_SECRET`.
+
+Technicians and contractors cannot change a job's status, complete it, or upload a document. The owner still can, including from the phone view.
+
+Shop and customer mail (invite, welcome, invoice, receipt, payment failed, password reset, and the booking kinds from the other mail work) is held in `email_outbox` while `SHOP_EMAILS_ENABLED` is off, which is the default. The owner reads them at Email preview. Invite and password-reset mail still sends when the address is on `TEST_EMAIL_ALLOWLIST`. Completing a job does not charge the card, and the late-fee sweep does not run, while `BILLING_ENABLED` is off. A live Stripe key is ignored until that flag is on. Use `sk_test_` / `rk_test_` and `pk_test_`.
+
+The shop agreement is version `2026-11-12.3`. The legal name is The Calibration Crew LLC. It covers the parties, prices, card and invoice rules, the $30 trip fee, shop responsibilities, no late-cancel fee and no waiting fee, a 30-day re-calibration, liability, disputes, the electronic signature, and Arizona law. There is no $50 late-cancel fee.
+
+An owner can mark a job "Outside service area, +$30", which adds $30 to the price once. "Couldn't calibrate, charge $30 trip fee" sets the amount to $30, records bad install or customer/vehicle, and invoices or charges through the same completion path. A declined card becomes an invoiced balance. Automatic charges still wait on `BILLING_ENABLED`, and shop mail still waits on `SHOP_EMAILS_ENABLED`.
+
+Shop and customer mail uses the same `SHOP_EMAILS_ENABLED` flag and `email_outbox` as booking mail. Invite and password-reset messages can still send to `TEST_EMAIL_ALLOWLIST`. Completing a job does not charge the card, and the late-fee sweep does not run, while `BILLING_ENABLED` is off. A live Stripe key is ignored until that flag is on.
+
 ### Added — booking email, days off, and real map pins (2026-11-12)
 A booking emails the shop contact through Resend (`SENDER_EMAIL`, Reply-To
 `OWNER_EMAIL`) with the Phoenix time, vehicle, address, calibration, price,

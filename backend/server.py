@@ -49,9 +49,36 @@ db = client[os.environ['DB_NAME']]
 # Stripe + Resend setup
 import stripe as stripe_sdk
 import resend as resend_sdk
-stripe_sdk.api_key = os.environ.get('STRIPE_API_KEY', 'sk_test_emergent')
+
+def stripe_secret() -> str:
+    """STRIPE_SECRET_KEY is the key to set. STRIPE_API_KEY still works for older deploys."""
+    return _env("STRIPE_SECRET_KEY") or _env("STRIPE_API_KEY")
+
+
+def billing_enabled() -> bool:
+    from safety import env_flag
+    return env_flag(os.environ.get("BILLING_ENABLED"))
+
+
+def stripe_configured() -> bool:
+    from safety import stripe_key_for_use
+    return bool(stripe_key_for_use(stripe_secret(), billing_enabled=billing_enabled()))
+
+
+def get_stripe():
+    from safety import stripe_key_for_use
+    key = stripe_key_for_use(stripe_secret(), billing_enabled=billing_enabled())
+    if not key:
+        return None
+    stripe_sdk.api_key = key
+    return stripe_sdk.StripeClient(key)
+
+
+stripe_sdk.api_key = "sk_test_emergent"
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = _env('SENDER_EMAIL', 'onboarding@resend.dev')
+FRONTEND_URL = _env("FRONTEND_URL").rstrip("/")
+OWNER_PHONE = _env("OWNER_PHONE", "(480) 269-1329")
 # Links in owner emails. A blank value uses the public site, not the browser address.
 PUBLIC_SITE_URL = _env('PUBLIC_SITE_URL', 'https://www.thecalibrationcrew.us').rstrip('/')
 if RESEND_API_KEY:
@@ -61,6 +88,22 @@ if RESEND_API_KEY:
 from xero_invoice import xero_invoice_body, line_two_description, due_date_string
 # Card charging (real-if-Stripe-configured — see /charge-queue/{job_id}/charge)
 from charging import cents, chargeable_reason, interpret_payment_intent, decline_message
+from onboarding import (
+    AGREEMENT_PARAGRAPHS, AGREEMENT_SECTIONS, AGREEMENT_VERSION, CHARGE_ACCEPTANCE_TEXT, agreement_text,
+    addresses_match, address_problem, app_link, booking_gate, canonical_email,
+    duplicate_fields, invite_email_html, invite_register_url, normalize_phone,
+    password_error, sender_email_problem, shop_contact_errors, welcome_email_html,
+)
+from billing import (
+    CHARGE_MODE, INVOICE_MODE, TRIP_FEE_REASONS, amount_due, apply_late_fee, apply_trip_fee_only,
+    billing_plan, payment_mode, set_outside_service_area, treat_decline_as_invoice,
+)
+from payments import (
+    charge_job as stripe_charge_job,
+    create_checkout_setup, create_customer as stripe_create_customer,
+    create_job_invoice, create_late_fee_invoice, create_setup_intent,
+    mark_invoice_paid_out_of_band, retrieve_setup_checkout, save_payment_method,
+)
 # Google Maps (real-if-configured, else mock — same pattern; see geocode_address()/get_drive_time())
 from google_maps import (
     GEOCODE_URL, DISTANCE_MATRIX_URL, ROUTES_COMPUTE_URL, ROUTES_FIELD_MASK, GoogleMapsError,
@@ -158,6 +201,10 @@ IS_PRODUCTION = APP_ENV in ("production", "prod")
 # account whose stored password no longer matches, so the historically-exposed default can be
 # fixed by setting OWNER_PASSWORD / CONTRACTOR_PASSWORD in Emergent and restarting.
 SEED_OWNER_EMAIL = _env("OWNER_EMAIL", "caleb@thecalibrationcrew.us")
+
+
+def owner_notify_email() -> str:
+    return _env("OWNER_EMAIL", "caleb@thecalibrationcrew.us")
 SEED_OWNER_PASSWORD = _env("OWNER_PASSWORD")
 SEED_CONTRACTOR_EMAIL = _env("CONTRACTOR_EMAIL", "contractor@thecalibrationcrew.us")
 SEED_CONTRACTOR_PASSWORD = _env("CONTRACTOR_PASSWORD")
@@ -403,6 +450,45 @@ def _refuse_unusable_pin(geo: dict) -> None:
     refusal = pin_refusal(geo)
     if refusal:
         raise HTTPException(400, refusal)
+
+
+def mock_geocode_strict(address: str) -> Optional[dict]:
+    """City-keyword geocode with no central-Phoenix guess. None when the city is unknown."""
+    lowered = address.lower()
+    base = None
+    for key, coords in PHOENIX_CITY_COORDS.items():
+        if key in lowered:
+            base = coords
+            break
+    if base is None:
+        return None
+    seed = sum(ord(c) for c in address)
+    rng = random.Random(seed)
+    lat = base[0] + rng.uniform(-0.02, 0.02)
+    lng = base[1] + rng.uniform(-0.02, 0.02)
+    return {
+        "lat": round(lat, 6), "lng": round(lng, 6),
+        "formatted_address": address.strip(),
+        "in_metro": METRO_LAT_MIN < lat < METRO_LAT_MAX and METRO_LNG_MIN < lng < METRO_LNG_MAX,
+        "fallback": False,
+    }
+
+
+async def geocode_shop_address(address: str) -> dict:
+    """Locate a shop. A Maps failure is an error. There is no invented pin."""
+    if google_maps_enabled():
+        try:
+            data = await asyncio.to_thread(_google_geocode_request, address)
+            parsed = parse_geocode_response(data, address)
+            parsed["fallback"] = False
+            return parsed
+        except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as exc:
+            logger.error("[MAPS] shop geocode failed: %s", exc)
+            raise HTTPException(400, "Could not locate that address. Check the street and city and try again.")
+    geo = mock_geocode_strict(address)
+    if not geo:
+        raise HTTPException(400, "Could not locate that address inside the Phoenix Valley.")
+    return geo
 
 
 async def geocode_for_regeocode(address: str) -> dict:
@@ -906,6 +992,10 @@ class ShopIn(BaseModel):
     custom_rate_tesla: Optional[float] = None
     notes: Optional[str] = None
     terms_signed_by: Optional[str] = None
+    address_confirmed: bool = False
+    confirmed_address: Optional[str] = None
+    acknowledge_duplicate: bool = False
+    place_id: Optional[str] = None
 
 class ShopUpdate(ShopIn):
     status: Optional[Literal["active", "paused", "inactive"]] = None
@@ -931,6 +1021,7 @@ class BookingIn(BaseModel):
     calibration_type: Literal["static", "dynamic", "dual", "triple", "tesla"]
     notification_phone: Optional[str] = None
     notification_email: Optional[str] = None
+    invoice_instead: bool = False
 
 class JobEditIn(BaseModel):
     job_address: Optional[str] = None
@@ -1062,6 +1153,45 @@ class ShopUserLoginIn(BaseModel):
     email: EmailStr
     password: str
 
+class ShopRequestIn(BaseModel):
+    shop_name: str
+    contact_name: str
+    mobile: str
+    email: str
+    address: str
+    address_confirmed: bool = False
+    confirmed_address: Optional[str] = None
+    place_id: Optional[str] = None
+
+class ContactIn(BaseModel):
+    shop_name: Optional[str] = None
+    name: str
+    email: str
+    phone: Optional[str] = None
+    message: str
+
+class PaymentModeIn(BaseModel):
+    mode: Literal["charge_on_completion", "invoice_hold"]
+
+class TripFeeIn(BaseModel):
+    reason: Literal["bad_install", "customer_vehicle"]
+
+class OutsideAreaIn(BaseModel):
+    enabled: bool = True
+
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    password: str
+
+class PaymentMethodIn(BaseModel):
+    payment_method_id: str
+
+class AcceptChargeIn(BaseModel):
+    accepted: bool = False
+
 # ---------- Auth routes ----------
 @api.post("/auth/login", response_model=TokenOut)
 async def login(data: LoginIn):
@@ -1155,30 +1285,86 @@ async def list_shops(tech=Depends(require_owner)):
     shops = await db.shops.find({}, {"_id": 0}).to_list(1000)
     return shops
 
-@api.post("/shops")
-async def create_shop(data: ShopIn, tech=Depends(require_owner)):
+async def _duplicate_lists():
+    shops = await db.shops.find({}, {"_id": 0, "id": 1, "name": 1, "contact_email": 1}).to_list(5000)
+    users_col = getattr(db, "shop_users", None)
+    users = []
+    if users_col is not None:
+        users = await users_col.find({}, {"_id": 0, "shop_id": 1, "email": 1}).to_list(5000)
+    return shops, users
+
+
+async def _checked_shop_address(address: str, confirmed: bool, confirmed_address: Optional[str]) -> dict:
     try:
-        if data.contact_phone:
-            data.contact_phone = normalize_us_phone(data.contact_phone)
-        geo = await geocode_address(data.address)
+        geo = await geocode_address(address)
     except AddressNotFound as exc:
         raise HTTPException(400, str(exc))
-    except ValueError as exc:
-        raise HTTPException(400, str(exc))
     _refuse_unusable_pin(geo)
-    zone = detect_zone(geo["lng"])
-    shop = {
+    problem = address_problem(geo)
+    if problem:
+        raise HTTPException(400, problem)
+    if not confirmed or not addresses_match(confirmed_address, geo.get("formatted_address")):
+        raise HTTPException(status_code=409, detail={
+            "code": "needs_confirmation",
+            "message": "Confirm the address we found before saving.",
+            "formatted_address": geo.get("formatted_address"),
+            "lat": geo.get("lat"),
+            "lng": geo.get("lng"),
+            "in_metro": True,
+            "zone": detect_zone(geo["lng"]),
+        })
+    return geo
+
+
+def _raise_if_duplicates(name, email, shops, users, acknowledge: bool, ignore_shop_id=None):
+    dupes = duplicate_fields(name, email, shops, users, ignore_shop_id=ignore_shop_id)
+    if dupes and not acknowledge:
+        label = " and ".join(dupes)
+        raise HTTPException(status_code=409, detail={
+            "code": "duplicate",
+            "duplicates": dupes,
+            "message": f"A shop with this {label} is already on file. Save anyway only if that is intentional.",
+        })
+
+
+def _shop_document(data: ShopIn, geo: dict) -> dict:
+    payload = data.model_dump()
+    payload.pop("address_confirmed", None)
+    payload.pop("confirmed_address", None)
+    payload.pop("acknowledge_duplicate", None)
+    payload.pop("terms_signed_by", None)
+    payload["name"] = data.name.strip()
+    payload["contact_phone"] = normalize_phone(data.contact_phone)
+    payload["contact_email"] = canonical_email(data.contact_email)
+    payload["address"] = geo.get("formatted_address") or data.address.strip()
+    payload["formatted_address"] = geo.get("formatted_address")
+    return {
         "id": gen_id(),
-        **data.model_dump(),
+        **payload,
         "lat": geo["lat"], "lng": geo["lng"],
-        "geocode_source": "google",
-        "zone": zone,
+        "geocode_source": geo.get("source") or ("google" if google_maps_enabled() else "mock"),
+        "zone": detect_zone(geo["lng"]),
         "booking_link_token": secrets.token_hex(16),
-        "terms_signed_at": iso(now_utc()) if data.terms_signed_by else None,
+        "terms_signed_at": None,
+        "terms_signed_by": None,
+        "requires_billing_setup": True,
         "status": "active",
         "created_at": iso(now_utc()),
         "updated_at": iso(now_utc()),
     }
+
+
+@api.post("/shops")
+async def create_shop(data: ShopIn, tech=Depends(require_owner)):
+    geo = await _checked_shop_address(data.address, data.address_confirmed, data.confirmed_address)
+    errors = shop_contact_errors(
+        name=data.name, phone=data.contact_phone, email=data.contact_email, address=data.address,
+    )
+    if errors:
+        raise HTTPException(400, errors)
+    shops, users = await _duplicate_lists()
+    _raise_if_duplicates(data.name, data.contact_email, shops, users, data.acknowledge_duplicate)
+    shop = _shop_document(data, geo)
     await db.shops.insert_one(shop.copy())
     return shop
 
@@ -1195,6 +1381,18 @@ async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner
     if not shop:
         raise HTTPException(404, "Shop not found")
     update = data.model_dump(exclude_unset=True)
+    for flag in ("address_confirmed", "confirmed_address", "acknowledge_duplicate", "terms_signed_by"):
+        update.pop(flag, None)
+    if "contact_phone" in update:
+        phone = normalize_phone(update.get("contact_phone"))
+        if not phone:
+            raise HTTPException(400, "Enter a 10-digit mobile number.")
+        update["contact_phone"] = phone
+    if "contact_email" in update:
+        email = canonical_email(update.get("contact_email"))
+        if not email:
+            raise HTTPException(400, "Enter a valid email.")
+        update["contact_email"] = email
     if "address" in update and (update["address"] or "").strip() != (shop.get("address") or "").strip():
         try:
             geo = await geocode_for_regeocode(update["address"])
@@ -1203,10 +1401,18 @@ async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner
         _refuse_unusable_pin(geo)
         update["lat"] = geo["lat"]
         update["lng"] = geo["lng"]
-        update["geocode_source"] = "google" if geo.get("source") == "google" else geo.get("source") or "google"
+        update["formatted_address"] = geo.get("formatted_address") or update["address"]
+        update["address"] = update["formatted_address"]
+        update["geocode_source"] = geo.get("source") or "google"
         zone = zone_for_geocode(geo)
         if zone:
             update["zone"] = zone
+    shops, users = await _duplicate_lists()
+    _raise_if_duplicates(
+        update.get("name", shop.get("name")),
+        update.get("contact_email", shop.get("contact_email")),
+        shops, users, data.acknowledge_duplicate, ignore_shop_id=shop_id,
+    )
     update["updated_at"] = iso(now_utc())
     await db.shops.update_one({"id": shop_id}, {"$set": update})
     fresh = await db.shops.find_one({"id": shop_id}, {"_id": 0})
@@ -1219,16 +1425,26 @@ async def regenerate_link(shop_id: str, tech=Depends(require_owner)):
     return {"booking_link_token": token}
 
 # ---------- Public booking by token ----------
+async def _booking_gate_for_shop(shop: dict) -> dict:
+    users_col = getattr(db, "shop_users", None)
+    user = None
+    if users_col is not None and shop.get("id"):
+        user = await users_col.find_one({"shop_id": shop["id"]}, {"_id": 0})
+    return booking_gate(shop, user)
+
+
 @api.get("/public/shop/{token}")
 async def public_shop(token: str):
     shop = await db.shops.find_one({"booking_link_token": token, "status": "active"},
                                    {"_id": 0, "custom_rate_static": 1, "custom_rate_dynamic": 1,
                                     "custom_rate_dual": 1, "custom_rate_triple": 1, "custom_rate_tesla": 1,
                                     "pricing_tier": 1, "name": 1, "address": 1, "contact_phone": 1,
-                                    "contact_email": 1, "id": 1, "booking_link_token": 1, "zone": 1})
+                                    "contact_email": 1, "id": 1, "booking_link_token": 1, "zone": 1,
+                                    "requires_billing_setup": 1})
     if not shop:
         raise HTTPException(404, "This booking link is not active. Contact The Calibration Crew.")
-    return shop
+    gate = await _booking_gate_for_shop(shop)
+    return {**shop, "booking_open": gate["allowed"], "booking_message": gate["message"]}
 
 def shop_price_for(shop: dict, cal_type: str) -> float:
     if shop.get("pricing_tier") == "custom":
@@ -1553,7 +1769,7 @@ async def _send_booking_message(message: dict | None, audience: str = "shop"):
     """
     if not message or not (message.get("to") or "").strip():
         return None
-    if mail_route(audience) == "hold":
+    if mail_route(audience, message.get("kind"), message.get("to")) == "hold":
         return await _hold_booking_message(message, audience)
     return await send_email(
         message["to"], message["subject"], message["html"],
@@ -1820,6 +2036,10 @@ async def public_availability(query: SlotQuery):
     shop = await db.shops.find_one({"booking_link_token": query.booking_token, "status": "active"})
     if not shop:
         raise HTTPException(404, "Invalid booking link")
+    gate = await _booking_gate_for_shop(shop)
+    if not gate["allowed"]:
+        return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
+                "message": gate["message"]}
     try:
         geo = await geocode_address(query.job_address)
     except AddressNotFound as exc:
@@ -1869,6 +2089,9 @@ async def public_book(data: BookingIn):
     shop = await db.shops.find_one({"booking_link_token": data.booking_token, "status": "active"})
     if not shop:
         raise HTTPException(404, "Invalid booking link")
+    gate = await _booking_gate_for_shop(shop)
+    if not gate["allowed"]:
+        raise HTTPException(403, gate["message"])
     try:
         geo = await geocode_address(data.job_address)
     except AddressNotFound as exc:
@@ -1953,6 +2176,7 @@ async def public_book(data: BookingIn):
         "actual_arrival": None, "actual_completion": None,
         "result": None, "notes": customer["notes"],
         "price": price,
+        "payment_mode": INVOICE_MODE if data.invoice_instead else CHARGE_MODE,
         "invoice_id": None, "invoice_status": "pending",
         "google_calendar_event_id": None,
         "sequence_order": seq_count + 1,
@@ -2256,11 +2480,27 @@ async def _decide_requested_job(job_id: str, tech: dict, *, approve: bool) -> di
     await notify_booking_approval(fresh, "approved" if approve else "declined")
     return fresh
 
+@api.post("/jobs/{job_id}/payment-mode")
+async def set_payment_mode(job_id: str, body: PaymentModeIn, tech=Depends(require_owner)):
+    """Only the owner can switch a job between charge-on-completion and invoice hold."""
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("charged_at") or job.get("payment_status") in ("paid", "succeeded"):
+        raise HTTPException(400, "This job is already paid.")
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "payment_mode": body.mode, "updated_at": iso(now_utc()),
+    }})
+    return await db.jobs.find_one({"id": job_id}, {"_id": 0})
+
+
 @api.post("/jobs/{job_id}/status")
 async def update_status(job_id: str, body: JobStatusUpdate, tech=Depends(get_current_tech)):
     job = await db.jobs.find_one({"id": job_id})
     if not job:
         raise HTTPException(404, "Job not found")
+    if tech["role"] != "owner":
+        raise HTTPException(403, "Only the owner can change a job.")
     if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
         raise HTTPException(403, "Not your job")
     if job.get("status") in ("requested", "declined"):
@@ -2281,76 +2521,390 @@ async def update_status(job_id: str, body: JobStatusUpdate, tech=Depends(get_cur
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     return fresh
 
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return ""
+
+
+async def _shop_user_for(shop_id: str):
+    col = getattr(db, "shop_users", None)
+    if col is None or not shop_id:
+        return None
+    return await col.find_one({"shop_id": shop_id}, {"_id": 0})
+
+
+async def _record_local_invoice(job, shop, description: str, provider: str, stripe_invoice_id=None, hosted_url=None, total=None) -> dict:
+    """One invoice row per job. A second complete updates nothing new."""
+    existing = await db.job_invoices.find_one({"job_id": job["id"]}, {"_id": 0})
+    if existing:
+        return existing
+    row = {
+        "invoice_id": stripe_invoice_id or f"local-{job['id']}",
+        "stripe_invoice_id": stripe_invoice_id,
+        "provider": provider,
+        "status": "open",
+        "contact_name": shop.get("name"),
+        "total": total if total is not None else amount_due(job),
+        "hosted_url": hosted_url,
+        "description": description,
+        "created_at": iso(now_utc()),
+        "job_id": job["id"],
+    }
+    await db.job_invoices.update_one({"job_id": job["id"]}, {"$setOnInsert": row}, upsert=True)
+    stored = await db.job_invoices.find_one({"job_id": job["id"]}, {"_id": 0})
+    return stored or row
+
+
+async def _email_proof(job, shop, invoice: dict):
+    shop_user = await _shop_user_for(job.get("shop_id"))
+    to = (shop_user or {}).get("email") or shop.get("contact_email") or job.get("notification_email")
+    if not to:
+        return
+    link = invoice.get("hosted_url") or ""
+    mode = payment_mode(job)
+    if mode == INVOICE_MODE:
+        how = "This job is invoiced. The card is not charged unless you ask us to. You have 7 days before a $25 late fee."
+    else:
+        how = "The card on file is charged for this completed job. This invoice is your proof of purchase."
+    html = (
+        f"<p>Invoice for {shop.get('name')} — {job.get('calibration_label')}.</p>"
+        f"<p>{job.get('vehicle_year')} {job.get('vehicle_make')} {job.get('vehicle_model')}</p>"
+        f"<p>Amount: ${amount_due(job):.2f}</p><p>{how}</p>"
+    )
+    if link:
+        html += f"<p><a href=\"{link}\">View invoice</a></p>"
+    await _send_booking_message({
+        "to": to, "subject": f"Invoice — {shop.get('name')}", "html": html,
+        "kind": "job_invoice", "reply_to": owner_notify_email(),
+        "meta": {"job_id": job["id"], "invoice_id": invoice.get("invoice_id")},
+    }, "shop")
+
+
+async def _notify_payment_failed(job, shop, message: str):
+    attempt = int(job.get("charge_attempts") or 0)
+    if job.get("payment_failure_notified_attempt") == attempt and job.get("payment_status") == "payment_failed":
+        return
+    card_link = ""
+    try:
+        card_link = app_link(FRONTEND_URL, "/portal/settings")
+    except ValueError:
+        card_link = "/portal/settings"
+    await send_email(
+        owner_notify_email(),
+        f"Card declined — {shop.get('name')}",
+        f"<p>{shop.get('name')} — {message}</p><p>Job {job.get('id')} is marked payment failed.</p>",
+        kind="payment_failed_owner",
+        meta={"job_id": job["id"]},
+    )
+    shop_user = await _shop_user_for(job.get("shop_id"))
+    shop_email = (shop_user or {}).get("email") or shop.get("contact_email")
+    if shop_email:
+        await _send_booking_message({
+            "to": shop_email,
+            "subject": "Please update the card on file",
+            "html": (
+                f"<p>We could not charge the card for a completed calibration. {message}</p>"
+                f"<p><a href=\"{card_link}\">Update the card</a></p>"
+            ),
+            "kind": "payment_failed_shop",
+            "reply_to": owner_notify_email(),
+            "meta": {"job_id": job["id"]},
+        }, "shop")
+    await db.jobs.update_one({"id": job["id"]}, {"$set": {
+        "payment_failure_notified_attempt": attempt,
+    }})
+
+
+async def _charge_saved_card(job, shop) -> dict:
+    """Off-session charge. Refuses when the job is already paid. One Stripe key per attempt."""
+    plan = billing_plan(job)
+    if not plan["charge"]:
+        return job
+    shop_user = await _shop_user_for(job.get("shop_id"))
+    if not shop_user or not shop_user.get("stripe_customer_id") or not shop_user.get("stripe_payment_method_id"):
+        message = "No card on file to charge."
+        await db.jobs.update_one({"id": job["id"]}, {"$set": {
+            "payment_status": "payment_failed",
+            "charge_error": message,
+            "charge_error_at": iso(now_utc()),
+        }})
+        await _notify_payment_failed({**job, "payment_status": "payment_failed"}, shop, message)
+        return await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+    client = get_stripe()
+    if client is None:
+        message = "Stripe is not configured (set STRIPE_SECRET_KEY)."
+        await db.jobs.update_one({"id": job["id"]}, {"$set": {
+            "payment_status": "payment_failed", "charge_error": message, "charge_error_at": iso(now_utc()),
+        }})
+        logger.error("[CHARGE] %s", message)
+        return await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+    try:
+        result = await asyncio.to_thread(
+            stripe_charge_job, client,
+            job=job, customer_id=shop_user["stripe_customer_id"],
+            payment_method_id=shop_user["stripe_payment_method_id"],
+            receipt_email=None,
+        )
+    except stripe_sdk.error.CardError as exc:
+        decline_code = getattr(exc.error, "decline_code", None) if getattr(exc, "error", None) else None
+        message = decline_message(exc.code, decline_code)
+        attempt = int(job.get("charge_attempts") or 0) + 1
+        declined = treat_decline_as_invoice(job)
+        await db.jobs.update_one({"id": job["id"]}, {"$set": {
+            "payment_status": "payment_failed",
+            "payment_mode": declined["payment_mode"],
+            "invoiced_after_decline": True,
+            "charge_error": message,
+            "charge_error_at": iso(now_utc()),
+            "charge_attempts": attempt,
+        }})
+        failed = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+        await _notify_payment_failed(failed, shop, message)
+        logger.warning("[CHARGE] job %s declined: %s", job["id"], message)
+        return failed
+    except stripe_sdk.error.StripeError as exc:
+        message = getattr(exc, "user_message", None) or str(exc)
+        await db.jobs.update_one({"id": job["id"]}, {"$set": {
+            "payment_status": "payment_failed",
+            "charge_error": message,
+            "charge_error_at": iso(now_utc()),
+            "charge_attempts": int(job.get("charge_attempts") or 0) + 1,
+        }})
+        failed = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+        await _notify_payment_failed(failed, shop, message)
+        logger.error("[CHARGE] job %s failed: %s", job["id"], message)
+        return failed
+    if result.get("outcome") != "succeeded":
+        message = result.get("message") or "Card requires authentication."
+        declined = treat_decline_as_invoice(job)
+        await db.jobs.update_one({"id": job["id"]}, {"$set": {
+            "payment_status": "payment_failed",
+            "payment_mode": declined["payment_mode"],
+            "invoiced_after_decline": True,
+            "charge_error": message,
+            "charge_error_at": iso(now_utc()),
+            "stripe_payment_intent_id": result.get("payment_intent_id"),
+            "charge_attempts": int(job.get("charge_attempts") or 0) + 1,
+        }})
+        failed = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+        await _notify_payment_failed(failed, shop, message)
+        return failed
+    await db.jobs.update_one({"id": job["id"]}, {"$set": {
+        "charged_at": iso(now_utc()),
+        "charge_method": "stripe",
+        "payment_status": "paid",
+        "stripe_payment_intent_id": result.get("payment_intent_id"),
+        "charged_amount": amount_due(job),
+        "charge_error": None,
+    }})
+    paid = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+    for invoice_id in (paid.get("stripe_invoice_id"), paid.get("stripe_late_fee_invoice_id")):
+        if not invoice_id:
+            continue
+        try:
+            await asyncio.to_thread(mark_invoice_paid_out_of_band, client, invoice_id, job["id"])
+        except Exception as exc:
+            logger.warning("[CHARGE] could not mark invoice %s paid out of band: %s", invoice_id, exc)
+    logger.info("[CHARGE] job %s charged %s", job["id"], result.get("payment_intent_id"))
+    receipt_to = shop_user.get("email") or shop.get("contact_email")
+    if receipt_to:
+        await _send_booking_message({
+            "to": receipt_to,
+            "subject": f"Receipt — {shop.get('name')}",
+            "html": f"<p>Paid ${amount_due(paid):.2f} for {paid.get('calibration_label') or 'a calibration'}.</p>",
+            "kind": "receipt",
+            "reply_to": owner_notify_email(),
+            "meta": {"job_id": job["id"]},
+        }, "shop")
+    return paid
+
+
+async def _settle_completed_job(job_id: str) -> dict:
+    """Create at most one invoice, then charge only in charge-on-completion mode."""
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    shop = await db.shops.find_one({"id": job["shop_id"]}) or {"name": job.get("shop_name"), "id": job.get("shop_id")}
+    plan = billing_plan(job)
+    description = job.get("billing_description") or job.get("calibration_label") or "ADAS calibration"
+    if plan["create_invoice"]:
+        client = get_stripe()
+        shop_user = await _shop_user_for(job.get("shop_id"))
+        invoice = None
+        if client and shop_user and shop_user.get("stripe_customer_id"):
+            try:
+                created = await asyncio.to_thread(
+                    create_job_invoice, client,
+                    customer_id=shop_user["stripe_customer_id"], job=job, description=description,
+                    email_customer=shop_emails_enabled(),
+                )
+                invoice = await _record_local_invoice(
+                    job, shop, description, "stripe",
+                    stripe_invoice_id=created["stripe_invoice_id"],
+                    hosted_url=created.get("hosted_url"),
+                    total=created.get("total"),
+                )
+            except Exception as exc:
+                logger.error("[BILLING] Stripe invoice failed for %s: %s", job_id, exc)
+        if invoice is None:
+            invoice = await _record_local_invoice(job, shop, description, "local")
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "invoice_id": invoice["invoice_id"],
+            "stripe_invoice_id": invoice.get("stripe_invoice_id"),
+            "invoice_status": invoice.get("status") or "open",
+            "invoice_url": invoice.get("hosted_url"),
+            "invoice_provider": invoice.get("provider"),
+        }})
+        job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+        await _email_proof(job, shop, invoice)
+        await send_email(
+            _env("ADMIN_EMAIL", "admin@thecalibrationcrew.us"),
+            f"Invoice — {shop.get('name')}",
+            f"<p>Invoice {invoice['invoice_id']} for {shop.get('name')}, ${amount_due(job):.2f}. "
+            f"Mode: {payment_mode(job).replace('_', ' ')}.</p>",
+            kind="invoice_notification",
+            meta={"job_id": job_id, "invoice_id": invoice["invoice_id"], "provider": invoice.get("provider")},
+        )
+    if billing_plan(job)["charge"]:
+        if not billing_enabled():
+            await db.jobs.update_one({"id": job_id}, {"$set": {
+                "payment_status": "not_charged",
+                "charge_skipped": "BILLING_ENABLED is off",
+            }})
+            logger.info("[BILLING] skipped automatic charge for job %s. BILLING_ENABLED is off.", job_id)
+            job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+        else:
+            job = await _charge_saved_card(job, shop)
+    return job
+
+
+def _job_already_billed(job: dict) -> bool:
+    return bool(
+        job.get("invoice_id")
+        or job.get("stripe_invoice_id")
+        or job.get("charged_at")
+        or job.get("payment_status") in ("paid", "succeeded")
+    )
+
+
+@api.post("/jobs/{job_id}/outside-service-area")
+async def set_job_outside_service_area(job_id: str, body: OutsideAreaIn, tech=Depends(require_owner)):
+    """Add or remove the $30 outside-area trip fee on top of the calibration price."""
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") in ("cancelled", "declined"):
+        raise HTTPException(400, "That job is closed.")
+    if _job_already_billed(job):
+        raise HTTPException(400, "This job already has an invoice.")
+    updated = set_outside_service_area(job, body.enabled)
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "price": updated["price"],
+        "calibration_price": updated["calibration_price"],
+        "outside_service_area": updated["outside_service_area"],
+        "trip_fee": updated["trip_fee"],
+        "trip_fee_kind": updated["trip_fee_kind"],
+        "updated_at": iso(now_utc()),
+    }})
+    return await db.jobs.find_one({"id": job_id}, {"_id": 0})
+
+
+@api.post("/jobs/{job_id}/trip-fee")
+async def charge_trip_fee_only(job_id: str, body: TripFeeIn, tech=Depends(require_owner)):
+    """Couldn't calibrate. Charge the $30 trip fee through the same invoice path as a completed job."""
+    if body.reason not in TRIP_FEE_REASONS:
+        raise HTTPException(400, "Pick a trip-fee reason.")
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") in ("cancelled", "declined"):
+        raise HTTPException(400, "That job is closed.")
+    if _job_already_billed(job):
+        raise HTTPException(400, "This job already has an invoice.")
+    priced = apply_trip_fee_only(job, body.reason)
+    now = iso(now_utc())
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "price": priced["price"],
+        "trip_fee": priced["trip_fee"],
+        "trip_fee_reason": priced["trip_fee_reason"],
+        "trip_fee_kind": priced["trip_fee_kind"],
+        "calibration_not_performed": True,
+        "outside_service_area": False,
+        "billing_description": priced["billing_description"],
+        "status": "complete",
+        "result": "not_performed",
+        "actual_completion": job.get("actual_completion") or now,
+        "payment_mode": job.get("payment_mode") or CHARGE_MODE,
+        "updated_at": now,
+    }})
+    fresh = await _settle_completed_job(job_id)
+    return {"job": fresh}
+
+
+@api.post("/jobs/{job_id}/charge-card")
+async def charge_card_now(job_id: str, tech=Depends(require_owner)):
+    """Owner charges the saved card for an invoiced job, or retries a failed charge."""
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") != "complete":
+        raise HTTPException(400, "Complete the job before charging the card.")
+    if job.get("charged_at") or job.get("payment_status") in ("paid", "succeeded"):
+        raise HTTPException(400, "This job is already paid.")
+    shop = await db.shops.find_one({"id": job["shop_id"]}) or {"name": job.get("shop_name"), "id": job.get("shop_id")}
+    # Treat a held invoice as chargeable for this explicit button without flipping the stored mode
+    # until the charge succeeds. billing_plan only charges charge_on_completion, so force that view.
+    payable = {**job, "payment_mode": CHARGE_MODE}
+    fresh = await _charge_saved_card(payable, shop)
+    if fresh.get("payment_status") == "payment_failed":
+        raise HTTPException(402, fresh.get("charge_error") or "The card was not charged.")
+    return {"job": fresh}
+
+
 @api.post("/jobs/{job_id}/complete")
 async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_tech)):
     job = await db.jobs.find_one({"id": job_id})
     if not job:
         raise HTTPException(404, "Job not found")
+    if tech["role"] != "owner":
+        raise HTTPException(403, "Only the owner can complete a job.")
     if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
         raise HTTPException(403, "Not your job")
 
     shop = await db.shops.find_one({"id": job["shop_id"]})
     vehicle = await db.vehicles.find_one({"id": job["vehicle_id"]})
 
-    # Mock document upload
+    already_complete = job.get("status") == "complete"
     file_name = f"{job['customer_last_name']}_{shop['name'].upper().replace(' ', '')}_{job['vehicle_make']}_{job['vehicle_model']}_{job['vehicle_year']}.pdf"
-    doc = {
-        "id": gen_id(), "job_id": job_id, "file_name": file_name,
-        "storage_path": f"calibration-docs/Recals/Recal - Caleb/{datetime.fromisoformat(job['scheduled_start']).strftime('%Y/%B')}/{file_name}",
-        "file_type": "pdf", "uploaded_at": iso(now_utc()), "uploaded_by": tech["id"],
+    doc = None
+    if not already_complete:
+        doc = {
+            "id": gen_id(), "job_id": job_id, "file_name": file_name,
+            "storage_path": f"calibration-docs/Recals/Recal - Caleb/{datetime.fromisoformat(job['scheduled_start']).strftime('%Y/%B')}/{file_name}",
+            "file_type": "pdf", "uploaded_at": iso(now_utc()), "uploaded_by": tech["id"],
+        }
+        await db.documents.insert_one(doc.copy())
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "status": "complete",
+            "actual_completion": job.get("actual_completion") or iso(now_utc()),
+            "result": body.result,
+            "notes": completion_notes(job.get("notes"), body.notes),
+            "payment_mode": job.get("payment_mode") or CHARGE_MODE,
+            "updated_at": iso(now_utc()),
+        }})
+        msg = (f"ADAS calibration complete on your {job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}. "
+               f"Your invoice is the proof of purchase. — The Calibration Crew")
+        if job.get("notification_phone"):
+            await mock_send_sms(job["notification_phone"], msg, kind="completed", job_id=job_id)
+
+    fresh = await _settle_completed_job(job_id)
+    invoice = {
+        "invoice_id": fresh.get("invoice_id"),
+        "provider": fresh.get("invoice_provider"),
+        "status": fresh.get("invoice_status"),
     }
-    await db.documents.insert_one(doc.copy())
-
-    # Create the invoice — real Xero draft if connected, else mock. Attach the
-    # technician's uploaded calibration PDF when one exists for this job.
-    pricing_label = STANDARD_PRICING[job["calibration_type"]]["label"]
-    pdf_bytes = None
-    pdf_name = None
-    real_doc = await db.documents.find_one({"job_id": job_id, "data_b64": {"$exists": True}})
-    if real_doc and real_doc.get("data_b64"):
-        try:
-            pdf_bytes = base64.b64decode(real_doc["data_b64"])
-            pdf_name = real_doc.get("file_name") or file_name
-        except Exception:
-            pdf_bytes = None
-    invoice = await create_invoice_for_job(job, shop, vehicle, pricing_label, pdf_bytes=pdf_bytes, pdf_name=pdf_name)
-
-    update = {
-        "status": "complete",
-        "actual_completion": iso(now_utc()),
-        "result": body.result,
-        "notes": completion_notes(job.get("notes"), body.notes),
-        "invoice_id": invoice["invoice_id"],
-        "invoice_status": "draft",
-        "updated_at": iso(now_utc()),
-    }
-    await db.jobs.update_one({"id": job_id}, {"$set": update})
-
-    # Completion SMS
-    msg = (f"ADAS calibration complete on your {job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}. "
-           f"Documentation will be included with your invoice. — The Calibration Crew")
-    if job.get("notification_phone"):
-        await mock_send_sms(job["notification_phone"], msg, kind="completed", job_id=job_id)
-
-    # Notify admin (Maddy). Real email via Resend when configured, else logged for manual send.
-    provider = invoice.get("provider", "mock")
-    veh_str = f"{job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}"
-    admin_subject = f"New Invoice Created — {shop['name']} — {veh_str}"
-    admin_html = (
-        f"<p>A new <b>{invoice.get('status', 'DRAFT')}</b> invoice was created "
-        f"({'in Xero' if provider == 'xero' else 'in mock mode'}).</p>"
-        f"<ul><li>Invoice: {invoice.get('invoice_id')}</li>"
-        f"<li>Shop: {shop['name']}</li><li>Vehicle: {veh_str}</li>"
-        f"<li>Amount: ${job['price']}</li></ul>"
-        f"<p>Review and approve it in Xero.</p>"
-    )
-    await send_email(
-        _env("ADMIN_EMAIL", "admin@thecalibrationcrew.us"),
-        admin_subject, admin_html, kind="invoice_notification",
-        meta={"job_id": job_id, "invoice_id": invoice.get("invoice_id"), "provider": provider},
-    )
-
-    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     return {"job": fresh, "invoice": invoice, "document": doc}
 
 # ---------- Dashboard summary ----------
@@ -2434,8 +2988,8 @@ async def upload_document(job_id: str, file: UploadFile = File(...), tech=Depend
     job = await db.jobs.find_one({"id": job_id})
     if not job:
         raise HTTPException(404, "Job not found")
-    if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
-        raise HTTPException(403, "Not your job")
+    if tech["role"] != "owner":
+        raise HTTPException(403, "Only the owner can change a job.")
     contents = await file.read()
     if len(contents) > 10 * 1024 * 1024:  # 10 MB limit
         raise HTTPException(400, "File too large (max 10 MB)")
@@ -2530,7 +3084,11 @@ async def sms_log(limit: int = 50, tech=Depends(require_owner)):
 async def list_invoices(tech=Depends(require_owner)):
     real = await db.xero_invoices.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
     mock = await db.mock_xero_invoices.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    invs = real + mock
+    proof = []
+    proof_col = getattr(db, "job_invoices", None)
+    if proof_col is not None:
+        proof = await proof_col.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    invs = real + mock + proof
     invs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return invs[:200]
 
@@ -3075,11 +3633,13 @@ async def update_contractor(contractor_id: str, body: ContractorUpdate, tech=Dep
 async def send_email(to: str, subject: str, html: str, kind: str = "transactional", meta: Optional[dict] = None, reply_to: Optional[str] = None):
     """Send transactional email via Resend. Gracefully falls back to DB log if no key.
 
-    reply_to is the address a shop reply should reach. Booking mail sets it to OWNER_EMAIL.
+    Shop and customer mail does not come through here while testing. That mail
+    uses _send_booking_message, which holds it in email_outbox.
+    reply_to is the address a reply should reach. Blank uses the owner email.
     """
+    reply = reply_to if reply_to is not None else owner_notify_email()
     log = {
-        "id": gen_id(), "to": to, "from": SENDER_EMAIL, "reply_to": reply_to,
-        "subject": subject,
+        "id": gen_id(), "to": to, "from": SENDER_EMAIL, "reply_to": reply, "subject": subject,
         "html": html, "kind": kind, "meta": meta or {}, "sent_at": iso(now_utc()),
         "delivered": False, "provider_id": None, "error": None,
     }
@@ -3091,8 +3651,8 @@ async def send_email(to: str, subject: str, html: str, kind: str = "transactiona
     try:
         import asyncio
         payload = {"from": SENDER_EMAIL, "to": [to], "subject": subject, "html": html}
-        if reply_to:
-            payload["reply_to"] = reply_to
+        if reply:
+            payload["reply_to"] = reply
         result = await asyncio.to_thread(resend_sdk.Emails.send, payload)
         log["delivered"] = True
         log["provider_id"] = result.get("id") if isinstance(result, dict) else None
@@ -3104,172 +3664,334 @@ async def send_email(to: str, subject: str, html: str, kind: str = "transactiona
         logger.error(f"Resend send failed: {e}")
         return log
 
-def invite_email_html(shop_name: str, register_url: str) -> str:
-    return f"""
-    <table width="100%" cellpadding="0" cellspacing="0" style="background:#2A2E37;color:#f5f5f5;font-family:'DM Sans',Arial,sans-serif;padding:40px 0;">
-      <tr><td align="center">
-        <table width="560" cellpadding="0" cellspacing="0" style="background:#343843;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:32px;">
-          <tr><td>
-            <div style="font-family:'Saira Stencil One','Courier New',monospace;font-size:28px;letter-spacing:0.04em;color:#F97316;margin:0 0 8px;">CALIBRATION<span style="background:#F97316;color:#2A2E37;padding:2px 8px;margin-left:6px;border-radius:2px;">OS</span></div>
-            <p style="color:#9CA0AB;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;margin:0 0 24px;font-weight:600;">By The Calibration Crew · Shop Portal Invitation</p>
-            <h2 style="font-family:'Saira Stencil One','Courier New',monospace;font-size:22px;margin:0 0 12px;letter-spacing:0.02em;">{shop_name}, YOU&rsquo;RE INVITED.</h2>
-            <p style="color:#c4c4c4;line-height:1.6;font-size:15px;">The Calibration Crew has set up a dedicated portal for your shop. Inside you can:</p>
-            <ul style="color:#c4c4c4;line-height:1.7;font-size:15px;">
-              <li>View all your scheduled and completed calibrations</li>
-              <li>See our daily route map so you can spot add-on opportunities</li>
-              <li>Download recalibration documentation for invoicing</li>
-              <li>Book new calibrations 24/7</li>
-            </ul>
-            <p style="color:#c4c4c4;line-height:1.6;font-size:15px;">Setup takes ~2 minutes and includes a card-on-file requirement (we charge per completed job to keep things friction-free).</p>
-            <p style="text-align:center;margin:32px 0;">
-              <a href="{register_url}" style="background:#F97316;color:#2A2E37;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:700;display:inline-block;font-family:'Saira Stencil One','Courier New',monospace;letter-spacing:0.06em;">REGISTER NOW &rarr;</a>
-            </p>
-            <p style="color:#6B7280;font-size:12px;">This link expires in 14 days. Questions? Reply to this email.</p>
-          </td></tr>
-        </table>
-      </td></tr>
-    </table>
-    """
-
-# ---------- Shop user auth + portal endpoints ----------
-@api.post("/invites")
-async def create_invite(body: InviteCreateIn, tech=Depends(require_owner)):
-    shop = await db.shops.find_one({"id": body.shop_id})
-    if not shop:
-        raise HTTPException(404, "Shop not found")
+async def _issue_invite(shop: dict, recipient_email: str, previous_id: Optional[str] = None) -> dict:
+    """14-day invite. The link always comes from FRONTEND_URL, never the browser origin."""
     token = secrets.token_urlsafe(24)
+    try:
+        register_url = invite_register_url(FRONTEND_URL, token)
+        link_error = None
+    except ValueError as exc:
+        register_url = None
+        link_error = str(exc)
+        logger.error("[EMAIL] %s", link_error)
     invite = {
-        "id": gen_id(), "shop_id": body.shop_id, "shop_name": shop["name"],
-        "recipient_email": body.recipient_email, "token": token,
+        "id": gen_id(), "shop_id": shop["id"], "shop_name": shop["name"],
+        "recipient_email": recipient_email, "token": token,
         "status": "pending",
         "created_at": iso(now_utc()),
         "expires_at": iso(now_utc() + timedelta(days=14)),
         "registered_at": None, "shop_user_id": None,
+        "previous_invite_id": previous_id,
+        "email_status": "failed",
+        "email_error": link_error,
+        "register_url": register_url,
     }
+    if register_url:
+        log = await _send_booking_message({
+            "to": recipient_email,
+            "subject": f"Set up {shop['name']} with The Calibration Crew",
+            "html": invite_email_html(shop["name"], register_url),
+            "kind": "invite",
+            "reply_to": owner_notify_email(),
+            "meta": {"invite_id": invite["id"], "shop_id": shop["id"]},
+        }, "shop")
+        if log and log.get("delivered"):
+            invite["email_status"] = "sent"
+            invite["email_error"] = None
+        elif log and log.get("audience"):
+            invite["email_status"] = "held"
+            invite["email_error"] = None
+        else:
+            invite["email_status"] = "failed"
+            invite["email_error"] = (log or {}).get("error") or "Email was not delivered."
     await db.invites.insert_one(invite.copy())
-    origin = (body.origin or "").rstrip('/')
-    register_url = f"{origin}/portal/invite/{token}" if origin else f"/portal/invite/{token}"
-    await send_email(
-        to=body.recipient_email,
-        subject=f"You're invited to the CalibrationOS Shop Portal — {shop['name']}",
-        html=invite_email_html(shop["name"], register_url),
-        kind="invite", meta={"invite_id": invite["id"], "shop_id": shop["id"]},
-    )
-    return {**invite, "register_url": register_url}
+    return invite
+
+
+# ---------- Shop user auth + portal endpoints ----------
+@api.post("/invites")
+async def create_invite(body: InviteCreateIn, tech=Depends(require_owner)):
+    shop = await db.shops.find_one({"id": body.shop_id}, {"_id": 0})
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    # body.origin is ignored on purpose. A preview URL must not land in a shop inbox.
+    return await _issue_invite(shop, str(body.recipient_email))
+
+
+@api.post("/invites/{invite_id}/resend")
+async def resend_invite(invite_id: str, tech=Depends(require_owner)):
+    """New 14-day token. The previous token stops working."""
+    old = await db.invites.find_one({"id": invite_id})
+    if not old:
+        raise HTTPException(404, "Invitation not found")
+    if old.get("status") == "registered":
+        raise HTTPException(400, "This shop already finished registration. Send a password reset instead.")
+    shop = await db.shops.find_one({"id": old["shop_id"]}, {"_id": 0})
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    await db.invites.update_one({"id": invite_id}, {"$set": {"status": "revoked", "revoked_at": iso(now_utc())}})
+    return await _issue_invite(shop, old["recipient_email"], previous_id=invite_id)
 
 @api.get("/invites")
 async def list_invites(tech=Depends(require_owner)):
     invites = await db.invites.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return invites
 
+def _invite_unusable(inv: dict) -> Optional[dict]:
+    if inv.get("status") == "revoked":
+        return {"code": "revoked", "message": "This link was replaced. Request a new one."}
+    if inv.get("status") not in (None, "pending"):
+        return {"code": "used", "message": "This link was already used."}
+    if inv.get("expires_at") and inv["expires_at"] < iso(now_utc()):
+        return {"code": "expired", "message": "This link has expired."}
+    return None
+
+
 @api.get("/public/invites/{token}")
 async def public_invite_lookup(token: str):
     inv = await db.invites.find_one({"token": token}, {"_id": 0})
     if not inv:
-        raise HTTPException(404, "Invitation not found")
-    if inv["status"] != "pending":
-        raise HTTPException(400, f"Invitation already {inv['status']}")
-    if inv["expires_at"] < iso(now_utc()):
-        raise HTTPException(400, "Invitation expired")
+        raise HTTPException(404, detail={"code": "missing", "message": "Invitation not found"})
+    problem = _invite_unusable(inv)
+    if problem:
+        raise HTTPException(400, detail=problem)
     shop = await db.shops.find_one({"id": inv["shop_id"]},
         {"_id": 0, "name": 1, "address": 1, "contact_phone": 1})
-    return {**inv, "shop": shop}
+    return {
+        **inv, "shop": shop,
+        "agreement_version": AGREEMENT_VERSION,
+        "agreement_paragraphs": AGREEMENT_PARAGRAPHS,
+        "agreement_sections": AGREEMENT_SECTIONS,
+        "owner_phone": OWNER_PHONE,
+    }
+
+
+@api.post("/public/invites/{token}/request-new")
+async def request_new_invite(token: str):
+    inv = await db.invites.find_one({"token": token})
+    if not inv:
+        raise HTTPException(404, "Invitation not found")
+    shop = await db.shops.find_one({"id": inv["shop_id"]}, {"_id": 0})
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    if inv.get("status") == "pending":
+        await db.invites.update_one({"id": inv["id"]}, {"$set": {"status": "revoked", "revoked_at": iso(now_utc())}})
+    created = await _issue_invite(shop, inv["recipient_email"], previous_id=inv["id"])
+    if created.get("email_status") == "failed":
+        raise HTTPException(502, detail={
+            "code": "email_failed",
+            "message": created.get("email_error") or "We could not email a new link.",
+            "owner_phone": OWNER_PHONE,
+        })
+    if created.get("email_status") == "held":
+        return {
+            "ok": True, "held": True, "owner_phone": OWNER_PHONE,
+            "message": "The new link is in Email preview. Shop email is off, so it was not sent.",
+        }
+    return {"ok": True, "message": "A new link is on the way.", "owner_phone": OWNER_PHONE}
+
 
 @api.post("/public/invites/{token}/register")
-async def register_shop_user(token: str, body: ShopUserRegisterIn):
+async def register_shop_user(token: str, body: ShopUserRegisterIn, request: Request):
     if not body.terms_agreed:
         raise HTTPException(400, "You must agree to the terms")
+    if not (body.terms_signature or "").strip():
+        raise HTTPException(400, "Type your name to sign.")
+    pw_problem = password_error(body.password)
+    if pw_problem:
+        raise HTTPException(400, pw_problem)
     inv = await db.invites.find_one({"token": token})
-    if not inv or inv["status"] != "pending" or inv["expires_at"] < iso(now_utc()):
+    if not inv:
         raise HTTPException(400, "Invitation invalid or expired")
+    problem = _invite_unusable(inv)
+    if problem:
+        raise HTTPException(400, problem["message"])
     existing = await db.shop_users.find_one({"email": inv["recipient_email"].lower()})
     if existing:
         raise HTTPException(400, "An account already exists for this email")
-    # Create Stripe customer (graceful fallback if Stripe key is the placeholder)
+    user_id = gen_id()
     stripe_customer_id = None
     stripe_error = None
-    if stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent"):
+    client = get_stripe()
+    if client:
         try:
-            cust = await asyncio.to_thread(stripe_sdk.Customer.create,
-                email=inv["recipient_email"], name=body.full_name,
-                metadata={"shop_id": inv["shop_id"]})
-            stripe_customer_id = cust["id"]
-        except Exception as e:
-            stripe_error = str(e)
-            logger.warning(f"Stripe customer creation skipped: {e}")
+            stripe_customer_id = await asyncio.to_thread(
+                stripe_create_customer, client,
+                email=inv["recipient_email"], name=body.full_name, shop_id=inv["shop_id"],
+            )
+        except Exception as exc:
+            stripe_error = str(exc)
+            logger.error("[STRIPE] customer create failed: %s", exc)
     else:
-        stripe_error = "Stripe key not configured (using placeholder)"
-    user_id = gen_id()
+        stripe_error = "Stripe is not configured. Set STRIPE_SECRET_KEY to a test key."
+        logger.error("[STRIPE] %s", stripe_error)
+    signed_at = iso(now_utc())
     su = {
         "id": user_id, "email": inv["recipient_email"].lower(),
-        "full_name": body.full_name,
+        "full_name": body.full_name.strip(),
         "password_hash": hash_password(body.password),
         "shop_id": inv["shop_id"], "shop_name": inv["shop_name"],
         "stripe_customer_id": stripe_customer_id,
         "stripe_payment_method_id": None,
         "card_brand": None, "card_last4": None, "card_exp_month": None, "card_exp_year": None,
-        "terms_signature": body.terms_signature,
-        "terms_signed_at": iso(now_utc()),
+        "terms_signature": body.terms_signature.strip(),
+        "terms_signed_at": signed_at,
+        "agreement_version": AGREEMENT_VERSION,
+        "agreement_text": agreement_text(),
+        "agreement_ip": _client_ip(request),
+        "agreement_user_agent": request.headers.get("user-agent", ""),
+        "charge_authorization_accepted_at": None,
         "is_active": True,
-        "created_at": iso(now_utc()),
+        "created_at": signed_at,
     }
     await db.shop_users.insert_one(su.copy())
     await db.invites.update_one({"token": token}, {"$set": {
-        "status": "registered", "registered_at": iso(now_utc()), "shop_user_id": user_id,
+        "status": "registered", "registered_at": signed_at, "shop_user_id": user_id,
     }})
-    # Create Stripe Checkout in setup mode to capture card (only if Stripe configured)
-    origin = (body.origin or "").rstrip('/')
+    setup = None
     checkout_url = None
-    if stripe_customer_id and origin:
+    if client and stripe_customer_id and FRONTEND_URL:
         try:
-            session = await asyncio.to_thread(stripe_sdk.checkout.Session.create,
-                mode="setup", payment_method_types=["card"],
-                customer=stripe_customer_id,
-                success_url=f"{origin}/portal/setup-return?session_id={{CHECKOUT_SESSION_ID}}",
-                cancel_url=f"{origin}/portal/setup-return?cancelled=1",
-                metadata={"shop_user_id": user_id})
-            checkout_url = session["url"]
-        except Exception as e:
-            logger.warning(f"Stripe Checkout setup skipped: {e}")
-            stripe_error = str(e)
+            setup = await asyncio.to_thread(
+                create_setup_intent, client, customer_id=stripe_customer_id, shop_user_id=user_id,
+            )
+            checkout_url = await asyncio.to_thread(
+                create_checkout_setup, client,
+                customer_id=stripe_customer_id, shop_user_id=user_id,
+                success_url=app_link(FRONTEND_URL, "/portal/setup-return?session_id={CHECKOUT_SESSION_ID}"),
+                cancel_url=app_link(FRONTEND_URL, "/portal/setup-return?cancelled=1"),
+            )
+        except Exception as exc:
+            stripe_error = str(exc)
+            logger.error("[STRIPE] card setup was not created: %s", exc)
     token_jwt = make_portal_token(user_id)
     return {
         "shop_user_id": user_id, "token": token_jwt,
+        "stripe_client_secret": (setup or {}).get("client_secret"),
         "stripe_checkout_url": checkout_url,
-        "stripe_unavailable": checkout_url is None,
+        "stripe_unavailable": not (setup or checkout_url),
         "stripe_error": stripe_error,
+        "agreement_version": AGREEMENT_VERSION,
     }
+
+
+async def _store_card(su: dict, card: dict) -> dict:
+    await db.shop_users.update_one({"id": su["id"]}, {"$set": {**card, "updated_at": iso(now_utc())}})
+    return await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
+
+
+@api.post("/portal/setup-intent")
+async def portal_setup_intent(su=Depends(get_current_shop_user)):
+    """Start or replace the card. Creates the Stripe customer if signup could not."""
+    client = get_stripe()
+    if client is None:
+        raise HTTPException(400, "Stripe is not configured. Set STRIPE_SECRET_KEY to a test key.")
+    customer_id = su.get("stripe_customer_id")
+    if not customer_id:
+        try:
+            customer_id = await asyncio.to_thread(
+                stripe_create_customer, client,
+                email=su["email"], name=su.get("full_name") or su["email"], shop_id=su["shop_id"],
+            )
+        except Exception as exc:
+            logger.error("[STRIPE] customer create failed: %s", exc)
+            raise HTTPException(502, "Could not start card setup.")
+        await db.shop_users.update_one({"id": su["id"]}, {"$set": {"stripe_customer_id": customer_id}})
+    try:
+        setup = await asyncio.to_thread(
+            create_setup_intent, client, customer_id=customer_id, shop_user_id=su["id"],
+        )
+    except Exception as exc:
+        logger.error("[STRIPE] setup intent failed: %s", exc)
+        raise HTTPException(502, "Could not start card setup.")
+    return {"client_secret": setup["client_secret"]}
+
+
+@api.post("/portal/payment-method")
+async def portal_save_payment_method(body: PaymentMethodIn, su=Depends(get_current_shop_user)):
+    client = get_stripe()
+    if client is None or not su.get("stripe_customer_id"):
+        raise HTTPException(400, "Card setup is not available yet.")
+    try:
+        card = await asyncio.to_thread(
+            save_payment_method, client,
+            customer_id=su["stripe_customer_id"], payment_method_id=body.payment_method_id,
+        )
+    except Exception as exc:
+        logger.error("[STRIPE] could not save card: %s", exc)
+        raise HTTPException(502, "Could not save that card.")
+    fresh = await _store_card(su, card)
+    return {"status": "complete", "shop_user": fresh, "needs_acceptance": not fresh.get("charge_authorization_accepted_at")}
+
+
+@api.post("/portal/accept-charge")
+async def portal_accept_charge(body: AcceptChargeIn, request: Request, su=Depends(get_current_shop_user)):
+    if not body.accepted:
+        raise HTTPException(400, "Accept the card agreement to finish setup.")
+    if not su.get("stripe_payment_method_id"):
+        raise HTTPException(400, "Save a card before accepting.")
+    accepted_at = iso(now_utc())
+    await db.shop_users.update_one({"id": su["id"]}, {"$set": {
+        "charge_authorization_accepted_at": accepted_at,
+        "charge_authorization_text": CHARGE_ACCEPTANCE_TEXT,
+        "charge_authorization_ip": _client_ip(request),
+        "charge_authorization_user_agent": request.headers.get("user-agent", ""),
+    }})
+    shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
+    fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
+    if shop and not su.get("charge_authorization_accepted_at"):
+        try:
+            booking_url = app_link(FRONTEND_URL, f"/book/{shop['booking_link_token']}")
+        except ValueError:
+            booking_url = f"/book/{shop['booking_link_token']}"
+            logger.error("[EMAIL] FRONTEND_URL is not set, welcome email has a relative booking link.")
+        await _send_booking_message({
+            "to": fresh["email"],
+            "subject": f"You're set — {shop['name']}",
+            "html": welcome_email_html(shop["name"], booking_url),
+            "kind": "welcome",
+            "reply_to": owner_notify_email(),
+            "meta": {"shop_id": shop["id"]},
+        }, "shop")
+        await send_email(
+            owner_notify_email(),
+            f"{shop['name']} finished signup",
+            f"<p>{shop['name']} finished signup. Booking link: {booking_url}</p>",
+            kind="signup_finished",
+            meta={"shop_id": shop["id"]},
+        )
+    return {"shop_user": fresh, "booking_link_token": (shop or {}).get("booking_link_token")}
+
 
 @api.get("/portal/stripe-setup-status")
 async def portal_stripe_setup_status(session_id: str, su=Depends(get_current_shop_user)):
-    """Called after Stripe redirect to confirm + persist the payment method."""
+    """Called after Stripe Checkout redirect to confirm and persist the payment method."""
+    client = get_stripe()
+    if client is None:
+        raise HTTPException(400, "Stripe is not configured.")
     try:
-        session = await asyncio.to_thread(stripe_sdk.checkout.Session.retrieve, session_id,
-            expand=["setup_intent", "setup_intent.payment_method"])
-    except Exception as e:
-        raise HTTPException(500, f"Could not retrieve setup session: {e}")
+        session = await asyncio.to_thread(retrieve_setup_checkout, client, session_id)
+    except Exception as exc:
+        raise HTTPException(500, f"Could not retrieve setup session: {exc}")
     setup_intent = session.get("setup_intent") or {}
     pm = setup_intent.get("payment_method") or {}
     pm_id = pm.get("id") if isinstance(pm, dict) else pm
     if not pm_id:
         return {"status": "incomplete", "session_status": session.get("status")}
-    # Attach as default + fetch card details
     try:
-        await asyncio.to_thread(stripe_sdk.Customer.modify, su["stripe_customer_id"],
-            invoice_settings={"default_payment_method": pm_id})
-        pm_obj = pm if isinstance(pm, dict) and pm.get("card") else \
-                 await asyncio.to_thread(stripe_sdk.PaymentMethod.retrieve, pm_id)
-        card = pm_obj.get("card", {}) if isinstance(pm_obj, dict) else {}
-    except Exception as e:
-        raise HTTPException(500, f"Could not attach payment method: {e}")
-    await db.shop_users.update_one({"id": su["id"]}, {"$set": {
-        "stripe_payment_method_id": pm_id,
-        "card_brand": card.get("brand"), "card_last4": card.get("last4"),
-        "card_exp_month": card.get("exp_month"), "card_exp_year": card.get("exp_year"),
-        "updated_at": iso(now_utc()),
-    }})
-    fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
-    return {"status": "complete", "shop_user": fresh}
+        card = await asyncio.to_thread(
+            save_payment_method, client,
+            customer_id=su["stripe_customer_id"], payment_method_id=pm_id,
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"Could not attach payment method: {exc}")
+    fresh = await _store_card(su, card)
+    return {
+        "status": "complete",
+        "shop_user": fresh,
+        "needs_acceptance": not fresh.get("charge_authorization_accepted_at"),
+        "acceptance_text": CHARGE_ACCEPTANCE_TEXT,
+    }
 
 @api.post("/portal/auth/login")
 async def portal_login(body: ShopUserLoginIn):
@@ -3286,7 +4008,197 @@ async def portal_login(body: ShopUserLoginIn):
 @api.get("/portal/me")
 async def portal_me(su=Depends(get_current_shop_user)):
     shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
-    return {"shop_user": su, "shop": shop}
+    return {"shop_user": su, "shop": shop, "setup": booking_gate(shop or {}, su)}
+
+
+@api.post("/portal/auth/forgot-password")
+async def portal_forgot_password(body: ForgotPasswordIn):
+    """Always the same reply. A one-time link is emailed when the account exists."""
+    su = await db.shop_users.find_one({"email": body.email.lower()})
+    if su:
+        token = secrets.token_urlsafe(24)
+        await db.password_resets.insert_one({
+            "id": gen_id(), "token": token, "shop_user_id": su["id"],
+            "email": su["email"], "created_at": iso(now_utc()),
+            "expires_at": iso(now_utc() + timedelta(hours=1)), "used_at": None,
+        })
+        try:
+            link = app_link(FRONTEND_URL, f"/portal/reset/{token}")
+        except ValueError:
+            link = None
+            logger.error("[EMAIL] FRONTEND_URL is not set. Password reset was not emailed.")
+        if link:
+            await _send_booking_message({
+                "to": su["email"],
+                "subject": "Reset your CalibrationOS password",
+                "html": f"<p>This link works once and expires in one hour.</p><p><a href=\"{link}\">Choose a new password</a></p>",
+                "kind": "password_reset",
+                "reply_to": owner_notify_email(),
+            }, "shop")
+    return {"ok": True, "message": "If that email has an account, a reset link is on the way."}
+
+
+@api.post("/portal/auth/reset-password")
+async def portal_reset_password(body: ResetPasswordIn):
+    pw_problem = password_error(body.password)
+    if pw_problem:
+        raise HTTPException(400, pw_problem)
+    reset = await db.password_resets.find_one({"token": body.token, "used_at": None})
+    if not reset or reset.get("expires_at", "") < iso(now_utc()):
+        raise HTTPException(400, "This reset link is not valid. Request a new one.")
+    await db.shop_users.update_one(
+        {"id": reset["shop_user_id"]},
+        {"$set": {"password_hash": hash_password(body.password), "updated_at": iso(now_utc())}},
+    )
+    await db.password_resets.update_one({"id": reset["id"]}, {"$set": {"used_at": iso(now_utc())}})
+    return {"ok": True}
+
+
+@api.get("/public/agreement")
+async def public_agreement():
+    return {
+        "version": AGREEMENT_VERSION,
+        "paragraphs": AGREEMENT_PARAGRAPHS,
+        "sections": AGREEMENT_SECTIONS,
+        "acceptance": CHARGE_ACCEPTANCE_TEXT,
+    }
+
+
+@api.get("/public/site")
+async def public_site():
+    return {"owner_phone": OWNER_PHONE, "owner_email": owner_notify_email()}
+
+
+@api.post("/public/contact")
+async def public_contact(body: ContactIn):
+    if not (body.name or "").strip() or not (body.message or "").strip():
+        raise HTTPException(400, "Name and message are required.")
+    if not canonical_email(body.email):
+        raise HTTPException(400, "Enter a valid email.")
+    html = (
+        f"<p>From {body.name} ({canonical_email(body.email)})</p>"
+        f"<p>Shop: {body.shop_name or '—'}</p><p>Phone: {body.phone or '—'}</p>"
+        f"<p>{body.message}</p>"
+    )
+    log = await send_email(owner_notify_email(), f"Website message from {body.name}", html, kind="contact")
+    return {"ok": True, "delivered": bool(log.get("delivered")), "message": "Caleb has your note."}
+
+
+@api.post("/public/shop-requests")
+async def create_shop_request(body: ShopRequestIn):
+    if not (body.contact_name or "").strip():
+        raise HTTPException(400, {"contact_name": "Contact name is required."})
+    errors = shop_contact_errors(
+        name=body.shop_name, phone=body.mobile, email=body.email, address=body.address,
+    )
+    if errors:
+        raise HTTPException(400, errors)
+    geo = await _checked_shop_address(body.address, body.address_confirmed, body.confirmed_address)
+    record = {
+        "id": gen_id(),
+        "shop_name": body.shop_name.strip(),
+        "contact_name": body.contact_name.strip(),
+        "mobile": normalize_phone(body.mobile),
+        "email": canonical_email(body.email),
+        "address": geo.get("formatted_address"),
+        "formatted_address": geo.get("formatted_address"),
+        "lat": geo["lat"], "lng": geo["lng"],
+        "place_id": body.place_id,
+        "zone": detect_zone(geo["lng"]),
+        "status": "pending",
+        "created_at": iso(now_utc()),
+    }
+    await db.shop_requests.insert_one(record.copy())
+    html = (
+        f"<p>{record['contact_name']} at {record['shop_name']} asked for a shop account.</p>"
+        f"<ul><li>{record['mobile']}</li><li>{record['email']}</li><li>{record['address']}</li></ul>"
+        f"<p>Open Requests in CalibrationOS to approve and send the invite.</p>"
+    )
+    await send_email(
+        owner_notify_email(),
+        f"Shop account request — {record['shop_name']}",
+        html, kind="shop_request", meta={"request_id": record["id"]},
+    )
+    return {"ok": True, "message": "Caleb will send your setup link shortly."}
+
+
+@api.get("/shop-requests")
+async def list_shop_requests(tech=Depends(require_owner)):
+    return await db.shop_requests.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+
+@api.post("/shop-requests/{request_id}/approve")
+async def approve_shop_request(request_id: str, tech=Depends(require_owner)):
+    """Create the shop and send the invite in one step."""
+    req = await db.shop_requests.find_one({"id": request_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "Request not found")
+    if req.get("status") != "pending":
+        raise HTTPException(400, f"Request is already {req.get('status')}.")
+    data = ShopIn(
+        name=req["shop_name"], contact_name=req.get("contact_name"),
+        contact_phone=req["mobile"], contact_email=req["email"],
+        address=req["address"], address_confirmed=True, confirmed_address=req["address"],
+        place_id=req.get("place_id"), acknowledge_duplicate=True,
+    )
+    geo = {
+        "lat": req["lat"], "lng": req["lng"], "formatted_address": req["address"],
+        "in_metro": True, "fallback": False,
+    }
+    shop = _shop_document(data, geo)
+    await db.shops.insert_one(shop.copy())
+    invite = await _issue_invite(shop, req["email"])
+    await db.shop_requests.update_one({"id": request_id}, {"$set": {
+        "status": "approved", "shop_id": shop["id"], "invite_id": invite["id"],
+        "decided_at": iso(now_utc()),
+    }})
+    return {"shop": shop, "invite": invite}
+
+
+@api.post("/shop-requests/{request_id}/decline")
+async def decline_shop_request(request_id: str, tech=Depends(require_owner)):
+    req = await db.shop_requests.find_one({"id": request_id})
+    if not req:
+        raise HTTPException(404, "Request not found")
+    if req.get("status") != "pending":
+        raise HTTPException(400, f"Request is already {req.get('status')}.")
+    await db.shop_requests.update_one({"id": request_id}, {"$set": {
+        "status": "declined", "decided_at": iso(now_utc()),
+    }})
+    return {"ok": True}
+
+
+@api.get("/billing/late-fees")
+async def list_late_fees(tech=Depends(require_owner)):
+    events = await db.billing_events.find({"kind": "late_fee"}, {"_id": 0}).sort("applied_at", -1).to_list(200)
+    return {"events": events}
+
+
+@api.post("/billing/late-fees/run")
+async def run_late_fees_now(tech=Depends(require_owner)):
+    return await run_late_fee_sweep()
+
+
+@api.post("/stripe/webhook")
+async def stripe_webhook(request: Request):
+    secret = _env("STRIPE_WEBHOOK_SECRET")
+    if not secret:
+        logger.error("[STRIPE] STRIPE_WEBHOOK_SECRET is not set. Refusing unsigned webhook.")
+        raise HTTPException(503, "Webhook secret is not configured.")
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature")
+    try:
+        event = stripe_sdk.Webhook.construct_event(payload, signature, secret)
+    except Exception as exc:
+        logger.warning("[STRIPE] webhook signature failed: %s", exc)
+        raise HTTPException(400, "Invalid webhook signature.")
+    data = event["data"]["object"]
+    kind = event["type"]
+    if kind.startswith("payment_intent."):
+        await _apply_payment_intent_event(kind, data)
+    elif kind.startswith("invoice."):
+        await _apply_invoice_event(kind, data)
+    return {"received": True}
 
 @api.get("/portal/jobs")
 async def portal_jobs(su=Depends(get_current_shop_user)):
@@ -3413,8 +4325,8 @@ async def charge_job(job_id: str, tech=Depends(require_owner)):
     reason = chargeable_reason(job, shop_user)
     if reason:
         raise HTTPException(400, reason)
-    if not (stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent")):
-        raise HTTPException(400, "Stripe is not configured yet (set STRIPE_API_KEY).")
+    if not stripe_configured():
+        raise HTTPException(400, "Stripe is not configured with a test key. A live key stays unused until BILLING_ENABLED is on.")
 
     try:
         pi = await asyncio.to_thread(
@@ -3425,7 +4337,7 @@ async def charge_job(job_id: str, tech=Depends(require_owner)):
             off_session=True, confirm=True,
             description=(f"CalibrationOS — {job.get('calibration_label', 'ADAS Calibration')} — "
                          f"{job.get('vehicle_year')} {job.get('vehicle_make')} {job.get('vehicle_model')}"),
-            receipt_email=shop_user.get("email"),
+            receipt_email=None,
             metadata={"job_id": job_id, "shop_id": job["shop_id"]},
             # Stable per job so a double-click or a retried request can't double-charge — Stripe
             # serializes/dedupes concurrent requests sharing an idempotency key on its own.
@@ -3675,8 +4587,29 @@ def security_self_check():
     warnings = []
     if JWT_SECRET == _DEV_JWT_SECRET:
         warnings.append("JWT_SECRET is the public dev default — set a strong random JWT_SECRET.")
-    if not (stripe_sdk.api_key and not stripe_sdk.api_key.endswith("_emergent")):
-        warnings.append("STRIPE_API_KEY is the placeholder — real card charges stay disabled until a live key is set.")
+    from safety import stripe_key_mode
+    key_mode = stripe_key_mode(stripe_secret())
+    if key_mode == "live" and not billing_enabled():
+        logger.error(
+            "[STRIPE] A live key is set but BILLING_ENABLED is off. That key will not be used. "
+            "Use sk_test_ or rk_test_ until you turn billing on."
+        )
+        warnings.append("Live Stripe key ignored until BILLING_ENABLED is on. Use a test key.")
+    elif not stripe_configured():
+        warnings.append("STRIPE_SECRET_KEY is not a test key — card setup and charges stay off until sk_test_ or rk_test_ is set.")
+    if not shop_emails_enabled():
+        logger.info("[EMAIL] SHOP_EMAILS_ENABLED is off. Shop and customer mail is written to email_outbox.")
+    if not billing_enabled():
+        logger.info("[BILLING] BILLING_ENABLED is off. Completing a job will not charge a card, and late fees will not run.")
+    sender_problem = sender_email_problem(SENDER_EMAIL)
+    if sender_problem:
+        logger.error("[EMAIL] %s", sender_problem)
+        warnings.append(sender_problem)
+    if not FRONTEND_URL:
+        logger.error(
+            "[EMAIL] FRONTEND_URL is not set. Invite, reset, and booking links are not built from the browser address."
+        )
+        warnings.append("FRONTEND_URL is not set — invite and reset links cannot be built.")
     if cors_allow_origins() == ["*"]:
         warnings.append("CORS_ORIGINS is '*' (any site) — set it to your app domain(s).")
     if IS_PRODUCTION and not SEED_OWNER_PASSWORD:
@@ -3697,11 +4630,185 @@ def security_self_check():
             )
 
 
+def _stripe_obj(data) -> dict:
+    if isinstance(data, dict):
+        return data
+    if hasattr(data, "to_dict"):
+        return data.to_dict()
+    return {}
+
+
+async def _apply_payment_intent_event(kind: str, raw) -> None:
+    data = _stripe_obj(raw)
+    job_id = (data.get("metadata") or {}).get("job_id")
+    if not job_id:
+        return
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        return
+    if kind == "payment_intent.succeeded":
+        if job.get("charged_at"):
+            return
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "charged_at": iso(now_utc()),
+            "payment_status": "paid",
+            "charge_method": "stripe",
+            "stripe_payment_intent_id": data.get("id"),
+            "charged_amount": round((data.get("amount") or 0) / 100, 2),
+        }})
+        logger.info("[STRIPE] payment_intent.succeeded for job %s", job_id)
+        return
+    if kind in ("payment_intent.payment_failed", "payment_intent.requires_action"):
+        err = data.get("last_payment_error") or {}
+        message = err.get("message") or (
+            "Card requires authentication. Ask the shop to update the card."
+            if kind.endswith("requires_action") else "Card declined."
+        )
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "payment_status": "payment_failed",
+            "charge_error": message,
+            "charge_error_at": iso(now_utc()),
+            "stripe_payment_intent_id": data.get("id"),
+        }})
+        shop = await db.shops.find_one({"id": job.get("shop_id")}) or {"name": job.get("shop_name"), "id": job.get("shop_id")}
+        fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+        await _notify_payment_failed(fresh, shop, message)
+        logger.warning("[STRIPE] %s for job %s: %s", kind, job_id, message)
+
+
+async def _apply_invoice_event(kind: str, raw) -> None:
+    data = _stripe_obj(raw)
+    meta = data.get("metadata") or {}
+    job_id = meta.get("job_id")
+    if not job_id:
+        return
+    if meta.get("kind") == "late_fee":
+        if kind in ("invoice.paid", "invoice.payment_succeeded"):
+            await db.jobs.update_one({"id": job_id}, {"$set": {"late_fee_paid_at": iso(now_utc())}})
+        return
+    if kind in ("invoice.paid", "invoice.payment_succeeded"):
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "payment_status": "paid",
+            "charged_at": iso(now_utc()),
+            "invoice_status": "paid",
+            "stripe_invoice_id": data.get("id") or None,
+        }})
+        logger.info("[STRIPE] invoice paid for job %s", job_id)
+    elif kind == "invoice.payment_failed":
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "payment_status": "payment_failed",
+            "invoice_status": "payment_failed",
+            "charge_error": "Invoice payment failed.",
+            "charge_error_at": iso(now_utc()),
+        }})
+        job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+        shop = await db.shops.find_one({"id": (job or {}).get("shop_id")}) or {"name": "Shop"}
+        if job:
+            await _notify_payment_failed(job, shop, "Invoice payment failed.")
+    elif kind == "invoice.finalized":
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "stripe_invoice_id": data.get("id"),
+            "invoice_url": data.get("hosted_invoice_url"),
+            "invoice_status": data.get("status") or "open",
+        }})
+
+
+async def run_late_fee_sweep() -> dict:
+    """Add one $25 fee to each unpaid invoice-mode job past the 7-day grace.
+
+    Safe to run every hour. A job that already has late_fee_applied_at is skipped,
+    and the write itself requires that field to be missing. The sweep does nothing
+    while BILLING_ENABLED is off.
+    """
+    now = now_utc()
+    if not billing_enabled():
+        logger.info("[BILLING] late fee sweep skipped. BILLING_ENABLED is off.")
+        return {
+            "day": business_date(now).isoformat(), "applied": 0, "skipped": True,
+            "reason": "BILLING_ENABLED is off",
+        }
+    day = business_date(now).isoformat()
+    jobs = await db.jobs.find({
+        "status": "complete",
+        "payment_mode": INVOICE_MODE,
+    }, {"_id": 0}).to_list(2000)
+    applied = []
+    for job in jobs:
+        updated = apply_late_fee(job, now)
+        if not updated:
+            continue
+        result = await db.jobs.update_one(
+            {"id": job["id"], "late_fee_applied_at": {"$exists": False}},
+            {"$set": {
+                "late_fee": updated["late_fee"],
+                "late_fee_applied_at": updated["late_fee_applied_at"],
+                "late_fee_reason": updated["late_fee_reason"],
+            }},
+        )
+        if getattr(result, "modified_count", 1) == 0:
+            continue
+        event = {
+            "id": gen_id(), "kind": "late_fee", "job_id": job["id"],
+            "shop_id": job.get("shop_id"), "shop_name": job.get("shop_name"),
+            "amount": updated["late_fee"], "applied_at": updated["late_fee_applied_at"],
+            "reason": updated["late_fee_reason"],
+        }
+        await db.billing_events.insert_one(event.copy())
+        applied.append(event)
+        logger.info("[BILLING] $25 late fee on job %s (%s)", job["id"], job.get("shop_name"))
+        shop = await db.shops.find_one({"id": job.get("shop_id")}) or {}
+        note = (
+            f"<p>A $25 late fee was added to the invoice for {job.get('shop_name')} "
+            f"({job.get('calibration_label')}). It was unpaid 7 days after the job was completed.</p>"
+        )
+        await send_email(owner_notify_email(), f"Late fee — {job.get('shop_name')}", note, kind="late_fee")
+        shop_email = shop.get("contact_email") or job.get("notification_email")
+        if shop_email:
+            await _send_booking_message({
+                "to": shop_email,
+                "subject": "A $25 late fee was added",
+                "html": note,
+                "kind": "late_fee_shop",
+                "reply_to": owner_notify_email(),
+            }, "shop")
+        client = get_stripe()
+        shop_user = await _shop_user_for(job.get("shop_id"))
+        if client and shop_user and shop_user.get("stripe_customer_id") and not job.get("stripe_late_fee_invoice_id"):
+            try:
+                created = await asyncio.to_thread(
+                    create_late_fee_invoice, client,
+                    customer_id=shop_user["stripe_customer_id"], job=job,
+                )
+                await db.jobs.update_one({"id": job["id"]}, {"$set": {
+                    "stripe_late_fee_invoice_id": created["stripe_invoice_id"],
+                }})
+            except Exception as exc:
+                logger.error("[BILLING] late-fee invoice failed for %s: %s", job["id"], exc)
+    logger.info("[BILLING] late fee sweep %s applied %s", day, len(applied))
+    await db.billing_runs.update_one(
+        {"_id": f"late-fee-{day}"},
+        {"$set": {"day": day, "applied": len(applied), "at": iso(now)}},
+        upsert=True,
+    )
+    return {"day": day, "applied": len(applied)}
+
+
+async def _late_fee_loop():
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await run_late_fee_sweep()
+        except Exception:
+            logger.exception("[BILLING] late fee sweep failed")
+        await asyncio.sleep(60 * 60)
+
+
 @app.on_event("startup")
 async def startup():
     security_self_check()
     await seed_data()
     await load_settings()
+    asyncio.create_task(_late_fee_loop())
     # Essentials rows live up to 7 days. Pro rows set expires_at two hours out and the
     # reader ignores them after that. Drop the old 2-day cached_at TTL if it is still there,
     # because it would delete a 7-day row early. A conflicting drop is not fatal.

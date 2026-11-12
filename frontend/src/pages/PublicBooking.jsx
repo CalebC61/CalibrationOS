@@ -49,6 +49,7 @@ export default function PublicBooking() {
   const [calType, setCalType] = useState("static");
   const [notifyPhone, setNotifyPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [invoiceInstead, setInvoiceInstead] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [editingBooking, setEditingBooking] = useState(null);
@@ -122,6 +123,7 @@ export default function PublicBooking() {
         make: vehicle.make, model: vehicle.model, trim: vehicle.trim || null,
         vin: vehicle.vin || null, adas_system: vehicle.adas_system,
         calibration_type: calType, notification_phone: notifyPhone,
+        invoice_instead: invoiceInstead,
       });
       setConfirmation(data);
       loadBookings();
@@ -137,6 +139,12 @@ export default function PublicBooking() {
     </div></Center>;
   }
   if (!shop) return <Center><div className="muted">Loading…</div></Center>;
+  if (shop.booking_open === false) {
+    return <Center><div className="surface" style={{ padding: 30, maxWidth: 480, textAlign: "center" }} data-testid="booking-closed">
+      <div className="h2" style={{ marginBottom: 8 }}>Booking isn't open yet</div>
+      <div className="muted">{shop.booking_message}</div>
+    </div></Center>;
+  }
 
   if (confirmation) {
     const pending = confirmation.requires_approval || confirmation.status === "requested";
@@ -354,6 +362,10 @@ export default function PublicBooking() {
                 onChange={e => setVehicle({...vehicle, notes: e.target.value})}
                 data-testid="booking-notes" />
             </Field>
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 14 }}>
+              <input type="checkbox" checked={invoiceInstead} onChange={e => setInvoiceInstead(e.target.checked)} data-testid="invoice-instead" />
+              <span>Please invoice me instead</span>
+            </label>
             <Field label="Phone">
               <input className="input" value={notifyPhone} onChange={e => setNotifyPhone(e.target.value)}
                 inputMode="tel" autoComplete="tel" placeholder="(480) 555-0100" data-testid="notify-phone" />
