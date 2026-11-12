@@ -105,6 +105,17 @@
 user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first. Module 9 — build out the Partner Growth Engine (Power Connector 5+50+100 CRM + 3-D introductions) from its inert scaffold into a real, flagged-on v1; reels explicitly deferred (no video-generation capability available). Module 8 — a natural-language AI assistant built into the admin page that can DO anything on the admin surface by plain-English prompting, with reads answering instantly and every real action gated behind an owner confirmation; scoped to in-process Gemini (google-genai) rather than the original Cloud Run/ADK/Postgres concept."
 
 backend:
+  - task: "Hide cancelled jobs from the owner and technician day list"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/tests/test_job_day_list.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "GET /api/jobs excluded only declined, so cancelled jobs stayed on the dashboard, Field, TomorrowStrip, and route map. The list now excludes cancelled and declined. include_cancelled=true returns cancelled jobs and still omits declined. Reschedule updates scheduled_start on the same document, so the job is listed only on the new Phoenix date. GET /api/portal/jobs still returns cancelled jobs for the shop Cancelled tab. Documents are not deleted. No SMS or email. Covered by backend/tests/test_job_day_list.py (140 unit tests passed, integration modules skipped)."
   - task: "Xero OAuth 2.0 connect/callback/disconnect"
     implemented: true
     working: "NA"

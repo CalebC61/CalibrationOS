@@ -1776,8 +1776,18 @@ def annotate_at_risk(jobs: List[dict]) -> List[dict]:
     return jobs
 
 @api.get("/jobs")
-async def list_jobs(date_str: Optional[str] = None, tech=Depends(get_current_tech)):
-    """List jobs for a Phoenix date (default: today in America/Phoenix). Contractors only see their own jobs."""
+async def list_jobs(
+    date_str: Optional[str] = None,
+    include_cancelled: bool = False,
+    tech=Depends(get_current_tech),
+):
+    """List jobs for a Phoenix date (default: today in America/Phoenix).
+
+    Cancelled and declined jobs stay in the database and are left off the day
+    list. Pass include_cancelled=true to put cancelled jobs back in the
+    response for a history view. Declined jobs stay out. Contractors only see
+    their own jobs. The shop portal list is a different route and is unchanged.
+    """
     if date_str:
         try:
             d = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -1786,9 +1796,10 @@ async def list_jobs(date_str: Optional[str] = None, tech=Depends(get_current_tec
     else:
         d = business_date()
     day_start, day_end = business_day_bounds(d)
+    hidden = ["declined"] if include_cancelled else ["cancelled", "declined"]
     q = {
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
-        "status": {"$nin": ["declined"]},
+        "status": {"$nin": hidden},
     }
     if tech["role"] == "contractor":
         q["technician_id"] = tech["id"]

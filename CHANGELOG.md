@@ -15,6 +15,18 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — cancelled jobs leave the day list (2026-11-12)
+`GET /api/jobs` omitted `declined` and still returned `cancelled`. The owner
+dashboard, Field, the tomorrow preview, and the route map all read that list,
+so cancelled jobs sat next to booked work. The list now omits both statuses.
+The Mongo documents are not deleted. `include_cancelled=true` puts cancelled
+jobs back in that response for a future history view; declined stays out, and
+those screens do not send the flag. A reschedule still updates the same job's
+`scheduled_start`, so the job shows on the new Phoenix date only. `GET
+/api/portal/jobs` is unchanged, including the shop Cancelled tab. Cancel,
+reschedule, and notification behavior are unchanged. This change sends no SMS
+or email.
+
 ### Changed — fewer Google Routes calls (2026-11-11)
 Traffic-aware Compute Routes Pro is only for today, and for tomorrow while
 it is still before 10:00 AM Phoenix. Later dates use TRAFFIC_UNAWARE
