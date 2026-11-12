@@ -1,15 +1,20 @@
-"""Shop mail stays in the outbox, and automatic charges stay off, until the flags are on.
+"""Automatic charges stay off until BILLING_ENABLED is on.
+
+Shop mail uses booking_mail.mail_route and the shared email_outbox.
+Invite and password-reset mail may still send to TEST_EMAIL_ALLOWLIST.
 
     cd backend && pytest tests/test_safety.py -v
 """
-from safety import (
-    ALLOWLIST_EMAIL_KINDS,
-    HELD_REASON,
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from booking_mail import mail_route  # noqa: E402
+from safety import (  # noqa: E402
     automatic_charge_allowed,
-    email_delivery,
     env_flag,
     late_fee_sweep_allowed,
-    parse_allowlist,
     stripe_key_for_use,
     stripe_key_mode,
 )
@@ -23,29 +28,17 @@ def test_flags_default_off():
     assert env_flag("YES") is True
 
 
-def test_shop_mail_is_held_until_the_flag_is_on():
-    allow = parse_allowlist("")
-    for kind in (
-        "invite", "welcome", "job_invoice", "receipt", "payment_failed_shop",
-        "password_reset", "late_fee_shop", "booking_confirmation",
-    ):
-        assert email_delivery(kind, "shop@glass.test", enabled=False, allowlist=allow) == "hold"
-        assert email_delivery(kind, "shop@glass.test", enabled=True, allowlist=allow) == "send"
-    assert email_delivery("contact", "caleb@thecalibrationcrew.us", enabled=False, allowlist=allow) == "send"
-    assert email_delivery("payment_failed_owner", "caleb@thecalibrationcrew.us", enabled=False, allowlist=allow) == "send"
-    assert email_delivery("signup_finished", "caleb@thecalibrationcrew.us", enabled=False, allowlist=allow) == "send"
-    assert HELD_REASON
-
-
-def test_allowlist_sends_only_invite_and_password_reset():
-    allow = parse_allowlist(" Caleb@TheCalibrationCrew.us , other@test.com ")
-    assert "caleb@thecalibrationcrew.us" in allow
-    assert email_delivery("invite", "caleb@thecalibrationcrew.us", enabled=False, allowlist=allow) == "send"
-    assert email_delivery("password_reset", "caleb@thecalibrationcrew.us", enabled=False, allowlist=allow) == "send"
-    assert email_delivery("welcome", "caleb@thecalibrationcrew.us", enabled=False, allowlist=allow) == "hold"
-    assert email_delivery("job_invoice", "caleb@thecalibrationcrew.us", enabled=False, allowlist=allow) == "hold"
-    assert email_delivery("invite", "shop@glass.test", enabled=False, allowlist=allow) == "hold"
-    assert ALLOWLIST_EMAIL_KINDS == frozenset({"invite", "password_reset"})
+def test_allowlist_sends_only_invite_and_password_reset(monkeypatch):
+    monkeypatch.setenv("SHOP_EMAILS_ENABLED", "false")
+    monkeypatch.setenv("TEST_EMAIL_ALLOWLIST", " Caleb@TheCalibrationCrew.us , other@test.com ")
+    assert mail_route("shop", "booking_confirmation", "shop@glass.test") == "hold"
+    assert mail_route("shop", "welcome", "caleb@thecalibrationcrew.us") == "hold"
+    assert mail_route("shop", "job_invoice", "caleb@thecalibrationcrew.us") == "hold"
+    assert mail_route("shop", "invite", "caleb@thecalibrationcrew.us") == "send"
+    assert mail_route("shop", "password_reset", "caleb@thecalibrationcrew.us") == "send"
+    assert mail_route("shop", "invite", "shop@glass.test") == "hold"
+    monkeypatch.setenv("SHOP_EMAILS_ENABLED", "true")
+    assert mail_route("shop", "welcome", "shop@glass.test") == "send"
 
 
 def test_live_stripe_key_is_ignored_until_billing_is_on():

@@ -137,7 +137,8 @@ def _minutes(a, b):
 
 
 def _install(monkeypatch, db, now):
-    sms = []
+    texts = []
+    emails = []
 
     async def drive(o_lat, o_lng, d_lat, d_lng, depart_at=None, **kwargs):
         return {"duration_minutes": _minutes((o_lat, o_lng), (d_lat, d_lng)), "distance_miles": 10}
@@ -154,17 +155,20 @@ def _install(monkeypatch, db, now):
             point = (33.45, -112.07)
         return {"lat": point[0], "lng": point[1], "formatted_address": address, "in_metro": True}
 
-    async def record(*args, **kwargs):
-        sms.append(args)
+    async def record_sms(*args, **kwargs):
+        texts.append(args)
+
+    async def record_email(*args, **kwargs):
+        emails.append(args)
 
     monkeypatch.setattr(server, "db", db)
     monkeypatch.setattr(server, "geocode_address", geo)
     monkeypatch.setattr(server, "geocode_for_regeocode", geo)
     monkeypatch.setattr(server, "get_drive_time", drive)
-    monkeypatch.setattr(server, "mock_send_sms", record)
-    monkeypatch.setattr(server, "send_email", record)
+    monkeypatch.setattr(server, "mock_send_sms", record_sms)
+    monkeypatch.setattr(server, "send_email", record_email)
     monkeypatch.setattr(server, "now_utc", lambda: now)
-    return sms
+    return texts, emails
 
 
 def _client():
@@ -182,7 +186,7 @@ PAYLOAD = {
 
 def test_early_arrival_is_held_until_the_owner_decides(monkeypatch):
     db = _db()
-    sms = _install(monkeypatch, db, NOW)
+    texts, emails = _install(monkeypatch, db, NOW)
     day = datetime(2026, 11, 13).date()
     six, _end = zone_window(day, time(6, 0), time(17, 0))
     ten, _ignored = zone_window(day, time(10, 0), time(17, 0))
@@ -214,7 +218,8 @@ def test_early_arrival_is_held_until_the_owner_decides(monkeypatch):
             body = booked.json()
             assert body["status"] == "requested"
             assert body["requires_approval"] is True
-            assert sms == []
+            assert texts == []
+            assert emails
             again = await client.post("/api/public/book", json={
                 **PAYLOAD, "job_address": "Surprise, AZ", "scheduled_start": seven_thirty.isoformat(),
             })
@@ -232,15 +237,16 @@ def test_early_arrival_is_held_until_the_owner_decides(monkeypatch):
             )
             assert approved.status_code == 200, approved.text
             assert approved.json()["status"] == "booked"
-            assert sms == []
-            # A normal late-morning time on a future day is still confirmed, and still texts.
+            assert texts == []
+            # A normal late-morning time on a future day is still confirmed.
+            # This shop has no email, and 10:00 is not an owner alert, so nothing is texted.
             standard = await client.post("/api/public/book", json={
                 **PAYLOAD, "job_address": "Mesa, AZ", "scheduled_start": ten.isoformat(),
             })
             assert standard.status_code == 200, standard.text
             assert standard.json()["status"] == "booked"
             assert standard.json()["requires_approval"] is False
-            assert sms
+            assert texts == []
 
     asyncio.run(run())
 
@@ -257,7 +263,7 @@ def test_goodyear_after_east_valley_is_not_auto_accepted(monkeypatch):
         "job_address": "855 East Brown Road, Mesa, AZ",
         "shop_id": "shop-1",
     })
-    sms = _install(monkeypatch, db, NOW)
+    texts, emails = _install(monkeypatch, db, NOW)
 
     async def run():
         async with _client() as client:
@@ -276,7 +282,8 @@ def test_goodyear_after_east_valley_is_not_auto_accepted(monkeypatch):
             assert booked.status_code == 200, booked.text
             assert booked.json()["status"] == "requested"
             assert booked.json()["requires_approval"] is True
-            assert sms == []
+            assert texts == []
+            assert emails
             saved = [job for job in db.jobs.docs if job.get("approval_reason") == "same_day_addon"]
             assert saved
             assert saved[0]["extra_drive_minutes"] >= 90

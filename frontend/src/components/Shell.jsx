@@ -29,12 +29,13 @@ export default function Shell({ children, hideNav }) {
                 {[
                   { to: "/dashboard", label: "Dispatch" },
                   { to: "/requests", label: "Requests" },
+                  { to: "/days-off", label: "Days off" },
+                  { to: "/email-preview", label: "Email preview" },
                   { to: "/shops", label: "Shops" },
                   { to: "/invites", label: "Invites" },
                   { to: "/charges", label: "Charges" },
                   { to: "/invoices", label: "Invoices" },
                   { to: "/messages", label: "Messages" },
-                  { to: "/email-preview", label: "Email" },
                   process.env.REACT_APP_GROWTH_MODULE_ENABLED !== 'false' && { to: "/growth", label: "Growth" },
                   { to: "/settings", label: "Settings" },
                 ].filter(Boolean).map(l => (

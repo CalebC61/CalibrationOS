@@ -21,6 +21,8 @@ from business_time import business_date, business_day_bounds  # noqa: E402
 
 DAY = business_date() + timedelta(days=1)
 NEXT = DAY + timedelta(days=1)
+if NEXT.weekday() == 6:
+    NEXT = NEXT + timedelta(days=1)
 
 
 def _at(day, hours):

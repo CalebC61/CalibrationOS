@@ -26,6 +26,8 @@ export default function PortalBook() {
   const [date, setDate] = useState("");
   const [slots, setSlots] = useState([]);
   const [slotsMsg, setSlotsMsg] = useState("");
+  const [slotsError, setSlotsError] = useState(false);
+  const [addressError, setAddressError] = useState("");
   const [chosen, setChosen] = useState(null);
   const [veh, setVeh] = useState({ customer_first_name: "", customer_last_name: "", notes: "",
     year: new Date().getFullYear(),
@@ -58,16 +60,30 @@ export default function PortalBook() {
   }
 
   async function geo() {
-    const { data } = await portalApi.post("/geocode", { address });
-    setZoneInfo(data);
+    setAddressError("");
+    try {
+      const { data } = await portalApi.post("/geocode", { address });
+      setZoneInfo(data);
+    } catch (e) {
+      setZoneInfo(null);
+      const detail = e.response?.data?.detail;
+      setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
+    }
   }
   async function loadSlots(d) {
-    setSlots([]); setSlotsMsg("");
-    const { data } = await portalApi.post("/public/availability", {
-      booking_token: shop.booking_link_token, job_address: address, date: d,
-    });
-    setSlots(data.slots);
-    if (data.slots.length === 0) setSlotsMsg(data.message || "No slots available.");
+    setSlots([]); setSlotsMsg(""); setSlotsError(false);
+    try {
+      const { data } = await portalApi.post("/public/availability", {
+        booking_token: shop.booking_link_token, job_address: address, date: d,
+      });
+      setSlots(data.slots || []);
+      if ((data.slots || []).length === 0) setSlotsMsg(data.message || "No slots available.");
+    } catch (e) {
+      setSlots([]);
+      setSlotsError(true);
+      const detail = e.response?.data?.detail;
+      setSlotsMsg(typeof detail === "string" && detail ? detail : "Couldn't load times, try again");
+    }
   }
   function pickAdas(v) {
     const opt = ADAS.find(o => o.v === v);
@@ -124,7 +140,8 @@ export default function PortalBook() {
             {zoneInfo?.in_metro && <div style={{ marginTop: 10, fontSize: 14 }}>
               In our Phoenix service area.
             </div>}
-            {zoneInfo && !zoneInfo.in_metro && <div style={{ color: "var(--red)", marginTop: 10, fontSize: 14 }}>Outside our service area.</div>}
+            {addressError && <div role="alert" style={{ color: "var(--red)", marginTop: 10, fontSize: 14 }}>{addressError}</div>}
+            {zoneInfo && !zoneInfo.in_metro && <div style={{ color: "var(--red)", marginTop: 10, fontSize: 14 }}>That address is outside the Phoenix Valley.</div>}
             <Nav onNext={() => setStep(2)} nextDisabled={!zoneInfo?.in_metro} />
           </Card>
         )}
@@ -134,7 +151,13 @@ export default function PortalBook() {
               min={phoenixTodayStr()}
               max={phoenixTodayStr(new Date(Date.now() + 21 * 86400000))}
               onChange={e => { setDate(e.target.value); loadSlots(e.target.value); }} data-testid="b-date" />
-            {slotsMsg && <div className="muted" style={{ marginTop: 10, fontSize: 14, color: "var(--yellow)" }}>{slotsMsg}</div>}
+            {slotsMsg && <div style={{ marginTop: 10, fontSize: 14, color: slotsError ? "var(--red)" : "var(--yellow)" }} data-testid="portal-slots-message">{slotsMsg}</div>}
+            {slotsError && (
+              <button type="button" className="btn btn-ghost" style={{ marginTop: 12 }}
+                onClick={() => loadSlots(date)} data-testid="portal-slots-retry">
+                Try again
+              </button>
+            )}
             {slots.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div className="label">Available times</div>
@@ -212,6 +235,10 @@ export default function PortalBook() {
               <input type="checkbox" checked={invoiceInstead} onChange={e => setInvoiceInstead(e.target.checked)} data-testid="invoice-instead" />
               <span>Please invoice me instead</span>
             </label>
+            <F label="Phone">
+              <input className="input" value={notifyPhone} onChange={e => setNotifyPhone(e.target.value)}
+                inputMode="tel" autoComplete="tel" data-testid="b-phone" />
+            </F>
             <F label="Notes (optional)">
               <textarea className="input" rows={3} value={veh.notes}
                 onChange={e => setVeh({...veh, notes: e.target.value})} data-testid="b-notes" />

@@ -37,7 +37,7 @@ export default function DispatchModal({ open, job, onClose, onDone }) {
       <div onClick={e => e.stopPropagation()} className="surface page-fade" style={{ padding: 24, maxWidth: 480, width: "100%" }}>
         <h2 className="h2" style={{ marginBottom: 4 }}>Dispatch to Contractor</h2>
         <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
-          A 30-minute offer SMS will be sent. If declined or unanswered, the job returns to your board.
+          The offer is saved on the job. A text is not sent. If it is declined or unanswered, the job returns to your board.
         </div>
         <div className="elevated" style={{ padding: 12, marginBottom: 16, fontSize: 14 }}>
           <div style={{ fontWeight: 600 }}>{job.shop_name}</div>

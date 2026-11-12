@@ -1,56 +1,13 @@
-"""Testing gates. Shop mail and automatic charges stay off unless the owner turns them on.
+"""Billing stays off until the owner turns it on. Shop mail lives in booking_mail.
 
-SHOP_EMAILS_ENABLED defaults off. While it is off, mail to a shop or a customer is
-stored in the email_outbox collection instead of being sent. Invite and password-reset
-mail may still send when the address is on TEST_EMAIL_ALLOWLIST.
-
-BILLING_ENABLED defaults off. Completing a job does not charge the card, and the
-late-fee sweep does nothing, until it is on. A live Stripe key is not used until then.
+A live Stripe key is not used until BILLING_ENABLED is true. Completing a job
+does not charge a card, and the late-fee sweep does not run, until then.
 """
 from typing import Optional
-
-# Kinds that would land in a shop or customer inbox. Owner and admin mail is not in this set.
-# booking_* matches the shop messages from the booking-email work so a merge stays held.
-SHOP_EMAIL_KINDS = frozenset({
-    "invite",
-    "welcome",
-    "job_invoice",
-    "receipt",
-    "payment_failed_shop",
-    "password_reset",
-    "late_fee_shop",
-    "booking_confirmation",
-    "booking_approved",
-    "booking_declined",
-    "booking_rescheduled",
-    "booking_cancelled",
-})
-
-# The only shop mail that may leave while SHOP_EMAILS_ENABLED is off, and only to the allow-list.
-ALLOWLIST_EMAIL_KINDS = frozenset({"invite", "password_reset"})
-
-HELD_REASON = "SHOP_EMAILS_ENABLED is off"
-OUTBOX_STATUS = "held"
 
 
 def env_flag(value: Optional[str]) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def parse_allowlist(raw: Optional[str]) -> frozenset:
-    return frozenset(part.strip().lower() for part in (raw or "").split(",") if part.strip())
-
-
-def email_delivery(kind: Optional[str], to: Optional[str], *, enabled: bool, allowlist: frozenset) -> str:
-    """'send' or 'hold'. Owner mail always sends. Shop mail sends only when enabled or allow-listed."""
-    if kind not in SHOP_EMAIL_KINDS:
-        return "send"
-    if enabled:
-        return "send"
-    address = (to or "").strip().lower()
-    if kind in ALLOWLIST_EMAIL_KINDS and address in allowlist:
-        return "send"
-    return "hold"
 
 
 def stripe_key_mode(key: Optional[str]) -> str:

@@ -175,6 +175,17 @@ new integration to wire up, only account setup:
   owner password is rotated to match (this is how you retire the old `Owner123!` default).
 - `CONTRACTOR_PASSWORD` *(optional)* — same idea for the starter contractor account.
 - `OWNER_EMAIL` / `CONTRACTOR_EMAIL` *(optional, default to the existing seeded emails)*.
+  `OWNER_EMAIL` is also where same-day and before-8:00 AM booking alerts go, and the
+  Reply-To on shop booking mail.
+- `PUBLIC_SITE_URL` *(optional)* — host used in the owner's Approve and Decline links.
+  Blank uses `https://www.thecalibrationcrew.us`.
+- `SENDER_EMAIL` must be a verified address on `thecalibrationcrew.us`. The code default
+  `onboarding@resend.dev` only delivers to the Resend account owner.
+- `SHOP_EMAILS_ENABLED` *(default false)* — shop and customer booking mail. While false,
+  confirmations and approve/decline/reschedule/cancel notices are stored in the email
+  outbox and are not sent. The owner dashboard shows "Shop emails: OFF (testing)".
+- `OWNER_EMAILS_ENABLED` *(default true)* — owner alert emails. Stays on when shop mail is off
+  so the approve links can be tested. Set `false` to hold those too.
 - `SEED_DEMO_DATA` *(optional; default `true` in dev, `false` in production)* — whether to seed the
   3 demo shops + demo partner contacts. Off in production so a real deployment starts clean.
   *(Note: this only stops NEW demo data from seeding; any demo shops already in the live DB should be
@@ -185,7 +196,8 @@ new integration to wire up, only account setup:
 **Added for real Google Maps (2026-07-21):**
 - `GOOGLE_MAPS_API_KEY` — a Google Cloud API key with the **Geocoding API** and **Routes API**
   (`computeRoutes` with `TRAFFIC_AWARE`) enabled and billing active on the project. Without it,
-  geocoding and drive-time stay on the mileage estimate — the app never fails to start over this.
+  drive time stays on the mileage estimate and the app still starts. Saving a shop or a job
+  address is refused instead of storing a guessed pin.
 
 **Added for Step 1 (Xero):**
 - `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` — from your Xero developer app.

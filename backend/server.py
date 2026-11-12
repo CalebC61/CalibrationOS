@@ -60,11 +60,6 @@ def billing_enabled() -> bool:
     return env_flag(os.environ.get("BILLING_ENABLED"))
 
 
-def shop_emails_enabled() -> bool:
-    from safety import env_flag
-    return env_flag(os.environ.get("SHOP_EMAILS_ENABLED"))
-
-
 def stripe_configured() -> bool:
     from safety import stripe_key_for_use
     return bool(stripe_key_for_use(stripe_secret(), billing_enabled=billing_enabled()))
@@ -84,6 +79,8 @@ RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = _env('SENDER_EMAIL', 'onboarding@resend.dev')
 FRONTEND_URL = _env("FRONTEND_URL").rstrip("/")
 OWNER_PHONE = _env("OWNER_PHONE", "(480) 269-1329")
+# Links in owner emails. A blank value uses the public site, not the browser address.
+PUBLIC_SITE_URL = _env('PUBLIC_SITE_URL', 'https://www.thecalibrationcrew.us').rstrip('/')
 if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
 
@@ -115,6 +112,16 @@ from google_maps import (
     drive_time_cache_key, departure_bucket, coalesce,
     METRO_LAT_MIN, METRO_LAT_MAX, METRO_LNG_MIN, METRO_LNG_MAX,
 )
+from address_pin import (
+    ADDRESS_NOT_FOUND, OUTSIDE_VALLEY, AddressNotFound,
+    came_from_fallback, interpret_live_geocode, pin_refusal,
+)
+from booking_mail import (
+    booking_confirmation_email, mail_route, normalize_us_phone, owner_alert_email,
+    owner_needs_alert, shop_emails_enabled, shop_event_email,
+)
+from days_off import closure_message, holiday_records, jobs_to_flag, parse_range
+from owner_links import assess_owner_link, mark_used, mint_owner_link, token_claims
 from business_time import (
     BUSINESS_TZ, business_date, business_day_bounds, clamp_start_to_business_day,
     offered_slot_starts, zone_window,
@@ -305,13 +312,18 @@ PHOENIX_CITY_COORDS = {
 }
 
 def mock_geocode(address: str) -> dict:
-    """Mock Google Geocoding. Returns lat/lng + formatted address based on city keywords."""
+    """Mock Google Geocoding. Returns lat/lng + formatted address based on city keywords.
+
+    This is a guess. Shop and job saves must not store it. `guessed` is true when
+    the address matched no city and the pin is the central-Phoenix default.
+    """
     a = address.lower()
     base = None
     for key, coords in PHOENIX_CITY_COORDS.items():
         if key in a:
             base = coords
             break
+    guessed = base is None
     if base is None:
         # Default: somewhere in central Phoenix with slight jitter
         base = (33.4484, -112.0740)
@@ -323,7 +335,12 @@ def mock_geocode(address: str) -> dict:
     # Same bounding box the real geocoder uses (google_maps.py), so mock and live agree on
     # which addresses are in the service area.
     in_metro = METRO_LAT_MIN < lat < METRO_LAT_MAX and METRO_LNG_MIN < lng < METRO_LNG_MAX
-    return {"lat": round(lat, 6), "lng": round(lng, 6), "formatted_address": address, "in_metro": in_metro}
+    return {
+        "lat": round(lat, 6), "lng": round(lng, 6), "formatted_address": address,
+        "in_metro": in_metro, "source": "mock", "guessed": guessed,
+        "partial_match": False,
+        "location_type": "APPROXIMATE" if guessed else "GEOMETRIC_CENTER",
+    }
 
 def haversine_miles(lat1, lng1, lat2, lng2) -> float:
     R = 3958.8
@@ -374,44 +391,64 @@ def _google_routes_request(o_lat, o_lng, d_lat, d_lng, departure_iso: str | None
         raise GoogleMapsError(detail)
     return resp.json()
 
-async def geocode_address(address: str) -> dict:
-    """Geocode an address — real Google Geocoding API when configured, otherwise the mock.
+def _cached_geocode(cached: dict, address: str) -> dict:
+    return {
+        "lat": cached["lat"], "lng": cached["lng"],
+        "formatted_address": cached.get("formatted_address") or address,
+        "in_metro": cached.get("in_metro", True),
+        "partial_match": bool(cached.get("partial_match")),
+        "location_type": cached.get("location_type"),
+        "source": cached.get("source") or "google",
+    }
 
-    Real results are cached by the normalized address so the same shop is not
-    geocoded again. Falls back to the mock on any error so booking never fails
-    on a geocoding hiccup.
+
+async def geocode_address(address: str) -> dict:
+    """Geocode an address with Google. Never invents a pin.
+
+    A missing key, a Google error, a partial match, or the central-Phoenix
+    guess raises AddressNotFound. A real result outside the valley is returned
+    with in_metro false so the caller can refuse the save without storing it.
     """
-    if google_maps_enabled():
-        key = normalize_address(address)
-        cache = getattr(db, "geocode_cache", None)
-        if cache is not None and key:
-            try:
-                cached = await cache.find_one({"_id": key})
-            except Exception as exc:
-                logger.warning("[MAPS] geocode cache read failed: %s", exc)
-                cached = None
-            if cached and cached.get("lat") is not None:
-                return {
-                    "lat": cached["lat"], "lng": cached["lng"],
-                    "formatted_address": cached.get("formatted_address") or address,
-                    "in_metro": cached.get("in_metro", True),
-                }
+    if not (address or "").strip() or not google_maps_enabled():
+        raise AddressNotFound(ADDRESS_NOT_FOUND)
+    key = normalize_address(address)
+    cache = getattr(db, "geocode_cache", None)
+    if cache is not None and key:
         try:
-            data = await asyncio.to_thread(_google_geocode_request, address)
-            parsed = parse_geocode_response(data, address)
-            if cache is not None and key:
-                try:
-                    await cache.update_one(
-                        {"_id": key},
-                        {"$set": {**parsed, "cached_at": now_utc()}},
-                        upsert=True,
-                    )
-                except Exception as exc:
-                    logger.warning("[MAPS] geocode cache write failed: %s", exc)
-            return parsed
-        except (GoogleMapsError, requests.RequestException, KeyError, IndexError) as e:
-            logger.error(f"[MAPS] geocode failed, falling back to mock: {e}")
-    return mock_geocode(address)
+            cached = await cache.find_one({"_id": key})
+        except Exception as exc:
+            logger.warning("[MAPS] geocode cache read failed: %s", exc)
+            cached = None
+        if cached and cached.get("lat") is not None:
+            geo = _cached_geocode(cached, address)
+            if pin_refusal(geo) != ADDRESS_NOT_FOUND:
+                return geo
+    try:
+        data = await asyncio.to_thread(_google_geocode_request, address)
+        parsed = interpret_live_geocode(address, lambda: data, parse_geocode_response)
+    except AddressNotFound:
+        logger.error("[MAPS] geocode refused for %s", address)
+        raise
+    except (requests.RequestException, GoogleMapsError) as exc:
+        logger.error("[MAPS] geocode failed: %s", exc)
+        raise AddressNotFound(ADDRESS_NOT_FOUND) from exc
+    if cache is not None and key and pin_refusal(parsed) is None:
+        try:
+            await cache.update_one(
+                {"_id": key},
+                {"$set": {**parsed, "cached_at": now_utc()}},
+                upsert=True,
+            )
+        except Exception as exc:
+            logger.warning("[MAPS] geocode cache write failed: %s", exc)
+    return parsed
+
+
+def _refuse_unusable_pin(geo: dict) -> None:
+    """Raise 400 when this result must not be written onto a shop or a job."""
+    refusal = pin_refusal(geo)
+    if refusal:
+        raise HTTPException(400, refusal)
 
 
 def mock_geocode_strict(address: str) -> Optional[dict]:
@@ -456,10 +493,9 @@ async def geocode_shop_address(address: str) -> dict:
 async def geocode_for_regeocode(address: str) -> dict:
     """Geocode one stored address during a repair pass.
 
-    Booking still falls back to the mock so a Maps hiccup cannot block a job.
-    This pass must not do that: a failed Google call is an error, and the
-    caller leaves the existing pin alone. With no API key, the mock is the
-    current geocoder.
+    A failed Google call is an error and the caller leaves the existing pin
+    alone. With no API key, the mock is the current geocoder. Shop and job
+    saves use geocode_address, which refuses a guess instead of storing one.
     """
     if not google_maps_enabled():
         return mock_geocode(address)
@@ -1177,7 +1213,13 @@ async def get_pricing():
 @api.post("/geocode")
 async def geocode(payload: dict):
     addr = payload.get("address", "")
-    geo = await geocode_address(addr)
+    try:
+        geo = await geocode_address(addr)
+    except AddressNotFound as exc:
+        raise HTTPException(400, str(exc))
+    refusal = pin_refusal(geo)
+    if refusal:
+        raise HTTPException(400, refusal)
     zone = detect_zone(geo["lng"]) if geo["in_metro"] else None
     return {**geo, "zone": zone}
 
@@ -1246,7 +1288,11 @@ async def _duplicate_lists():
 
 
 async def _checked_shop_address(address: str, confirmed: bool, confirmed_address: Optional[str]) -> dict:
-    geo = await geocode_shop_address(address)
+    try:
+        geo = await geocode_address(address)
+    except AddressNotFound as exc:
+        raise HTTPException(400, str(exc))
+    _refuse_unusable_pin(geo)
     problem = address_problem(geo)
     if problem:
         raise HTTPException(400, problem)
@@ -1289,6 +1335,7 @@ def _shop_document(data: ShopIn, geo: dict) -> dict:
         "id": gen_id(),
         **payload,
         "lat": geo["lat"], "lng": geo["lng"],
+        "geocode_source": geo.get("source") or ("google" if google_maps_enabled() else "mock"),
         "zone": detect_zone(geo["lng"]),
         "booking_link_token": secrets.token_hex(16),
         "terms_signed_at": None,
@@ -1302,12 +1349,12 @@ def _shop_document(data: ShopIn, geo: dict) -> dict:
 
 @api.post("/shops")
 async def create_shop(data: ShopIn, tech=Depends(require_owner)):
+    geo = await _checked_shop_address(data.address, data.address_confirmed, data.confirmed_address)
     errors = shop_contact_errors(
         name=data.name, phone=data.contact_phone, email=data.contact_email, address=data.address,
     )
     if errors:
         raise HTTPException(400, errors)
-    geo = await _checked_shop_address(data.address, data.address_confirmed, data.confirmed_address)
     shops, users = await _duplicate_lists()
     _raise_if_duplicates(data.name, data.contact_email, shops, users, data.acknowledge_duplicate)
     shop = _shop_document(data, geo)
@@ -1342,14 +1389,14 @@ async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner
     if "address" in update and (update["address"] or "").strip() != (shop.get("address") or "").strip():
         try:
             geo = await geocode_for_regeocode(update["address"])
-        except (GoogleMapsError, requests.RequestException):
-            raise HTTPException(400, "Could not locate that address.")
-        if geo.get("in_metro") is False:
-            raise HTTPException(400, "That address is outside the Phoenix Valley.")
+        except (GoogleMapsError, requests.RequestException, AddressNotFound):
+            raise HTTPException(400, ADDRESS_NOT_FOUND)
+        _refuse_unusable_pin(geo)
         update["lat"] = geo["lat"]
         update["lng"] = geo["lng"]
         update["formatted_address"] = geo.get("formatted_address") or update["address"]
         update["address"] = update["formatted_address"]
+        update["geocode_source"] = geo.get("source") or "google"
         zone = zone_for_geocode(geo)
         if zone:
             update["zone"] = zone
@@ -1553,15 +1600,257 @@ def _clocks_for(day: date, schedule: dict, now: datetime, kind: str) -> dict:
     }
 
 
-async def notify_booking_approval(job: dict, event: str) -> None:
-    """HOOK: shop and owner notifications for a time that needs approval.
+async def load_days_off() -> list:
+    store = getattr(db, "days_off", None)
+    if store is None:
+        return []
+    try:
+        return await store.find({}, {"_id": 0}).to_list(500)
+    except Exception as exc:
+        logger.warning("days off unreadable: %s", exc)
+        return []
 
-    event is "requested", "approved", or "declined".
-    This release does not send SMS or email. Wire texting here when that flow is ready.
-    Do not call mock_send_sms or send_email from this function.
+
+def _dates_between(start: date, end: date) -> list:
+    days = []
+    cursor = start
+    while cursor <= end:
+        days.append(cursor)
+        cursor += timedelta(days=1)
+    return days
+
+
+async def flag_jobs_on_dates(days: list, label: str) -> list:
+    """Mark jobs already booked on a newly closed day. Does not cancel them."""
+    jobs_store = getattr(db, "jobs", None)
+    if jobs_store is None or not days:
+        return []
+    found = []
+    for day in days:
+        start, end = business_day_bounds(day)
+        try:
+            rows = await jobs_store.find({
+                "scheduled_start": {"$gte": iso(start), "$lt": iso(end)},
+                "status": {"$nin": ["cancelled", "declined", "complete"]},
+            }, {"_id": 0}).to_list(500)
+        except Exception as exc:
+            logger.warning("could not list jobs for %s: %s", day, exc)
+            continue
+        for job in jobs_to_flag(rows, {day}):
+            await jobs_store.update_one({"id": job["id"]}, {"$set": {
+                "day_off_conflict": True,
+                "day_off_label": label,
+                "updated_at": iso(now_utc()),
+            }})
+            found.append(job)
+    return found
+
+
+async def clear_day_off_flags(days: list) -> None:
+    """Drop the flag once every closure covering that Phoenix day is open again."""
+    jobs_store = getattr(db, "jobs", None)
+    if jobs_store is None:
+        return
+    records = await load_days_off()
+    for day in days:
+        if closure_message(day, records):
+            continue
+        start, end = business_day_bounds(day)
+        try:
+            rows = await jobs_store.find({
+                "scheduled_start": {"$gte": iso(start), "$lt": iso(end)},
+                "day_off_conflict": True,
+            }, {"_id": 0}).to_list(500)
+        except Exception as exc:
+            logger.warning("could not clear day-off flags for %s: %s", day, exc)
+            continue
+        for job in rows:
+            await jobs_store.update_one({"id": job["id"]}, {"$set": {
+                "day_off_conflict": False,
+                "day_off_label": None,
+                "updated_at": iso(now_utc()),
+            }})
+
+
+async def ensure_holidays() -> None:
+    """Insert this year and next year's holidays the first time we see each one.
+
+    An existing row keeps the owner's blocked flag. A new closed holiday flags
+    jobs already on that date and does not cancel them.
     """
+    store = getattr(db, "days_off", None)
+    if store is None:
+        return
+    year = business_date().year
+    for row in holiday_records(year) + holiday_records(year + 1):
+        try:
+            existing = await store.find_one({"key": row["key"]})
+        except Exception as exc:
+            logger.warning("days off unreadable: %s", exc)
+            return
+        if existing:
+            continue
+        await store.insert_one(dict(row))
+        await flag_jobs_on_dates([date.fromisoformat(row["start"])], row["label"])
+
+
+async def closed_day_message(day: date) -> str | None:
+    """Sunday, a blocked holiday, or a vacation. None when the day can be booked."""
+    if day.weekday() == 6:
+        return "No availability on Sundays."
+    await ensure_holidays()
+    return closure_message(day, await load_days_off())
+
+
+def _job_when(job: dict) -> datetime:
+    raw = str(job.get("scheduled_start") or "")
+    try:
+        instant = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return now_utc()
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return instant
+
+
+def _vehicle_line(job: dict) -> str:
+    return " ".join(
+        str(job.get(key) or "").strip()
+        for key in ("vehicle_year", "vehicle_make", "vehicle_model")
+    ).strip()
+
+
+def _shop_email(job: dict | None, shop: dict | None) -> str | None:
+    for value in (
+        (job or {}).get("notification_email"),
+        (shop or {}).get("contact_email"),
+    ):
+        if value and "@" in str(value):
+            return str(value).strip()
+    return None
+
+
+async def _hold_booking_message(message: dict, audience: str) -> dict:
+    """Save a shop or owner email that must not be sent. Does not call Resend."""
+    doc = {
+        "id": gen_id(),
+        "to": message["to"],
+        "subject": message["subject"],
+        "body": message.get("html") or "",
+        "created_at": iso(now_utc()),
+        "audience": audience,
+        "kind": message.get("kind") or "transactional",
+        "reply_to": message.get("reply_to"),
+        "delivered": False,
+    }
+    store = getattr(db, "email_outbox", None)
+    if store is not None:
+        try:
+            await store.insert_one(dict(doc))
+        except Exception as exc:
+            logger.warning("email outbox write failed: %s", exc)
+    else:
+        logger.info("[EMAIL HELD → %s] %s", message["to"], message["subject"])
+    return doc
+
+
+async def _send_booking_message(message: dict | None, audience: str = "shop"):
+    """Send or hold one booking email.
+
+    audience is 'shop' or 'owner'. Shop mail is held while SHOP_EMAILS_ENABLED
+    is false, and that path never calls send_email or Resend.
+    """
+    if not message or not (message.get("to") or "").strip():
+        return None
+    if mail_route(audience, message.get("kind"), message.get("to")) == "hold":
+        return await _hold_booking_message(message, audience)
+    return await send_email(
+        message["to"], message["subject"], message["html"],
+        kind=message.get("kind") or "transactional",
+        meta=message.get("meta"),
+        reply_to=message.get("reply_to"),
+    )
+
+
+async def email_shop_confirmation(job: dict, shop: dict | None, pending: bool):
+    message = booking_confirmation_email(
+        to=_shop_email(job, shop) or "",
+        reply_to=SEED_OWNER_EMAIL,
+        when=_job_when(job),
+        vehicle=_vehicle_line(job),
+        address=job.get("job_address") or "",
+        calibration=job.get("calibration_label") or job.get("calibration_type") or "",
+        price=job.get("price") or 0,
+        pending=pending,
+    )
+    message["meta"] = {"job_id": job.get("id")}
+    return await _send_booking_message(message, audience="shop")
+
+
+async def _issue_owner_link(job_id: str, action: str) -> dict:
+    minted = mint_owner_link(secret=JWT_SECRET, job_id=job_id, action=action, now=now_utc())
+    store = getattr(db, "owner_action_tokens", None)
+    if store is not None:
+        try:
+            await store.insert_one(dict(minted["record"]))
+        except Exception as exc:
+            logger.warning("owner link not stored: %s", exc)
+    return minted
+
+
+async def email_owner_alert(job: dict, shop: dict | None, pending: bool, same_day: bool):
+    approve = await _issue_owner_link(job["id"], "approve")
+    decline = await _issue_owner_link(job["id"], "decline")
+    message = owner_alert_email(
+        to=SEED_OWNER_EMAIL,
+        reply_to=SEED_OWNER_EMAIL,
+        when=_job_when(job),
+        shop_name=(shop or {}).get("name") or job.get("shop_name") or "Shop",
+        vehicle=_vehicle_line(job),
+        address=job.get("job_address") or "",
+        calibration=job.get("calibration_label") or "",
+        price=job.get("price") or 0,
+        pending=pending,
+        same_day=same_day,
+        approve_url=f"{PUBLIC_SITE_URL}/owner-action/{approve['token']}",
+        decline_url=f"{PUBLIC_SITE_URL}/owner-action/{decline['token']}",
+    )
+    message["meta"] = {"job_id": job.get("id")}
+    return await _send_booking_message(message, audience="owner")
+
+
+async def email_shop_event(job: dict, shop: dict | None, event: str):
+    message = shop_event_email(
+        to=_shop_email(job, shop) or "",
+        reply_to=SEED_OWNER_EMAIL,
+        event=event,
+        when=_job_when(job),
+        vehicle=_vehicle_line(job),
+        address=job.get("job_address") or "",
+        calibration=job.get("calibration_label") or "",
+        price=job.get("price") or 0,
+    )
+    message["meta"] = {"job_id": job.get("id"), "event": event}
+    return await _send_booking_message(message, audience="shop")
+
+
+async def _shop_for_job(job: dict) -> dict | None:
+    shops = getattr(db, "shops", None)
+    if shops is None or not job.get("shop_id"):
+        return None
+    try:
+        return await shops.find_one({"id": job["shop_id"]}, {"_id": 0})
+    except Exception as exc:
+        logger.warning("shop lookup failed: %s", exc)
+        return None
+
+
+async def notify_booking_approval(job: dict, event: str) -> None:
+    """Email the shop when the owner approves or declines. Does not text."""
+    if event in ("approved", "declined"):
+        await email_shop_event(job, await _shop_for_job(job), event)
     logger.info(
-        "[NOTIFY HOOK] booking %s job=%s status=%s kind=%s reason=%s (no SMS or email sent)",
+        "[NOTIFY] booking %s job=%s status=%s kind=%s reason=%s",
         event, job.get("id"), job.get("status"), job.get("booking_kind"), job.get("approval_reason"),
     )
 
@@ -1744,22 +2033,26 @@ async def public_availability(query: SlotQuery):
     if not gate["allowed"]:
         return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
                 "message": gate["message"]}
-    # Geocode job address
-    geo = await geocode_address(query.job_address)
-    if not geo["in_metro"]:
+    try:
+        geo = await geocode_address(query.job_address)
+    except AddressNotFound as exc:
+        raise HTTPException(400, str(exc))
+    if not geo["in_metro"] or pin_refusal(geo):
         return {"zone": None, "in_metro": False, "slots": [],
-                "message": "This address is outside our current service area."}
+                "message": OUTSIDE_VALLEY}
     zone = detect_zone(geo["lng"])
     # Parse date
     try:
         day = datetime.strptime(query.date, "%Y-%m-%d").date()
     except ValueError:
         raise HTTPException(400, "Invalid date")
-    # Validate: not Sunday, not past, not > 21 days out. "Today" is the Phoenix date.
+    # Validate: not Sunday, not a day off, not past, not > 21 days out.
+    # "Today" is the Phoenix date.
     now = now_utc()
     today = business_date(now)
-    if day.weekday() == 6:
-        return {"zone": zone, "in_metro": True, "slots": [], "message": "No availability on Sundays."}
+    closed = await closed_day_message(day)
+    if closed:
+        return {"zone": zone, "in_metro": True, "slots": [], "message": closed}
     if day < today:
         return {"zone": zone, "in_metro": True, "slots": [], "message": "That date is in the past."}
     if (day - today).days > 21:
@@ -1782,15 +2075,22 @@ async def public_availability(query: SlotQuery):
 
 @api.post("/public/book")
 async def public_book(data: BookingIn):
+    try:
+        data.notification_phone = normalize_us_phone(data.notification_phone)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     shop = await db.shops.find_one({"booking_link_token": data.booking_token, "status": "active"})
     if not shop:
         raise HTTPException(404, "Invalid booking link")
     gate = await _booking_gate_for_shop(shop)
     if not gate["allowed"]:
         raise HTTPException(403, gate["message"])
-    geo = await geocode_address(data.job_address)
-    if not geo["in_metro"]:
-        raise HTTPException(400, "Address outside service area")
+    try:
+        geo = await geocode_address(data.job_address)
+    except AddressNotFound as exc:
+        raise HTTPException(400, str(exc))
+    if not geo["in_metro"] or pin_refusal(geo):
+        raise HTTPException(400, OUTSIDE_VALLEY)
     zone = detect_zone(geo["lng"])
     # Parse start
     try:
@@ -1802,6 +2102,9 @@ async def public_book(data: BookingIn):
     tech = await _assigned_tech(geo["lat"], geo["lng"])
     now = now_utc()
     route_day = business_date(start_dt)
+    closed = await closed_day_message(route_day)
+    if closed:
+        raise HTTPException(400, closed)
     route_jobs = await _route_jobs(tech.get("id"), route_day) if tech and tech.get("id") else []
     plan = await _arrival_plan(
         tech, route_day, start_dt, (geo["lat"], geo["lng"]), route_jobs,
@@ -1856,6 +2159,7 @@ async def public_book(data: BookingIn):
         "duration_minutes": plan["duration_minutes"],
         "job_address": data.job_address,
         "job_lat": geo["lat"], "job_lng": geo["lng"],
+        "geocode_source": "google" if geo.get("source") in (None, "google") else geo.get("source"),
         "status": plan["status"],
         "booking_kind": plan["booking_kind"],
         "approval_reason": plan["approval_reason"],
@@ -1878,21 +2182,12 @@ async def public_book(data: BookingIn):
     }
     await db.jobs.insert_one(job.copy())
 
-    # Confirmed advance bookings keep today's mock SMS. A time that needs
-    # approval, and any booking for today, does not text or email. The hook
-    # below is where that message will go.
-    confirmed_advance = job["status"] == "booked" and job.get("booking_kind") == "standard"
-    when = start_dt.astimezone(BUSINESS_TZ).strftime("%a %b %d at %-I:%M %p")
-    if confirmed_advance:
-        msg = (f"Booking confirmed with The Calibration Crew. "
-               f"{when} for your {data.year} {data.make} {data.model}. "
-               f"Questions? Reply to this message.")
-        if job["notification_phone"]:
-            await mock_send_sms(job["notification_phone"], msg, kind="booking_confirmed", job_id=job["id"])
-    elif job["status"] == "requested":
-        await notify_booking_approval(job, "requested")
+    pending = job["status"] == "requested"
+    shop_mail = await email_shop_confirmation(job, shop, pending=pending)
+    same_day = job.get("booking_kind") == "addon" or business_date(start_dt) == business_date(now)
+    if owner_needs_alert(start_dt, job.get("booking_kind") or "", now):
+        await email_owner_alert(job, shop, pending=pending, same_day=same_day)
 
-    # In-app alert so the owner sees the job. SMS to the owner only for a confirmed advance booking.
     if owner:
         await db.new_booking_alerts.insert_one({
             "id": gen_id(),
@@ -1906,20 +2201,13 @@ async def public_book(data: BookingIn):
             "vehicle": f"{data.year} {data.make} {data.model}",
             "price": price,
         })
-        if confirmed_advance and owner.get("phone"):
-            owner_msg = (
-                f"🎉 New booking from {shop['name']}: "
-                f"{when} — "
-                f"{data.year} {data.make} {data.model} (${price:.0f}). "
-                f"View on dispatch board."
-            )
-            await mock_send_sms(owner["phone"], owner_msg, kind="owner_new_booking", job_id=job["id"])
 
     return {
         "job_id": job["id"], "booking_reference": job["id"][:8].upper(),
         "scheduled_start": job["scheduled_start"], "zone": zone, "price": price,
         "status": job["status"],
-        "requires_approval": job["status"] == "requested",
+        "requires_approval": pending,
+        "shop_email_delivered": bool(shop_mail and shop_mail.get("delivered")),
     }
 
 async def _shop_for_booking_token(token: str) -> dict:
@@ -2062,10 +2350,12 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
     if "job_address" in fields and fields["job_address"] != (job.get("job_address") or ""):
         try:
             geo = await geocode_for_regeocode(fields["job_address"])
-        except (GoogleMapsError, requests.RequestException):
-            raise HTTPException(400, "Could not locate that address.")
+        except (GoogleMapsError, requests.RequestException, AddressNotFound):
+            raise HTTPException(400, ADDRESS_NOT_FOUND)
+        _refuse_unusable_pin(geo)
         fields["job_lat"] = geo["lat"]
         fields["job_lng"] = geo["lng"]
+        fields["geocode_source"] = "google" if geo.get("source") == "google" else geo.get("source") or "google"
         if "zone" not in fields:
             zone = zone_for_geocode(geo)
             if zone:
@@ -2075,6 +2365,11 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
             fields["technician_id"] = chosen["id"]
             fields["technician_name"] = chosen.get("name")
             fields["technician_color"] = chosen.get("color") or "#FF5F1F"
+    if "notification_phone" in fields:
+        try:
+            fields["notification_phone"] = normalize_us_phone(fields["notification_phone"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
     if "calibration_type" in fields:
         fields["calibration_label"] = STANDARD_PRICING[fields["calibration_type"]]["label"]
     if "scheduled_start" in fields:
@@ -2082,6 +2377,11 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
         if new_start.tzinfo is None:
             new_start = new_start.replace(tzinfo=timezone.utc)
         fields["scheduled_end"] = shift_scheduled_end(job, new_start).isoformat()
+        previous = _job_when(job)
+        if business_date(new_start) != business_date(previous):
+            closed = await closed_day_message(business_date(new_start))
+            if closed:
+                raise HTTPException(400, closed)
     changed = changed_keys(job, fields)
     if not changed:
         return job
@@ -2270,8 +2570,11 @@ async def _email_proof(job, shop, invoice: dict):
     )
     if link:
         html += f"<p><a href=\"{link}\">View invoice</a></p>"
-    await send_email(to, f"Invoice — {shop.get('name')}", html, kind="job_invoice",
-                     meta={"job_id": job["id"], "invoice_id": invoice.get("invoice_id")})
+    await _send_booking_message({
+        "to": to, "subject": f"Invoice — {shop.get('name')}", "html": html,
+        "kind": "job_invoice", "reply_to": owner_notify_email(),
+        "meta": {"job_id": job["id"], "invoice_id": invoice.get("invoice_id")},
+    }, "shop")
 
 
 async def _notify_payment_failed(job, shop, message: str):
@@ -2293,14 +2596,17 @@ async def _notify_payment_failed(job, shop, message: str):
     shop_user = await _shop_user_for(job.get("shop_id"))
     shop_email = (shop_user or {}).get("email") or shop.get("contact_email")
     if shop_email:
-        await send_email(
-            shop_email,
-            "Please update the card on file",
-            f"<p>We could not charge the card for a completed calibration. {message}</p>"
-            f"<p><a href=\"{card_link}\">Update the card</a></p>",
-            kind="payment_failed_shop",
-            meta={"job_id": job["id"]},
-        )
+        await _send_booking_message({
+            "to": shop_email,
+            "subject": "Please update the card on file",
+            "html": (
+                f"<p>We could not charge the card for a completed calibration. {message}</p>"
+                f"<p><a href=\"{card_link}\">Update the card</a></p>"
+            ),
+            "kind": "payment_failed_shop",
+            "reply_to": owner_notify_email(),
+            "meta": {"job_id": job["id"]},
+        }, "shop")
     await db.jobs.update_one({"id": job["id"]}, {"$set": {
         "payment_failure_notified_attempt": attempt,
     }})
@@ -2393,13 +2699,14 @@ async def _charge_saved_card(job, shop) -> dict:
     logger.info("[CHARGE] job %s charged %s", job["id"], result.get("payment_intent_id"))
     receipt_to = shop_user.get("email") or shop.get("contact_email")
     if receipt_to:
-        await send_email(
-            receipt_to,
-            f"Receipt — {shop.get('name')}",
-            f"<p>Paid ${amount_due(paid):.2f} for {paid.get('calibration_label') or 'a calibration'}.</p>",
-            kind="receipt",
-            meta={"job_id": job["id"]},
-        )
+        await _send_booking_message({
+            "to": receipt_to,
+            "subject": f"Receipt — {shop.get('name')}",
+            "html": f"<p>Paid ${amount_due(paid):.2f} for {paid.get('calibration_label') or 'a calibration'}.</p>",
+            "kind": "receipt",
+            "reply_to": owner_notify_email(),
+            "meta": {"job_id": job["id"]},
+        }, "shop")
     return paid
 
 
@@ -2549,6 +2856,7 @@ async def dashboard_summary(date_str: Optional[str] = None, tech=Depends(require
         "estimated_miles": miles,
         "done_by": done_by,
         "at_risk_count": at_risk,
+        "shop_emails_enabled": shop_emails_enabled(),
     }
 
 # ---------- Reschedule + cancel (with reason) ----------
@@ -2565,6 +2873,9 @@ async def reschedule_job(job_id: str, body: RescheduleIn, tech=Depends(require_o
             new_start = new_start.replace(tzinfo=timezone.utc)
     except ValueError:
         raise HTTPException(400, "Invalid scheduled_start")
+    closed = await closed_day_message(business_date(new_start))
+    if closed:
+        raise HTTPException(400, closed)
     z = ZONES[job["zone"]]
     new_end = new_start + timedelta(minutes=z["slot_minutes"])
     await db.jobs.update_one({"id": job_id}, {"$set": {
@@ -2574,13 +2885,8 @@ async def reschedule_job(job_id: str, body: RescheduleIn, tech=Depends(require_o
         "rescheduled_at": iso(now_utc()),
         "updated_at": iso(now_utc()),
     }})
-    # Notify customer
-    if job.get("notification_phone"):
-        msg = (f"Your calibration appointment has been rescheduled to "
-               f"{new_start.strftime('%a %b %d at %-I:%M %p')}. "
-               f"Reply if this doesn't work for you. — The Calibration Crew")
-        await mock_send_sms(job["notification_phone"], msg, kind="rescheduled", job_id=job_id)
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    await email_shop_event(fresh, await _shop_for_job(fresh), "rescheduled")
     return fresh
 
 @api.post("/jobs/{job_id}/cancel")
@@ -2596,11 +2902,8 @@ async def cancel_job(job_id: str, body: CancelIn, tech=Depends(require_owner)):
         "cancelled_at": iso(now_utc()),
         "updated_at": iso(now_utc()),
     }})
-    if job.get("notification_phone"):
-        reason_suffix = f" Reason: {body.reason}" if body.reason else ""
-        msg = f"Your scheduled calibration has been cancelled.{reason_suffix} Please contact us to reschedule."
-        await mock_send_sms(job["notification_phone"], msg, kind="cancelled", job_id=job_id)
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    await email_shop_event(fresh, await _shop_for_job(fresh), "cancelled")
     return fresh
 
 # ---------- Real document upload (replaces mocked filename) ----------
@@ -3254,32 +3557,16 @@ async def update_contractor(contractor_id: str, body: ContractorUpdate, tech=Dep
 async def send_email(to: str, subject: str, html: str, kind: str = "transactional", meta: Optional[dict] = None, reply_to: Optional[str] = None):
     """Send transactional email via Resend. Gracefully falls back to DB log if no key.
 
-    Reply-To is the owner email so a shop's reply reaches Caleb.
-    Shop and customer mail is held in email_outbox while SHOP_EMAILS_ENABLED is off.
-    Invite and password-reset mail can still send to TEST_EMAIL_ALLOWLIST.
+    Shop and customer mail does not come through here while testing. That mail
+    uses _send_booking_message, which holds it in email_outbox.
+    reply_to is the address a reply should reach. Blank uses the owner email.
     """
-    from safety import HELD_REASON, OUTBOX_STATUS, email_delivery, parse_allowlist
     reply = reply_to if reply_to is not None else owner_notify_email()
     log = {
         "id": gen_id(), "to": to, "from": SENDER_EMAIL, "reply_to": reply, "subject": subject,
         "html": html, "kind": kind, "meta": meta or {}, "sent_at": iso(now_utc()),
-        "delivered": False, "held": False, "provider_id": None, "error": None,
+        "delivered": False, "provider_id": None, "error": None,
     }
-    decision = email_delivery(
-        kind, to, enabled=shop_emails_enabled(),
-        allowlist=parse_allowlist(os.environ.get("TEST_EMAIL_ALLOWLIST")),
-    )
-    if decision == "hold":
-        held = {
-            "id": log["id"], "to": to, "from": SENDER_EMAIL, "reply_to": reply,
-            "subject": subject, "html": html, "kind": kind, "meta": meta or {},
-            "created_at": log["sent_at"], "status": OUTBOX_STATUS, "reason": HELD_REASON,
-        }
-        await db.email_outbox.insert_one(held.copy())
-        log["held"] = True
-        log["status"] = OUTBOX_STATUS
-        logger.info("[EMAIL] held %s to %s. %s", kind, to, HELD_REASON)
-        return log
     if not RESEND_API_KEY:
         log["error"] = "No RESEND_API_KEY configured — saved to admin_notifications for manual send"
         await db.admin_notifications.insert_one({**log, "subject": f"[MANUAL SEND] {subject}"})
@@ -3324,21 +3611,23 @@ async def _issue_invite(shop: dict, recipient_email: str, previous_id: Optional[
         "register_url": register_url,
     }
     if register_url:
-        log = await send_email(
-            to=recipient_email,
-            subject=f"Set up {shop['name']} with The Calibration Crew",
-            html=invite_email_html(shop["name"], register_url),
-            kind="invite", meta={"invite_id": invite["id"], "shop_id": shop["id"]},
-        )
-        if log.get("delivered"):
+        log = await _send_booking_message({
+            "to": recipient_email,
+            "subject": f"Set up {shop['name']} with The Calibration Crew",
+            "html": invite_email_html(shop["name"], register_url),
+            "kind": "invite",
+            "reply_to": owner_notify_email(),
+            "meta": {"invite_id": invite["id"], "shop_id": shop["id"]},
+        }, "shop")
+        if log and log.get("delivered"):
             invite["email_status"] = "sent"
             invite["email_error"] = None
-        elif log.get("held"):
+        elif log and log.get("audience"):
             invite["email_status"] = "held"
             invite["email_error"] = None
         else:
             invite["email_status"] = "failed"
-            invite["email_error"] = log.get("error") or "Email was not delivered."
+            invite["email_error"] = (log or {}).get("error") or "Email was not delivered."
     await db.invites.insert_one(invite.copy())
     return invite
 
@@ -3579,13 +3868,14 @@ async def portal_accept_charge(body: AcceptChargeIn, request: Request, su=Depend
         except ValueError:
             booking_url = f"/book/{shop['booking_link_token']}"
             logger.error("[EMAIL] FRONTEND_URL is not set, welcome email has a relative booking link.")
-        await send_email(
-            fresh["email"],
-            f"You're set — {shop['name']}",
-            welcome_email_html(shop["name"], booking_url),
-            kind="welcome",
-            meta={"shop_id": shop["id"]},
-        )
+        await _send_booking_message({
+            "to": fresh["email"],
+            "subject": f"You're set — {shop['name']}",
+            "html": welcome_email_html(shop["name"], booking_url),
+            "kind": "welcome",
+            "reply_to": owner_notify_email(),
+            "meta": {"shop_id": shop["id"]},
+        }, "shop")
         await send_email(
             owner_notify_email(),
             f"{shop['name']} finished signup",
@@ -3661,12 +3951,13 @@ async def portal_forgot_password(body: ForgotPasswordIn):
             link = None
             logger.error("[EMAIL] FRONTEND_URL is not set. Password reset was not emailed.")
         if link:
-            await send_email(
-                su["email"],
-                "Reset your CalibrationOS password",
-                f"<p>This link works once and expires in one hour.</p><p><a href=\"{link}\">Choose a new password</a></p>",
-                kind="password_reset",
-            )
+            await _send_booking_message({
+                "to": su["email"],
+                "subject": "Reset your CalibrationOS password",
+                "html": f"<p>This link works once and expires in one hour.</p><p><a href=\"{link}\">Choose a new password</a></p>",
+                "kind": "password_reset",
+                "reply_to": owner_notify_email(),
+            }, "shop")
     return {"ok": True, "message": "If that email has an account, a reset link is on the way."}
 
 
@@ -4041,20 +4332,30 @@ async def email_log(tech=Depends(require_owner)):
     ).sort("sent_at", -1).limit(50).to_list(50)
     return {"sent": logs, "pending_manual": pending}
 
-
 @api.get("/email-outbox")
-async def email_outbox(tech=Depends(require_owner)):
-    """Held shop and customer mail. Nothing here was sent."""
-    rows = await db.email_outbox.find({}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
-    return rows
-
-
-@api.get("/email-outbox/{item_id}")
-async def email_outbox_item(item_id: str, tech=Depends(require_owner)):
-    row = await db.email_outbox.find_one({"id": item_id}, {"_id": 0})
-    if not row:
-        raise HTTPException(404, "That email is not in the outbox.")
-    return row
+async def list_email_outbox(tech=Depends(require_owner)):
+    """Read-only list of emails that were held instead of sent."""
+    store = getattr(db, "email_outbox", None)
+    if store is None:
+        return []
+    try:
+        rows = await store.find({}, {"_id": 0}).to_list(200)
+    except Exception as exc:
+        logger.warning("email outbox unreadable: %s", exc)
+        return []
+    rows.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+    return [
+        {
+            "id": row.get("id"),
+            "to": row.get("to"),
+            "subject": row.get("subject"),
+            "body": row.get("body") or "",
+            "created_at": row.get("created_at"),
+            "audience": row.get("audience"),
+            "kind": row.get("kind"),
+        }
+        for row in rows[:100]
+    ]
 
 # ---------- Seed ----------
 async def seed_data():
@@ -4156,6 +4457,7 @@ async def seed_data():
                 "contact_phone": s.get("contact_phone"), "contact_email": s.get("contact_email"),
                 "address": s["address"], "city": None, "state": "AZ", "zip": None,
                 "lat": geo["lat"], "lng": geo["lng"], "zone": zone,
+                "geocode_source": "fallback",
                 "booking_link_token": secrets.token_hex(16),
                 "pricing_tier": s.get("pricing_tier", "standard"),
                 "custom_rate_static": s.get("custom_rate_static"),
@@ -4199,6 +4501,8 @@ async def seed_data():
                 await db.partner_contacts.insert_one(internal.model_dump())
             logger.info("Seeded partner_contacts for Module 9 (Partner Growth Engine)")
         await enforce_grid_caps(db)  # idempotent safety net, cheap to run every startup
+
+    await ensure_holidays()
 
 def security_self_check():
     """Log deployment security posture at startup; fail closed in production on an unsafe secret."""
@@ -4382,7 +4686,13 @@ async def run_late_fee_sweep() -> dict:
         await send_email(owner_notify_email(), f"Late fee — {job.get('shop_name')}", note, kind="late_fee")
         shop_email = shop.get("contact_email") or job.get("notification_email")
         if shop_email:
-            await send_email(shop_email, "A $25 late fee was added", note, kind="late_fee_shop")
+            await _send_booking_message({
+                "to": shop_email,
+                "subject": "A $25 late fee was added",
+                "html": note,
+                "kind": "late_fee_shop",
+                "reply_to": owner_notify_email(),
+            }, "shop")
         client = get_stripe()
         shop_user = await _shop_user_for(job.get("shop_id"))
         if client and shop_user and shop_user.get("stripe_customer_id") and not job.get("stripe_late_fee_invoice_id"):
@@ -4429,6 +4739,286 @@ async def startup():
     except Exception:
         pass
     await db.drive_time_cache.create_index("expires_at", expireAfterSeconds=0)
+
+class DayOffIn(BaseModel):
+    start: str
+    end: Optional[str] = None
+    label: str = "Vacation"
+
+
+class DayOffToggle(BaseModel):
+    blocked: bool
+
+
+def _owner_action_job(job: dict) -> dict:
+    return {
+        "id": job.get("id"),
+        "shop_name": job.get("shop_name"),
+        "when": job.get("scheduled_start"),
+        "vehicle": _vehicle_line(job),
+        "address": job.get("job_address"),
+        "calibration": job.get("calibration_label"),
+        "price": job.get("price"),
+        "status": job.get("status"),
+    }
+
+
+async def _assess_saved_link(token: str):
+    claims = token_claims(JWT_SECRET, token)
+    record = None
+    store = getattr(db, "owner_action_tokens", None)
+    if claims and store is not None:
+        record = await store.find_one({"id": claims["nonce"]}, {"_id": 0})
+    decision = assess_owner_link(JWT_SECRET, token, record, now_utc())
+    job = None
+    if decision.get("ok"):
+        job = await db.jobs.find_one({"id": decision["job_id"]}, {"_id": 0})
+        if not job:
+            decision = {"ok": False, "error": "This link is not valid.", "consumes": False}
+    return decision, record, job
+
+
+@api.get("/public/owner-action/{token}")
+async def preview_owner_action(token: str):
+    """Show the job. Does not approve, decline, or use up the link."""
+    decision, _record, job = await _assess_saved_link(token)
+    if not decision["ok"]:
+        raise HTTPException(400, decision["error"])
+    return {
+        "action": decision["action"],
+        "requires_confirm": True,
+        "job": _owner_action_job(job),
+    }
+
+
+@api.post("/public/owner-action/{token}")
+async def confirm_owner_action(token: str):
+    """Use the link once. The shop is emailed when the job actually changes."""
+    decision, record, job = await _assess_saved_link(token)
+    if not decision["ok"]:
+        raise HTTPException(400, decision["error"])
+    used = mark_used(record, now_utc())
+    store = db.owner_action_tokens
+    claim = getattr(store, "find_one_and_update", None)
+    if claim is not None:
+        stored = await claim(
+            {"id": record["id"], "used_at": None},
+            {"$set": {"used_at": used["used_at"]}},
+        )
+        if not stored:
+            raise HTTPException(400, "This link was already used.")
+    else:
+        await store.update_one({"id": record["id"]}, {"$set": {"used_at": used["used_at"]}})
+    action = decision["action"]
+    status = job.get("status")
+    changed = False
+    if action == "approve" and status == "requested":
+        await db.jobs.update_one({"id": job["id"]}, {"$set": {
+            "status": "booked",
+            "approved_at": used["used_at"],
+            "approved_by": "owner-link",
+            "approval_reason": None,
+            "declined_at": None,
+            "updated_at": used["used_at"],
+        }})
+        changed = True
+        message = "Approved. The shop will get an email."
+    elif action == "approve":
+        message = "This job is already confirmed." if status == "booked" else "This job can no longer be approved."
+    elif action == "decline" and status in ("requested", "booked"):
+        await db.jobs.update_one({"id": job["id"]}, {"$set": {
+            "status": "declined",
+            "declined_at": used["used_at"],
+            "approved_at": None,
+            "approved_by": None,
+            "updated_at": used["used_at"],
+        }})
+        changed = True
+        message = "Declined. The time is free."
+    else:
+        message = "This job can no longer be declined."
+    fresh = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+    if changed:
+        await email_shop_event(fresh, await _shop_for_job(fresh), "approved" if action == "approve" else "declined")
+    return {"ok": True, "message": message, "job": _owner_action_job(fresh or job)}
+
+
+def _day_off_public(row: dict) -> dict:
+    return {key: row.get(key) for key in ("key", "label", "kind", "blocked", "start", "end")}
+
+
+@api.get("/days-off")
+async def get_days_off(tech=Depends(require_owner)):
+    """Holidays, custom days off, and jobs already sitting on a closed day."""
+    await ensure_holidays()
+    records = sorted(await load_days_off(), key=lambda row: (row.get("start") or "", row.get("label") or ""))
+    conflicts = []
+    jobs_store = getattr(db, "jobs", None)
+    if jobs_store is not None:
+        try:
+            rows = await jobs_store.find({"day_off_conflict": True}, {"_id": 0}).to_list(200)
+        except Exception:
+            rows = []
+        for job in rows:
+            if job.get("status") in ("cancelled", "declined", "complete"):
+                continue
+            conflicts.append({
+                "id": job.get("id"),
+                "shop_name": job.get("shop_name"),
+                "when": job.get("scheduled_start"),
+                "vehicle": _vehicle_line(job),
+                "address": job.get("job_address"),
+                "status": job.get("status"),
+                "label": job.get("day_off_label"),
+            })
+    return {"days": [_day_off_public(row) for row in records], "conflicts": conflicts}
+
+
+@api.put("/days-off/{key}")
+async def toggle_day_off(key: str, body: DayOffToggle, tech=Depends(require_owner)):
+    await ensure_holidays()
+    store = getattr(db, "days_off", None)
+    if store is None:
+        raise HTTPException(400, "Days off are not available.")
+    row = await store.find_one({"key": key}, {"_id": 0})
+    if not row:
+        raise HTTPException(404, "That day is not on the list.")
+    was_blocked = bool(row.get("blocked", True))
+    await store.update_one({"key": key}, {"$set": {"blocked": body.blocked}})
+    fresh = await store.find_one({"key": key}, {"_id": 0}) or {**row, "blocked": body.blocked}
+    span = _dates_between(date.fromisoformat(fresh["start"]), date.fromisoformat(fresh.get("end") or fresh["start"]))
+    if body.blocked and not was_blocked:
+        await flag_jobs_on_dates(span, fresh.get("label") or "a day off")
+    if not body.blocked and was_blocked:
+        await clear_day_off_flags(span)
+    return _day_off_public(fresh)
+
+
+@api.post("/days-off")
+async def add_day_off(body: DayOffIn, tech=Depends(require_owner)):
+    try:
+        start, end = parse_range(body.start, body.end)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    label = (body.label or "").strip() or "Vacation"
+    row = {
+        "key": "custom-" + secrets.token_hex(6),
+        "label": label,
+        "kind": "custom",
+        "blocked": True,
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+    }
+    store = getattr(db, "days_off", None)
+    if store is None:
+        raise HTTPException(400, "Days off are not available.")
+    await store.insert_one(dict(row))
+    await flag_jobs_on_dates(_dates_between(start, end), label)
+    return row
+
+
+@api.delete("/days-off/{key}")
+async def delete_day_off(key: str, tech=Depends(require_owner)):
+    store = getattr(db, "days_off", None)
+    if store is None:
+        raise HTTPException(400, "Days off are not available.")
+    row = await store.find_one({"key": key}, {"_id": 0})
+    if not row:
+        raise HTTPException(404, "That day is not on the list.")
+    if row.get("kind") == "holiday":
+        raise HTTPException(400, "Holidays stay on the list. Turn the day off if you are working.")
+    if hasattr(store, "delete_one"):
+        await store.delete_one({"key": key})
+    else:
+        await store.update_one({"key": key}, {"$set": {"blocked": False}})
+    span = _dates_between(date.fromisoformat(row["start"]), date.fromisoformat(row.get("end") or row["start"]))
+    await clear_day_off_flags(span)
+    return {"deleted": key}
+
+
+def _pin_row_shop(shop: dict) -> dict:
+    return {
+        "id": shop.get("id"),
+        "name": shop.get("name"),
+        "address": shop.get("address"),
+        "lat": shop.get("lat"),
+        "lng": shop.get("lng"),
+    }
+
+
+def _pin_row_job(job: dict) -> dict:
+    return {
+        "id": job.get("id"),
+        "shop_name": job.get("shop_name"),
+        "address": job.get("job_address"),
+        "when": job.get("scheduled_start"),
+        "vehicle": _vehicle_line(job),
+        "status": job.get("status"),
+        "lat": job.get("job_lat"),
+        "lng": job.get("job_lng"),
+    }
+
+
+class PinRecheckIn(BaseModel):
+    kind: Literal["shop", "job"]
+    id: str
+
+
+@api.post("/address-pins/recheck")
+async def recheck_address_pin(body: PinRecheckIn, tech=Depends(require_owner)):
+    """Look the saved address up again. A guess is not written back."""
+    if body.kind == "shop":
+        shop = await db.shops.find_one({"id": body.id})
+        if not shop:
+            raise HTTPException(404, "Shop not found")
+        address = shop.get("address") or ""
+        try:
+            geo = await geocode_address(address)
+        except AddressNotFound as exc:
+            raise HTTPException(400, str(exc))
+        _refuse_unusable_pin(geo)
+        zone = detect_zone(geo["lng"]) if geo.get("in_metro") else shop.get("zone")
+        await db.shops.update_one({"id": shop["id"]}, {"$set": {
+            "lat": geo["lat"], "lng": geo["lng"], "zone": zone,
+            "geocode_source": "google", "updated_at": iso(now_utc()),
+        }})
+        return {"ok": True, "formatted_address": geo.get("formatted_address")}
+    job = await db.jobs.find_one({"id": body.id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    address = job.get("job_address") or ""
+    try:
+        geo = await geocode_address(address)
+    except AddressNotFound as exc:
+        raise HTTPException(400, str(exc))
+    _refuse_unusable_pin(geo)
+    zone = detect_zone(geo["lng"]) if geo.get("in_metro") else job.get("zone")
+    await db.jobs.update_one({"id": job["id"]}, {"$set": {
+        "job_lat": geo["lat"], "job_lng": geo["lng"], "zone": zone,
+        "geocode_source": "google", "updated_at": iso(now_utc()),
+    }})
+    return {"ok": True, "formatted_address": geo.get("formatted_address")}
+
+
+@api.get("/address-pins")
+async def list_address_pins(tech=Depends(require_owner)):
+    """Shops and jobs whose saved coordinates came from a fallback guess."""
+    shops = await db.shops.find({}, {"_id": 0}).to_list(5000)
+    jobs = await db.jobs.find({}, {"_id": 0}).to_list(20000)
+    bad_shops = []
+    for shop in shops:
+        mock = mock_geocode(shop.get("address") or "")
+        if came_from_fallback(shop.get("geocode_source"), shop.get("lat"), shop.get("lng"), mock["lat"], mock["lng"]):
+            bad_shops.append(_pin_row_shop(shop))
+    bad_jobs = []
+    for job in jobs:
+        if job.get("status") in ("cancelled", "declined"):
+            continue
+        mock = mock_geocode(job.get("job_address") or "")
+        if came_from_fallback(job.get("geocode_source"), job.get("job_lat"), job.get("job_lng"), mock["lat"], mock["lng"]):
+            bad_jobs.append(_pin_row_job(job))
+    return {"shops": bad_shops, "jobs": bad_jobs}
+
 
 @api.get("/health")
 async def health():
