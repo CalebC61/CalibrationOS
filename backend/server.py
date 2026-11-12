@@ -89,13 +89,14 @@ from xero_invoice import xero_invoice_body, line_two_description, due_date_strin
 # Card charging (real-if-Stripe-configured — see /charge-queue/{job_id}/charge)
 from charging import cents, chargeable_reason, interpret_payment_intent, decline_message
 from onboarding import (
-    AGREEMENT_PARAGRAPHS, AGREEMENT_VERSION, CHARGE_ACCEPTANCE_TEXT, agreement_text,
+    AGREEMENT_PARAGRAPHS, AGREEMENT_SECTIONS, AGREEMENT_VERSION, CHARGE_ACCEPTANCE_TEXT, agreement_text,
     addresses_match, address_problem, app_link, booking_gate, canonical_email,
     duplicate_fields, invite_email_html, invite_register_url, normalize_phone,
     password_error, sender_email_problem, shop_contact_errors, welcome_email_html,
 )
 from billing import (
-    CHARGE_MODE, INVOICE_MODE, amount_due, apply_late_fee, billing_plan, payment_mode,
+    CHARGE_MODE, INVOICE_MODE, TRIP_FEE_REASONS, amount_due, apply_late_fee, apply_trip_fee_only,
+    billing_plan, payment_mode, set_outside_service_area, treat_decline_as_invoice,
 )
 from payments import (
     charge_job as stripe_charge_job,
@@ -1171,6 +1172,12 @@ class ContactIn(BaseModel):
 
 class PaymentModeIn(BaseModel):
     mode: Literal["charge_on_completion", "invoice_hold"]
+
+class TripFeeIn(BaseModel):
+    reason: Literal["bad_install", "customer_vehicle"]
+
+class OutsideAreaIn(BaseModel):
+    enabled: bool = True
 
 class ForgotPasswordIn(BaseModel):
     email: EmailStr
@@ -2646,8 +2653,11 @@ async def _charge_saved_card(job, shop) -> dict:
         decline_code = getattr(exc.error, "decline_code", None) if getattr(exc, "error", None) else None
         message = decline_message(exc.code, decline_code)
         attempt = int(job.get("charge_attempts") or 0) + 1
+        declined = treat_decline_as_invoice(job)
         await db.jobs.update_one({"id": job["id"]}, {"$set": {
             "payment_status": "payment_failed",
+            "payment_mode": declined["payment_mode"],
+            "invoiced_after_decline": True,
             "charge_error": message,
             "charge_error_at": iso(now_utc()),
             "charge_attempts": attempt,
@@ -2670,8 +2680,11 @@ async def _charge_saved_card(job, shop) -> dict:
         return failed
     if result.get("outcome") != "succeeded":
         message = result.get("message") or "Card requires authentication."
+        declined = treat_decline_as_invoice(job)
         await db.jobs.update_one({"id": job["id"]}, {"$set": {
             "payment_status": "payment_failed",
+            "payment_mode": declined["payment_mode"],
+            "invoiced_after_decline": True,
             "charge_error": message,
             "charge_error_at": iso(now_utc()),
             "stripe_payment_intent_id": result.get("payment_intent_id"),
@@ -2715,7 +2728,7 @@ async def _settle_completed_job(job_id: str) -> dict:
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     shop = await db.shops.find_one({"id": job["shop_id"]}) or {"name": job.get("shop_name"), "id": job.get("shop_id")}
     plan = billing_plan(job)
-    description = job.get("calibration_label") or "ADAS calibration"
+    description = job.get("billing_description") or job.get("calibration_label") or "ADAS calibration"
     if plan["create_invoice"]:
         client = get_stripe()
         shop_user = await _shop_user_for(job.get("shop_id"))
@@ -2765,6 +2778,69 @@ async def _settle_completed_job(job_id: str) -> dict:
         else:
             job = await _charge_saved_card(job, shop)
     return job
+
+
+def _job_already_billed(job: dict) -> bool:
+    return bool(
+        job.get("invoice_id")
+        or job.get("stripe_invoice_id")
+        or job.get("charged_at")
+        or job.get("payment_status") in ("paid", "succeeded")
+    )
+
+
+@api.post("/jobs/{job_id}/outside-service-area")
+async def set_job_outside_service_area(job_id: str, body: OutsideAreaIn, tech=Depends(require_owner)):
+    """Add or remove the $30 outside-area trip fee on top of the calibration price."""
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") in ("cancelled", "declined"):
+        raise HTTPException(400, "That job is closed.")
+    if _job_already_billed(job):
+        raise HTTPException(400, "This job already has an invoice.")
+    updated = set_outside_service_area(job, body.enabled)
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "price": updated["price"],
+        "calibration_price": updated["calibration_price"],
+        "outside_service_area": updated["outside_service_area"],
+        "trip_fee": updated["trip_fee"],
+        "trip_fee_kind": updated["trip_fee_kind"],
+        "updated_at": iso(now_utc()),
+    }})
+    return await db.jobs.find_one({"id": job_id}, {"_id": 0})
+
+
+@api.post("/jobs/{job_id}/trip-fee")
+async def charge_trip_fee_only(job_id: str, body: TripFeeIn, tech=Depends(require_owner)):
+    """Couldn't calibrate. Charge the $30 trip fee through the same invoice path as a completed job."""
+    if body.reason not in TRIP_FEE_REASONS:
+        raise HTTPException(400, "Pick a trip-fee reason.")
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") in ("cancelled", "declined"):
+        raise HTTPException(400, "That job is closed.")
+    if _job_already_billed(job):
+        raise HTTPException(400, "This job already has an invoice.")
+    priced = apply_trip_fee_only(job, body.reason)
+    now = iso(now_utc())
+    await db.jobs.update_one({"id": job_id}, {"$set": {
+        "price": priced["price"],
+        "trip_fee": priced["trip_fee"],
+        "trip_fee_reason": priced["trip_fee_reason"],
+        "trip_fee_kind": priced["trip_fee_kind"],
+        "calibration_not_performed": True,
+        "outside_service_area": False,
+        "billing_description": priced["billing_description"],
+        "status": "complete",
+        "result": "not_performed",
+        "actual_completion": job.get("actual_completion") or now,
+        "payment_mode": job.get("payment_mode") or CHARGE_MODE,
+        "updated_at": now,
+    }})
+    fresh = await _settle_completed_job(job_id)
+    return {"job": fresh}
 
 
 @api.post("/jobs/{job_id}/charge-card")
@@ -3685,6 +3761,7 @@ async def public_invite_lookup(token: str):
         **inv, "shop": shop,
         "agreement_version": AGREEMENT_VERSION,
         "agreement_paragraphs": AGREEMENT_PARAGRAPHS,
+        "agreement_sections": AGREEMENT_SECTIONS,
         "owner_phone": OWNER_PHONE,
     }
 
@@ -3982,6 +4059,7 @@ async def public_agreement():
     return {
         "version": AGREEMENT_VERSION,
         "paragraphs": AGREEMENT_PARAGRAPHS,
+        "sections": AGREEMENT_SECTIONS,
         "acceptance": CHARGE_ACCEPTANCE_TEXT,
     }
 

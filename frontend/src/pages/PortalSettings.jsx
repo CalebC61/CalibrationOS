@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { portalApi, setPortalAuth, getPortalAuth } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 import { CardSetup, ChargeAcceptance, CHARGE_ACCEPTANCE_FALLBACK } from "../components/CardSetup";
+import AgreementView from "../components/AgreementView";
 
 export default function PortalSettings() {
   const [me, setMe] = useState(null);
@@ -10,9 +11,16 @@ export default function PortalSettings() {
   const [needsAcceptance, setNeedsAcceptance] = useState(false);
   const [acceptance, setAcceptance] = useState(CHARGE_ACCEPTANCE_FALLBACK);
   const [accepting, setAccepting] = useState(false);
+  const [agreement, setAgreement] = useState(null);
 
   function load() { return portalApi.get("/portal/me").then(r => setMe(r.data)); }
-  useEffect(() => { load(); portalApi.get("/public/agreement").then(r => setAcceptance(r.data.acceptance)).catch(() => {}); }, []);
+  useEffect(() => {
+    load();
+    portalApi.get("/public/agreement").then(r => {
+      if (r.data.acceptance) setAcceptance(r.data.acceptance);
+      setAgreement(r.data);
+    }).catch(() => {});
+  }, []);
 
   async function startCard() {
     setCardError("");
@@ -87,9 +95,10 @@ export default function PortalSettings() {
         )}
       </div>
 
-      <div className="surface" style={{ padding: 20, maxWidth: 560 }}>
-        <div className="h3" style={{ marginBottom: 12 }}>Terms agreement</div>
-        <div className="muted" style={{ fontSize: 13 }}>
+      <div className="surface" style={{ padding: 20, maxWidth: 640 }}>
+        <h2 className="h2" style={{ fontSize: "1.35rem", marginBottom: 12 }}>Service agreement</h2>
+        <AgreementView sections={agreement?.sections} paragraphs={agreement?.paragraphs} />
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
           {su.terms_signed_at ? (
             <>Signed by <b style={{ color: "var(--text-primary)" }}>{su.terms_signature}</b> on {new Date(su.terms_signed_at).toLocaleString()}.</>
           ) : "Not signed yet."}

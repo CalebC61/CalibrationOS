@@ -10,9 +10,12 @@ from billing import (
     _MemoryGateway,
     apply_billing_pass,
     apply_late_fee,
+    apply_trip_fee_only,
     billing_plan,
     charge_idempotency_key,
     late_fee_due,
+    set_outside_service_area,
+    treat_decline_as_invoice,
 )
 from onboarding import (
     AGREEMENT_VERSION,
@@ -93,14 +96,31 @@ def test_sender_must_not_be_the_resend_onboarding_address():
 
 def test_agreement_states_the_card_invoice_and_late_fee_rules():
     text = agreement_text()
-    assert "charge the card" in text
+    assert "Cerdhe LLC" in text
+    assert "The Calibration Crew" in text
+    assert "Gilbert" in text
+    assert "allowed to sign" in text
+    assert "Static $125" in text and "Tesla $225" in text
+    assert "30 days' written notice" in text
+    assert "card on file" in text
     assert "job notes" in text
     assert "7 days" in text
     assert "$25" in text
     assert "proof of purchase" in text
-    # The $50 late-cancel line is not enforced in code, so it stays out.
+    assert "$30 trip fee" in text
+    assert "outside our service area" in text
+    assert "bad installation" in text
+    assert "flat tire" in text
+    assert "do not charge a late-cancel fee" in text
+    assert "do not charge a waiting fee" in text
+    assert "within 30 days" in text
+    assert "amount paid for that job" in text
+    assert "chargeback" in text
+    assert "legal signature" in text
+    assert "Maricopa County" in text
     assert "$50" not in text
-    assert AGREEMENT_VERSION
+    assert "waiting fee" in text
+    assert AGREEMENT_VERSION == "2026-11-12.2"
 
 
 def test_new_shops_cannot_book_until_signed_and_card_saved():
@@ -222,3 +242,47 @@ def test_late_fee_applies_once_after_seven_days_on_unpaid_invoices():
     assert late_fee_due(paid, NOW) is None
     charged = _job(payment_mode=INVOICE_MODE, charged_at="t", invoice_id="in_1")
     assert late_fee_due(charged, NOW) is None
+
+
+def test_outside_area_adds_thirty_dollars_once():
+    job = _job(price=125, status="booked")
+    once = set_outside_service_area(job, True)
+    assert once["price"] == 155
+    assert once["outside_service_area"] is True
+    again = set_outside_service_area(once, True)
+    assert again["price"] == 155
+    cleared = set_outside_service_area(again, False)
+    assert cleared["price"] == 125
+    assert cleared["outside_service_area"] is False
+
+
+def test_could_not_calibrate_charges_only_the_trip_fee():
+    job = _job(price=175, status="booked")
+    marked = set_outside_service_area(job, True)
+    bad = apply_trip_fee_only(marked, "bad_install")
+    assert bad["price"] == 30
+    assert bad["outside_service_area"] is False
+    assert bad["trip_fee_reason"] == "bad_install"
+    assert bad["status"] == "complete"
+    assert "Bad installation" in bad["billing_description"]
+    customer = apply_trip_fee_only(job, "customer_vehicle")
+    assert customer["price"] == 30
+    assert customer["trip_fee_reason"] == "customer_vehicle"
+    try:
+        apply_trip_fee_only(job, "waiting")
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised
+    gateway = _MemoryGateway()
+    billed = apply_billing_pass(bad, gateway)
+    assert billed["invoice_id"]
+    assert billed["payment_status"] == "paid"
+    assert list(gateway.charges.values())[0]["amount"] == 30
+
+
+def test_a_declined_card_is_treated_as_an_invoice():
+    declined = treat_decline_as_invoice(_job())
+    assert declined["payment_mode"] == INVOICE_MODE
+    assert declined["payment_status"] == "payment_failed"
+    assert billing_plan(declined)["charge"] is False

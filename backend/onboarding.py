@@ -9,31 +9,97 @@ from typing import Optional
 from email_validator import EmailNotValidError, validate_email
 
 # Bump when the words the shop signs change. Stored with the signature.
-AGREEMENT_VERSION = "2026-11-12"
+AGREEMENT_VERSION = "2026-11-12.2"
 
-# TODO(owner): The old signup screens mentioned a $50 fee when a shop cancels
-# less than 4 hours before the start ("$50 trip charge" / "$50 late-cancel").
-# Nothing in the server charges that fee, so it is not in this agreement.
-# Confirm whether it is still the policy before adding a sentence here.
-
-AGREEMENT_PARAGRAPHS = [
-    "When a calibration is finished, you authorize The Calibration Crew to charge the card you keep on file for that job.",
-    "If you would rather be invoiced for a job, say so in the job notes or call us before we finish it. We will invoice that job and we will not charge the card until you tell us to.",
-    "An invoiced job has 7 days to be paid. After those 7 days, a $25 late fee is added.",
-    "Every job comes with an invoice, so you always have a proof of purchase.",
+AGREEMENT_SECTIONS = [
+    {
+        "heading": "Who this is between",
+        "body": (
+            "This is between Cerdhe LLC, doing business as The Calibration Crew in Gilbert, Arizona, "
+            "and your shop. By typing your name and checking the box, you confirm you are allowed to sign for the shop."
+        ),
+    },
+    {
+        "heading": "What we do",
+        "body": (
+            "We calibrate ADAS cameras and sensors at your shop. Prices at signup are Static $125, "
+            "Dynamic $125, Dual $175, and Tesla $225. We can change those prices with 30 days' written notice."
+        ),
+    },
+    {
+        "heading": "How you pay",
+        "body": (
+            "We charge the card on file automatically when a job is marked complete. If you ask in the job notes, "
+            "or call us before the job is finished, we invoice that job instead and charge the card only when you say so. "
+            "An invoiced job has 7 days to pay. After that, a one-time $25 late fee is added to that invoice. "
+            "Every job gets an invoice, so you have a proof of purchase. If the card is declined, you update the card, "
+            "and the balance is handled as an invoiced job."
+        ),
+    },
+    {
+        "heading": "The $30 trip fee",
+        "body": (
+            "A $30 trip fee applies in three cases. If the address is outside our service area, the $30 is added on top "
+            "of the calibration price. If we cannot calibrate because of a bad installation, such as a broken camera "
+            "mounting bracket or a bad or incorrect windshield, we charge only the $30 trip fee, not the calibration price. "
+            "The same is true if we cannot calibrate because of the customer or the vehicle, such as the vehicle leaving "
+            "without notice, no fuel, a flat tire, or a dead battery."
+        ),
+    },
+    {
+        "heading": "What we need from your shop",
+        "body": (
+            "The vehicle is on site with the keys. The glass is installed and cured. The battery is charged. "
+            "The tires are properly inflated. There is enough fuel. The vehicle has no unrelated warning lights. "
+            "There is a level place to work."
+        ),
+    },
+    {
+        "heading": "No late-cancel fee and no waiting fee",
+        "body": "We do not charge a late-cancel fee. We do not charge a waiting fee.",
+    },
+    {
+        "heading": "If we get it wrong",
+        "body": "If a calibration we performed is found to be incorrect within 30 days, we re-calibrate it at no charge.",
+    },
+    {
+        "heading": "What we are not responsible for",
+        "body": (
+            "We are not responsible for problems that were already there, damaged or failed modules or cameras, "
+            "aftermarket parts, or installation defects. For any one job, the most we can be responsible for is the amount paid for that job."
+        ),
+    },
+    {
+        "heading": "Questions and disputes",
+        "body": "Tell us about a billing or service issue within 7 days of the invoice. Contact us before you file a chargeback.",
+    },
+    {
+        "heading": "Your signature",
+        "body": (
+            "Typing your name and checking the box is your legal signature. We store your name, the time, "
+            "your IP address, and the version of this agreement."
+        ),
+    },
+    {
+        "heading": "Changes and Arizona law",
+        "body": "Updated terms take effect after we give you notice. Arizona law applies. If there is a dispute in court, it is in Maricopa County.",
+    },
 ]
 
+AGREEMENT_PARAGRAPHS = [section["body"] for section in AGREEMENT_SECTIONS]
+
 CHARGE_ACCEPTANCE_TEXT = (
-    "You understand that after each job is completed, you authorize The Calibration Crew "
-    "to charge this card, unless you asked beforehand to be invoiced, in which case you "
-    "have a 7-day grace period before a $25 late fee."
+    "You understand that after each job is completed, you authorize The Calibration Crew to charge this card, "
+    "unless you asked beforehand to be invoiced, in which case you have 7 days to pay before a one-time $25 late fee. "
+    "A $30 trip fee may be added when the address is outside our service area, or charged instead of the calibration "
+    "price when we cannot calibrate because of a bad installation or because of the customer or the vehicle."
 )
 
 RESEND_TEST_SENDER = "onboarding@resend.dev"
 
 
 def agreement_text() -> str:
-    return "\n\n".join(AGREEMENT_PARAGRAPHS)
+    return "\n\n".join(f"{section['heading']}\n{section['body']}" for section in AGREEMENT_SECTIONS)
 
 
 def sender_email_problem(sender: str) -> Optional[str]:

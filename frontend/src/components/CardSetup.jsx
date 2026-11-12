@@ -96,4 +96,4 @@ export function ChargeAcceptance({ text, busy, onAccept }) {
   );
 }
 
-export const CHARGE_ACCEPTANCE_FALLBACK = "You understand that after each job is completed, you authorize The Calibration Crew to charge this card, unless you asked beforehand to be invoiced, in which case you have a 7-day grace period before a $25 late fee.";
+export const CHARGE_ACCEPTANCE_FALLBACK = "You understand that after each job is completed, you authorize The Calibration Crew to charge this card, unless you asked beforehand to be invoiced, in which case you have 7 days to pay before a one-time $25 late fee. A $30 trip fee may be added when the address is outside our service area, or charged instead of the calibration price when we cannot calibrate because of a bad installation or because of the customer or the vehicle.";

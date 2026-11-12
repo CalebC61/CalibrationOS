@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { portalApi, setPortalAuth } from "../lib/portalApi";
 import Brand from "../components/Brand";
 import { CardSetup, ChargeAcceptance, CHARGE_ACCEPTANCE_FALLBACK } from "../components/CardSetup";
+import AgreementView from "../components/AgreementView";
 
 export default function PortalRegister() {
   const { token } = useParams();
@@ -115,6 +116,7 @@ export default function PortalRegister() {
   if (!invite) return <Center><div className="muted">Loading…</div></Center>;
 
   const paragraphs = invite.agreement_paragraphs || [];
+  const sections = invite.agreement_sections || [];
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-primary)", padding: "32px 16px" }}>
@@ -135,15 +137,16 @@ export default function PortalRegister() {
             <Field label="Confirm password *">
               <input className="input" type="password" required value={form.confirm} onChange={e => setForm({ ...form, confirm: e.target.value })} data-testid="reg-confirm" />
             </Field>
-            <div className="elevated" style={{ padding: 14, marginBottom: 16, fontSize: 14, lineHeight: 1.6 }} data-testid="terms-text">
-              {paragraphs.map(paragraph => <p key={paragraph} style={{ marginBottom: 10 }}>{paragraph}</p>)}
+            <div className="elevated" style={{ padding: 14, marginBottom: 16, fontSize: 14 }}>
+              <h2 className="h2" style={{ fontSize: "1.25rem", marginBottom: 12 }}>Service agreement</h2>
+              <AgreementView sections={sections} paragraphs={paragraphs} />
             </div>
             <Field label="Type your name to sign *">
               <input className="input" value={signature} onChange={e => setSignature(e.target.value)} data-testid="reg-signature" />
             </Field>
             <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 16 }}>
               <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} data-testid="reg-agree" />
-              <span>I have read this and I am signing for the shop.</span>
+              <span>I am allowed to sign for this shop. My typed name is my signature.</span>
             </label>
             {error && <div style={{ color: "var(--red)", fontSize: 13, marginBottom: 12 }} data-testid="reg-error">{error}</div>}
             <button className="btn btn-primary" style={{ width: "100%" }} disabled={submitting} data-testid="reg-submit">

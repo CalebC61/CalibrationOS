@@ -10,6 +10,11 @@ CHARGE_MODE = "charge_on_completion"
 INVOICE_MODE = "invoice_hold"
 LATE_FEE_DOLLARS = 25
 LATE_FEE_GRACE_DAYS = 7
+TRIP_FEE_DOLLARS = 30
+TRIP_FEE_REASONS = {
+    "bad_install": "Bad installation",
+    "customer_vehicle": "Customer or vehicle",
+}
 PAID_STATUSES = {"paid", "succeeded"}
 
 
@@ -30,6 +35,60 @@ def is_paid(job: Optional[dict]) -> bool:
 def has_invoice(job: Optional[dict]) -> bool:
     job = job or {}
     return bool(job.get("invoice_id") or job.get("stripe_invoice_id"))
+
+
+def calibration_base_price(job: Optional[dict]) -> float:
+    """The calibration price before an outside-area trip fee is added."""
+    job = job or {}
+    if job.get("calibration_price") is not None:
+        return round(float(job["calibration_price"]), 2)
+    price = float(job.get("price") or 0)
+    if job.get("outside_service_area"):
+        return round(price - TRIP_FEE_DOLLARS, 2)
+    return round(price, 2)
+
+
+def set_outside_service_area(job: dict, enabled: bool) -> dict:
+    """Add $30 once when the stop is outside the service area. Turning it off removes that $30."""
+    updated = dict(job)
+    base = calibration_base_price(job)
+    updated["calibration_price"] = base
+    updated["outside_service_area"] = bool(enabled)
+    if enabled:
+        updated["trip_fee"] = TRIP_FEE_DOLLARS
+        updated["trip_fee_kind"] = "outside_service_area"
+        updated["price"] = round(base + TRIP_FEE_DOLLARS, 2)
+    else:
+        updated["trip_fee"] = 0
+        updated["trip_fee_kind"] = None
+        updated["price"] = base
+    return updated
+
+
+def apply_trip_fee_only(job: dict, reason: str) -> dict:
+    """Charge $30 instead of the calibration price. Reason is bad_install or customer_vehicle."""
+    if reason not in TRIP_FEE_REASONS:
+        raise ValueError("Pick a trip-fee reason.")
+    updated = dict(job)
+    updated["price"] = float(TRIP_FEE_DOLLARS)
+    updated["trip_fee"] = TRIP_FEE_DOLLARS
+    updated["trip_fee_reason"] = reason
+    updated["trip_fee_kind"] = reason
+    updated["calibration_not_performed"] = True
+    updated["outside_service_area"] = False
+    updated["billing_description"] = f"Trip fee — {TRIP_FEE_REASONS[reason]}"
+    updated["status"] = "complete"
+    updated["result"] = "not_performed"
+    return updated
+
+
+def treat_decline_as_invoice(job: dict) -> dict:
+    """A declined card becomes an invoiced balance. It is not charged again until the shop says so."""
+    updated = dict(job)
+    updated["payment_mode"] = INVOICE_MODE
+    updated["payment_status"] = "payment_failed"
+    updated["invoiced_after_decline"] = True
+    return updated
 
 
 def amount_due(job: Optional[dict]) -> float:
