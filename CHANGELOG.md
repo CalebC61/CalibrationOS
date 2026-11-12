@@ -15,6 +15,9 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Removed — Emergent badge (2026-11-12)
+The public HTML no longer includes the “Made with Emergent” badge, the `emergent-main.js` script, the PostHog snippet that script sat next to, or the Inter font that only the badge used. The page title and description were already “The Calibration Crew” and the Phoenix Valley calibration line.
+
 ### Added — public site, shop requests, and card-on-file billing (2026-11-12)
 Logged-out `/` is the public site (home, services, pricing, service area, about, FAQ, contact, sign up). Staff login stays at `/login`.
 
