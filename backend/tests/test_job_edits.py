@@ -264,7 +264,7 @@ def test_owner_can_override_customer_vehicle_price_and_time(world):
         job = response.json()
         assert job["customer_first_name"] == "Luis"
         assert job["customer_last_name"] == "Martinez"
-        assert job["notification_phone"] == "+16025550999"
+        assert job["notification_phone"] == "(602) 555-0999"
         assert job["notification_email"] == "luis@example.com"
         assert job["vehicle_year"] == 2024
         assert job["vehicle_make"] == "Toyota"

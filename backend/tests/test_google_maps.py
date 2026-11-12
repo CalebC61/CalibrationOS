@@ -101,7 +101,11 @@ def test_distance_matrix_never_returns_zero_minutes():
 
 def test_geocode_request_params_include_address_and_key():
     params = geocode_request_params("1234 Main St, Phoenix, AZ", "test-key")
-    assert params == {"address": "1234 Main St, Phoenix, AZ", "key": "test-key"}
+    assert params["address"] == "1234 Main St, Phoenix, AZ"
+    assert params["key"] == "test-key"
+    assert params["region"] == "us"
+    assert "bounds" in params
+    assert params["components"] == "country:US"
 
 
 def test_distance_matrix_request_params_format_lat_lng_pairs():

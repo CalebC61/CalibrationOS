@@ -16,9 +16,12 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
   const [chosen, setChosen] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [slotsError, setSlotsError] = useState("");
+  const [reloadSlots, setReloadSlots] = useState(0);
 
   useEffect(() => {
     if (!open || mode !== "reschedule" || !job) return;
+    setSlotsError("");
     // Find the shop to use its booking token (we need it for availability)
     let cancelled = false;
     (async () => {
@@ -28,10 +31,18 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
         job_address: job.job_address,
         date,
       });
-      if (!cancelled) setSlots(data.slots || []);
-    })().catch(() => {});
+      if (!cancelled) {
+        setSlots(data.slots || []);
+        setSlotsError("");
+      }
+    })().catch(() => {
+      if (!cancelled) {
+        setSlots([]);
+        setSlotsError("Couldn't load times, try again");
+      }
+    });
     return () => { cancelled = true; };
-  }, [open, mode, job, date]);
+  }, [open, mode, job, date, reloadSlots]);
 
   if (!open || !job) return null;
 
@@ -62,8 +73,8 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
         </h2>
         <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
           {mode === "reschedule"
-            ? "The customer will receive an SMS with the new time."
-            : "The customer will receive a cancellation SMS."}
+            ? "The shop contact gets an email with the new time."
+            : "The shop contact gets an email that this job was cancelled."}
         </div>
         <div className="elevated" style={{ padding: 12, marginBottom: 16, fontSize: 14 }}>
           <div style={{ fontWeight: 600 }}>{job.shop_name}</div>
@@ -77,11 +88,20 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
             <input className="input" type="date" value={date} onChange={e => { setDate(e.target.value); setChosen(null); }}
               min={todayStr()} style={{ marginBottom: 12 }} data-testid="reschedule-date" />
             <div className="label">New time</div>
-            {slots.length === 0 ? (
+            {slotsError && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ color: "var(--red)", fontSize: 13 }} data-testid="reschedule-slots-error">{slotsError}</div>
+                <button type="button" className="btn btn-ghost" style={{ marginTop: 8 }}
+                  onClick={() => setReloadSlots(n => n + 1)} data-testid="reschedule-slots-retry">
+                  Try again
+                </button>
+              </div>
+            )}
+            {!slotsError && slots.length === 0 ? (
               <div className="muted" style={{ fontSize: 13, padding: 12, background: "var(--bg-elevated)", borderRadius: 8, marginBottom: 12 }}>
                 No slots available on this date. Try another.
               </div>
-            ) : (
+            ) : slots.length > 0 ? (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 8, marginBottom: 12 }}>
                 {slots.slice(0, 12).map(s => (
                   <button key={s.start} type="button"
@@ -91,7 +111,7 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
                   </button>
                 ))}
               </div>
-            )}
+            ) : null}
           </>
         )}
 

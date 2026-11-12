@@ -15,6 +15,38 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Added — booking email, days off, and real map pins (2026-11-12)
+A booking emails the shop contact through Resend (`SENDER_EMAIL`, Reply-To
+`OWNER_EMAIL`) with the Phoenix time, vehicle, address, calibration, price,
+and either "confirmed" or "pending Caleb's OK". Same-day bookings and arrivals
+before 8:00 AM also email `OWNER_EMAIL` with signed Approve and Decline links.
+Each link is single-use, expires in 48 hours, and opens a confirmation page
+before it changes the job. Approving, declining, rescheduling, or cancelling
+emails the shop. The booking screens no longer say a text was sent. A failed
+time lookup says "Couldn't load times, try again" and offers a retry. A phone
+that is not 10 digits is rejected.
+
+Days off (`/days-off`) starts with New Year's Day, Memorial Day, July 4, Labor
+Day, Thanksgiving and the day after, Christmas Eve, and Christmas for this year
+and next. The owner can open a holiday or add a vacation range. Closed dates
+are not offered, and a booking on one is rejected. Jobs already on a newly
+closed date are flagged on that screen and are not cancelled.
+
+Shop and job saves refuse a Google failure, a partial match, a mock fallback,
+and an approximate central-Phoenix guess. The message is "We couldn't find
+that address, please check it". Lookups are biased to the Phoenix Valley and
+an address outside it is refused. `/map-pins` lists shops and jobs whose
+stored coordinates still match a fallback so they can be looked up again.
+`PUBLIC_SITE_URL` is the host used in the owner links (default
+`https://www.thecalibrationcrew.us`).
+
+Shop and customer mail is off until `SHOP_EMAILS_ENABLED=true`. While it is
+false, those messages are stored in `email_outbox` and shown read-only at
+`/email-preview`. They are not sent through Resend. Owner alerts follow
+`OWNER_EMAILS_ENABLED`, which defaults to true, so the approve links can be
+tested. The dispatch board shows "Shop emails: OFF (testing)" while shop mail
+is held.
+
 ### Fixed — cancelled jobs leave the day list (2026-11-12)
 `GET /api/jobs` omitted `declined` and still returned `cancelled`. The owner
 dashboard, Field, the tomorrow preview, and the route map all read that list,

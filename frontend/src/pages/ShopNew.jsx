@@ -18,13 +18,21 @@ export default function ShopNew() {
   const [agreed, setAgreed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState(null);
+  const [addressError, setAddressError] = useState("");
 
   function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
 
   async function detectZone() {
     if (!form.address) return;
-    const { data } = await api.post("/geocode", { address: form.address });
-    setZone(data);
+    setAddressError("");
+    try {
+      const { data } = await api.post("/geocode", { address: form.address });
+      setZone(data);
+    } catch (e) {
+      setZone(null);
+      const detail = e.response?.data?.detail;
+      setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
+    }
   }
 
   async function save() {
@@ -95,7 +103,12 @@ export default function ShopNew() {
                 Zone detected: <span className={`badge badge-${zone.zone}`}>{zone.zone === "west" ? "West Valley" : "East Valley"}</span>
               </div>
             )}
-            {zone && !zone.in_metro && <div style={{ color: "var(--red)", fontSize: 13, marginTop: 6 }}>Outside Phoenix metro service area.</div>}
+            {addressError && (
+              <div role="alert" style={{ color: "var(--red)", fontSize: 13, marginTop: 6 }} data-testid="shop-address-error">
+                {addressError}
+              </div>
+            )}
+            {zone && !zone.in_metro && <div style={{ color: "var(--red)", fontSize: 13, marginTop: 6 }}>That address is outside the Phoenix Valley.</div>}
           </Field>
 
           <Field label="Pricing tier">
@@ -142,7 +155,7 @@ export default function ShopNew() {
 
           {!showTerms ? (
             <button className="btn btn-primary" onClick={() => setShowTerms(true)}
-              disabled={!form.name || !form.address || (zone && !zone.in_metro)}
+              disabled={!form.name || !form.address || !!addressError || (zone && !zone.in_metro)}
               data-testid="continue-to-terms">Continue to Terms & Sign →</button>
           ) : (
             <div className="elevated" style={{ padding: 16 }} data-testid="terms-section">
