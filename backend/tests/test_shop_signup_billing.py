@@ -96,8 +96,9 @@ def test_sender_must_not_be_the_resend_onboarding_address():
 
 def test_agreement_states_the_card_invoice_and_late_fee_rules():
     text = agreement_text()
-    assert "Cerdhe LLC" in text
-    assert "The Calibration Crew" in text
+    assert "The Calibration Crew LLC" in text
+    assert "Cerdhe" not in text
+    assert "doing business as" not in text
     assert "Gilbert" in text
     assert "allowed to sign" in text
     assert "Static $125" in text and "Tesla $225" in text
@@ -120,7 +121,7 @@ def test_agreement_states_the_card_invoice_and_late_fee_rules():
     assert "Maricopa County" in text
     assert "$50" not in text
     assert "waiting fee" in text
-    assert AGREEMENT_VERSION == "2026-11-12.2"
+    assert AGREEMENT_VERSION == "2026-11-12.3"
 
 
 def test_new_shops_cannot_book_until_signed_and_card_saved():

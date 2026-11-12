@@ -9,13 +9,13 @@ from typing import Optional
 from email_validator import EmailNotValidError, validate_email
 
 # Bump when the words the shop signs change. Stored with the signature.
-AGREEMENT_VERSION = "2026-11-12.2"
+AGREEMENT_VERSION = "2026-11-12.3"
 
 AGREEMENT_SECTIONS = [
     {
         "heading": "Who this is between",
         "body": (
-            "This is between Cerdhe LLC, doing business as The Calibration Crew in Gilbert, Arizona, "
+            "This is between The Calibration Crew LLC, of Gilbert, Arizona, "
             "and your shop. By typing your name and checking the box, you confirm you are allowed to sign for the shop."
         ),
     },

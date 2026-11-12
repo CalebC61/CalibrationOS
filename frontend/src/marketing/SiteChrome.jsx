@@ -67,7 +67,7 @@ export function SiteChrome({ children }) {
               <img src={LOGO} alt="The Calibration Crew" width="180" height="91" />
             </Link>
             <p className="footer-lead">Mobile ADAS calibration for auto glass shops, collision shops, and the Phoenix Valley.</p>
-            <p className="legal">Cerdhe LLC · Gilbert, AZ</p>
+            <p className="legal">The Calibration Crew LLC · Gilbert, AZ</p>
             <p className="legal">Monday through Saturday</p>
             <p className="legal">Hablo Español</p>
           </div>
@@ -102,7 +102,7 @@ export function SiteChrome({ children }) {
           </div>
         </div>
         <div className="container footer-bottom">
-          <p>© 2026 The Calibration Crew · Cerdhe LLC</p>
+          <p>© 2026 The Calibration Crew LLC</p>
         </div>
       </footer>
     </div>
