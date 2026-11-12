@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { portalApi, setPortalAuth } from "../lib/portalApi";
 import Brand from "../components/Brand";
 
@@ -43,8 +43,9 @@ export default function PortalLogin() {
           <button className="btn btn-primary" style={{ width: "100%" }} disabled={loading} data-testid="portal-login-submit">
             {loading ? "Signing in…" : "Sign In"}
           </button>
-          <div className="muted" style={{ fontSize: 12, marginTop: 16, textAlign: "center" }}>
-            New here? Your invitation email contains a registration link.
+          <div className="muted" style={{ fontSize: 13, marginTop: 16, textAlign: "center" }}>
+            <Link to="/portal/forgot" data-testid="forgot-password">Forgot password</Link>
+            <div style={{ marginTop: 8 }}>New here? Your invitation email contains a registration link.</div>
           </div>
         </form>
       </div>

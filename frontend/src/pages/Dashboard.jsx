@@ -52,11 +52,32 @@ export default function Dashboard() {
     setAlerts({ count: 0, alerts: [] });
     setAlertsOpen(false);
   }
+  async function setPaymentMode(jobId, mode) {
+    try {
+      await api.post(`/jobs/${jobId}/payment-mode`, { mode });
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Could not change how this job is billed.");
+    }
+  }
+  async function chargeNow(jobId) {
+    try {
+      await api.post(`/jobs/${jobId}/charge-card`);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || "The card was not charged.");
+      load();
+    }
+  }
   async function setStatus(jobId, status) {
     if (status === "complete") {
-      const ok = window.confirm("Complete this job? This will generate a draft Xero invoice (mocked).");
+      const ok = window.confirm("Mark this job complete? Charge-on-completion jobs are charged once. Invoice jobs are billed and not charged until you say so. A second click will not create another invoice.");
       if (!ok) return;
-      await api.post(`/jobs/${jobId}/complete`, { result: "pass", notes: null });
+      try {
+        await api.post(`/jobs/${jobId}/complete`, { result: "pass", notes: null });
+      } catch (err) {
+        alert(err.response?.data?.detail || "Could not complete the job.");
+      }
     } else {
       await api.post(`/jobs/${jobId}/status`, { status });
     }
@@ -196,12 +217,13 @@ export default function Dashboard() {
         )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(420px, 1fr))", gap: 16, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 16, marginBottom: 20 }}>
         {panels.map(({ tech, jobs: techJobs }) => (
           <ZonePanel key={tech.id}
             title={tech.name || "Technician"}
             subtitle={routingTechs.length <= 1 ? "Whole valley" : (tech.home_address || "Home base")}
             zone={tech.id} jobs={techJobs} onStatus={setStatus}
+            onPayment={setPaymentMode} onCharge={chargeNow}
             accent={tech.color || "#FF5F1F"}
             newJobIds={newJobIds} offerByJob={offerByJob}
             onDispatch={setDispatchTarget} onRespond={manualRespond}
@@ -281,7 +303,7 @@ function Metric({ label, value, highlight }) {
   );
 }
 
-function ZonePanel({ title, subtitle, zone, jobs, onStatus, accent, newJobIds, offerByJob,
+function ZonePanel({ title, subtitle, zone, jobs, onStatus, onPayment, onCharge, accent, newJobIds, offerByJob,
                     onDispatch, onRespond, onReschedule, onEdit, onDecide, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
@@ -298,6 +320,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, accent, newJobIds, o
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {jobs.map((j, idx) => (
           <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
+            onPayment={onPayment} onCharge={onCharge}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
             onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule} onEdit={onEdit}
             onDecide={onDecide}
@@ -327,7 +350,7 @@ function OfferCountdown({ expiresAt }) {
   return <span className="font-mono">{min}:{String(sec).padStart(2, "0")}</span>;
 }
 
-function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDecide,
+function JobCard({ job, index, onStatus, onPayment, onCharge, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDecide,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
   const isLocked = job.status === "complete" || job.status === "cancelled" || job.status === "declined" || job.status === "requested";
@@ -350,7 +373,9 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
             }}>#{index}</span>
             <span className={`badge badge-${job.status}`}>{jobStatusLabel(job.status)}</span>
             {isNew && <span className="badge" style={{ background: "var(--accent)", color: "#0a0a0a", border: "1px solid var(--accent)" }} data-testid="badge-new">NEW</span>}
-            {job.invoice_status === "draft" && <span className="badge badge-draft">Invoice: Draft</span>}
+            {job.payment_mode === "invoice_hold" && <span className="badge badge-draft">Invoice — hold charge</span>}
+            {job.payment_status === "payment_failed" && <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)" }}>Payment failed</span>}
+            {job.late_fee ? <span className="badge badge-draft">Late fee ${job.late_fee}</span> : null}
             {offer && (
               <span className="badge badge-dispatched_to_contractor" data-testid={`offer-countdown-${job.id}`}>
                 {offer.contractor_name} · <OfferCountdown expiresAt={offer.expires_at} />
@@ -408,6 +433,12 @@ function JobCard({ job, index, onStatus, isNew, offer, onDispatch, onRespond, on
             <button className="btn btn-ghost" onClick={() => onDecide(job.id, false)}
               data-testid={`job-decline-${job.id}`}>Decline</button>
           </>
+        )}
+        {job.payment_mode !== "invoice_hold" && !job.charged_at && job.payment_status !== "paid" && (
+          <button className="btn btn-ghost" onClick={() => onPayment(job.id, "invoice_hold")}>Invoice this job</button>
+        )}
+        {job.status === "complete" && job.payment_status !== "paid" && !job.charged_at && (
+          <button className="btn btn-primary" onClick={() => onCharge(job.id)}>Charge card now</button>
         )}
         {flow && (
           <button className="btn btn-primary" onClick={() => onStatus(job.id, flow.next)}

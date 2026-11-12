@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { portalApi, setPortalAuth, getPortalAuth } from "../lib/portalApi";
+import { ChargeAcceptance, CHARGE_ACCEPTANCE_FALLBACK } from "../components/CardSetup";
 
 export default function PortalSetupReturn() {
   const [params] = useSearchParams();
   const nav = useNavigate();
   const [status, setStatus] = useState("processing");
   const [details, setDetails] = useState(null);
+  const [accepting, setAccepting] = useState(false);
+  const [acceptance, setAcceptance] = useState(CHARGE_ACCEPTANCE_FALLBACK);
 
   useEffect(() => {
     if (params.get("cancelled")) { setStatus("cancelled"); return; }
@@ -21,8 +24,9 @@ export default function PortalSetupReturn() {
             shop_name: su.shop_name, shop_user_id: su.id, shop_id: su.shop_id,
             has_payment_method: true,
           });
-          setDetails({ brand: su.card_brand, last4: su.card_last4 });
-          setStatus("complete");
+          setDetails({ brand: su.card_brand, last4: su.card_last4, needs: r.data.needs_acceptance });
+          setAcceptance(r.data.acceptance_text || CHARGE_ACCEPTANCE_FALLBACK);
+          setStatus(r.data.needs_acceptance ? "accept" : "complete");
         } else {
           setStatus("incomplete");
         }
@@ -30,10 +34,21 @@ export default function PortalSetupReturn() {
       .catch(() => setStatus("error"));
   }, [params]);
 
+  async function accept() {
+    setAccepting(true);
+    try {
+      await portalApi.post("/portal/accept-charge", { accepted: true });
+      nav("/portal/ready");
+    } catch {
+      setStatus("error");
+    }
+  }
+
   return (
     <Center>
       <div className="surface" style={{ padding: 30, maxWidth: 480, textAlign: "center" }} data-testid="setup-return">
         {status === "processing" && <div className="muted">Confirming card setup…</div>}
+        {status === "accept" && <ChargeAcceptance text={acceptance} busy={accepting} onAccept={accept} />}
         {status === "complete" && (
           <>
             <div style={{ fontSize: 48, color: "var(--green)", marginBottom: 8 }}>✓</div>

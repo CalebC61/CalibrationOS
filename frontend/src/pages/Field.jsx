@@ -102,15 +102,18 @@ export default function Field() {
             )}
           </div>
 
-          {j.status === "booked" && (
+          {auth?.role !== "owner" && j.status !== "complete" && (
+            <p className="muted" style={{ marginTop: 16 }}>Only Caleb can change this job.</p>
+          )}
+          {auth?.role === "owner" && j.status === "booked" && (
             <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
               onClick={() => setStatus(j.id, "driving")} data-testid="action-start-driving">Start Driving</button>
           )}
-          {j.status === "driving" && (
+          {auth?.role === "owner" && j.status === "driving" && (
             <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
               onClick={() => setStatus(j.id, "on_site")} data-testid="action-arrived">I&apos;ve Arrived</button>
           )}
-          {j.status === "on_site" && (
+          {auth?.role === "owner" && j.status === "on_site" && (
             <div style={{ marginTop: 16 }}>
               <div className="label">Result *</div>
               <div style={{ display: "flex", gap: 8 }}>

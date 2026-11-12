@@ -4,13 +4,28 @@ import Shell from "../components/Shell";
 
 export default function Invoices() {
   const [invs, setInvs] = useState([]);
-  useEffect(() => { api.get("/invoices").then(r => setInvs(r.data)); }, []);
+  const [fees, setFees] = useState([]);
+  useEffect(() => {
+    api.get("/invoices").then(r => setInvs(r.data));
+    api.get("/billing/late-fees").then(r => setFees(r.data.events || [])).catch(() => {});
+  }, []);
   return (
     <Shell>
       <h1 className="h1" style={{ marginBottom: 8 }}>Invoices</h1>
       <div className="muted" style={{ marginBottom: 20, fontSize: 14 }}>
-        Mock Xero invoices — these would push to Xero as drafts in production. Maddy receives an email for each.
+        Each completed job gets one invoice, emailed to the shop as proof of purchase. Stripe invoices sync to Xero when that connection is on. A $25 late fee is added once to an unpaid invoice-mode job after 7 days.
       </div>
+      {fees.length > 0 && (
+        <div className="surface" style={{ padding: 16, marginBottom: 16 }} data-testid="late-fees">
+          <div className="h3" style={{ marginBottom: 8 }}>Late fees</div>
+          {fees.map(fee => (
+            <div key={fee.id} style={{ padding: "8px 0", borderTop: "1px solid var(--border)" }}>
+              ${fee.amount} · {fee.shop_name || fee.shop_id} · {new Date(fee.applied_at).toLocaleString()}
+              <div className="muted" style={{ fontSize: 12 }}>{fee.reason}</div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="surface" style={{ overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr style={{ background: "var(--bg-elevated)", textAlign: "left" }}>

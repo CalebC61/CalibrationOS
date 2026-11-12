@@ -39,8 +39,14 @@ Any database user with read and write works, including permission to create inde
    **Optional — the app boots and the matching feature stays mocked or off until set:**
    - `ADMIN_EMAIL` (default `admin@thecalibrationcrew.us`)
    - `CONTRACTOR_EMAIL` (default `contractor@thecalibrationcrew.us`), `CONTRACTOR_PASSWORD` (no contractor account in production until this or demo seed is on)
-   - `RESEND_API_KEY`, `SENDER_EMAIL` — email
-   - `STRIPE_API_KEY` — card capture and the charge queue. Use `sk_test_...` before `sk_live_...`
+   - `SHOP_EMAILS_ENABLED` — leave `false` until you want shop and customer mail to actually send. While it is false, that mail is stored for Email preview.
+   - `TEST_EMAIL_ALLOWLIST` — your own address, so an invite or password reset can reach you while shop mail is off.
+   - `BILLING_ENABLED` — leave `false` until you want a completed job to charge the card and the late-fee sweep to run. A live Stripe key is ignored until this is true.
+   - `RESEND_API_KEY`, `SENDER_EMAIL` — email. `SENDER_EMAIL` must be a verified `thecalibrationcrew.us` address. `onboarding@resend.dev` is logged as an error and will not reach a shop.
+   - `FRONTEND_URL` — `https://thecalibrationcrew.us` with no path. Invite and password-reset links are built from this.
+   - `OWNER_PHONE` — shown when an invite link is expired.
+   - `STRIPE_SECRET_KEY` — test secret key (`sk_test_` or a restricted `rk_test_`). A live key is ignored until `BILLING_ENABLED` is true. `STRIPE_API_KEY` is the old name and is used only when the secret key is blank.
+   - `STRIPE_WEBHOOK_SECRET` — signing secret for `https://api.thecalibrationcrew.us/api/stripe/webhook`
    - `GOOGLE_MAPS_API_KEY` — geocoding and traffic-aware drive time. Restrict the key to the Geocoding API and the Routes API (`computeRoutes` with `TRAFFIC_AWARE` bills as Compute Routes Pro). Do not restrict it by HTTP referrer; the backend calls Google, not the browser. The starter plan has no static outbound IP, so an IP restriction will fail until you add one. See the README for the rough monthly cost.
    - `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET`, `XERO_REDIRECT_URI`, `XERO_POST_CONNECT_REDIRECT`, `XERO_SALES_ACCOUNT_CODE` (default `200`)
    - `GOOGLE_API_KEY` — Admin Assist. Without it the module is off even though `ASSIST_MODULE_ENABLED=true`.
@@ -57,6 +63,8 @@ The `starter` plan (~$7/mo) avoids free-tier sleep, which would make the field a
 2. **Root Directory**: `frontend`. Framework, install, and build come from `frontend/vercel.json` (`yarn install --frozen-lockfile`, then `yarn build`).
 3. **Environment Variables** (Production), then redeploy. These are baked in at build time.
    - `REACT_APP_BACKEND_URL=https://api.thecalibrationcrew.us` — required. The UI calls `${REACT_APP_BACKEND_URL}/api`.
+   - `REACT_APP_STRIPE_PUBLISHABLE_KEY` — Stripe test publishable key (`pk_test_`). Baked in at build time.
+   - `REACT_APP_GOOGLE_MAPS_API_KEY` — browser key for Places autocomplete on signup. Restrict it by HTTP referrer. Not the server maps key.
    - `REACT_APP_GROWTH_MODULE_ENABLED=true` — optional. The Growth page renders only when this is the string `true`. The nav link stays visible unless the value is `false`.
    - `REACT_APP_ASSIST_MODULE_ENABLED` — optional. Leave unset (the widget shows when the API has `GOOGLE_API_KEY`). Set `false` to hide it.
 4. Deploy, then **Settings → Domains** → add `thecalibrationcrew.us` and `www.thecalibrationcrew.us`. Set the apex as the primary domain so `www` redirects to it. Copy the DNS records Vercel shows for this project. Do not reuse another project's CNAME. Vercel's apex record is an A record (their docs use `76.76.21.21`); `www` is a CNAME to a project-specific `*.vercel-dns-*.com` host.

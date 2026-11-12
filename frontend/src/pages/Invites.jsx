@@ -17,10 +17,20 @@ export default function Invites() {
   }
   useEffect(() => { load(); }, []);
 
+  async function resend(id) {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/invites/${id}/resend`);
+      setLastCreated(data);
+      load();
+    } catch (e) { alert(e.response?.data?.detail || "Could not resend"); }
+    finally { setBusy(false); }
+  }
+
   async function send() {
     setBusy(true);
     try {
-      const { data } = await api.post("/invites", { shop_id: selectedShop, recipient_email: email, origin: window.location.origin });
+      const { data } = await api.post("/invites", { shop_id: selectedShop, recipient_email: email });
       setLastCreated(data);
       setEmail(""); setSelectedShop("");
       load();
@@ -34,7 +44,7 @@ export default function Invites() {
 
       <div className="surface" style={{ padding: 20, marginBottom: 24, maxWidth: 720 }}>
         <div className="h3" style={{ marginBottom: 12 }}>Send a new invitation</div>
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr", gap: 10 }}>
+        <div className="form-row" style={{ gridTemplateColumns: "1fr" }}>
           <select className="input" value={selectedShop} onChange={e => setSelectedShop(e.target.value)} data-testid="invite-shop">
             <option value="">— Select shop —</option>
             {shops.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -61,10 +71,10 @@ export default function Invites() {
       </div>
 
       <h2 className="h3" style={{ marginBottom: 10 }}>All Invitations</h2>
-      <div className="surface" style={{ overflow: "hidden", marginBottom: 24 }}>
+      <div className="surface" style={{ overflow: "auto", marginBottom: 24 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr style={{ background: "var(--bg-elevated)", textAlign: "left" }}>
-            <Th>Shop</Th><Th>Email</Th><Th>Status</Th><Th>Sent</Th><Th>Expires</Th>
+            <Th>Shop</Th><Th>Email</Th><Th>Status</Th><Th>Email</Th><Th>Expires</Th><Th></Th>
           </tr></thead>
           <tbody>
             {invites.map(i => (
@@ -72,11 +82,19 @@ export default function Invites() {
                 <Td>{i.shop_name}</Td>
                 <Td className="font-mono" style={{ fontSize: 12 }}>{i.recipient_email}</Td>
                 <Td><span className={`badge badge-${i.status === "registered" ? "complete" : "pending"}`}>{i.status}</span></Td>
-                <Td className="muted" style={{ fontSize: 12 }}>{new Date(i.created_at).toLocaleDateString()}</Td>
+                <Td>
+                  <span data-testid={`invite-email-${i.id}`}>{i.email_status === "sent" ? "Sent" : i.email_status === "held" ? "Held" : "Not delivered"}</span>
+                  {i.email_error && <div className="muted" style={{ fontSize: 12 }}>{i.email_error}</div>}
+                </Td>
                 <Td className="muted" style={{ fontSize: 12 }}>{new Date(i.expires_at).toLocaleDateString()}</Td>
+                <Td>
+                  {i.status !== "registered" && (
+                    <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => resend(i.id)} data-testid={`resend-${i.id}`}>Resend</button>
+                  )}
+                </Td>
               </tr>
             ))}
-            {invites.length === 0 && <tr><Td colSpan="5" style={{ textAlign: "center", padding: 24 }} className="muted">No invitations yet.</Td></tr>}
+            {invites.length === 0 && <tr><Td colSpan="6" style={{ textAlign: "center", padding: 24 }} className="muted">No invitations yet.</Td></tr>}
           </tbody>
         </table>
       </div>

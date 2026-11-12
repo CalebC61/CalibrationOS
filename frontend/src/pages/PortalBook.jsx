@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { phoenixTodayStr } from "../lib/api";
-import { portalApi, getPortalAuth } from "../lib/portalApi";
+import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
 const ADAS = [
@@ -18,7 +18,6 @@ const LABELS = {
 const fmt = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 
 export default function PortalBook() {
-  const auth = getPortalAuth();
   const nav = useNavigate();
   const [step, setStep] = useState(1);
   const [shop, setShop] = useState(null);
@@ -34,26 +33,29 @@ export default function PortalBook() {
   const [calType, setCalType] = useState("static");
   const [notifyPhone, setNotifyPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [setup, setSetup] = useState(null);
+  const [invoiceInstead, setInvoiceInstead] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
 
   useEffect(() => {
     portalApi.get("/portal/me").then(r => {
       setShop(r.data.shop);
+      setSetup(r.data.setup);
       setAddress(r.data.shop.address);
       setNotifyPhone(r.data.shop.contact_phone || "");
     });
   }, []);
 
-  if (!auth?.has_payment_method) {
+  if (!shop || !setup) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
+  if (setup.allowed === false) {
     return <PortalShell>
-      <div className="surface" style={{ padding: 24, textAlign: "center", maxWidth: 500, margin: "40px auto" }}>
-        <div className="h2" style={{ marginBottom: 8 }}>Card required to book</div>
-        <div className="muted" style={{ marginBottom: 16 }}>Per Terms, a card must be on file before scheduling calibrations.</div>
-        <button className="btn btn-primary" onClick={() => nav("/portal/settings")} data-testid="goto-add-card">Add Card →</button>
+      <div className="surface" style={{ padding: 24, textAlign: "center", maxWidth: 500, margin: "40px auto" }} data-testid="booking-closed">
+        <div className="h2" style={{ marginBottom: 8 }}>Finish setup to book</div>
+        <div className="muted" style={{ marginBottom: 16 }}>{setup.message}</div>
+        <button className="btn btn-primary" onClick={() => nav("/portal/settings")} data-testid="goto-add-card">Finish setup</button>
       </div>
     </PortalShell>;
   }
-  if (!shop) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
 
   async function geo() {
     const { data } = await portalApi.post("/geocode", { address });
@@ -87,7 +89,7 @@ export default function PortalBook() {
         year: Number(veh.year), make: veh.make, model: veh.model,
         trim: veh.trim || null, vin: veh.vin || null,
         adas_system: veh.adas_system, calibration_type: calType,
-        notification_phone: notifyPhone,
+        notification_phone: notifyPhone, invoice_instead: invoiceInstead,
       });
       setConfirmation(data);
     } catch (e) { alert(e.response?.data?.detail || "Booking failed"); }
@@ -203,9 +205,13 @@ export default function PortalBook() {
               <Row k="Customer" v={[veh.customer_first_name, veh.customer_last_name].filter(s => s.trim()).join(" ")} />
               <Row k="Total" v={`$${priceFor(calType).toFixed(2)}`} bold />
               <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                Charge to card on file occurs on the same day as job completion.
+                The card on file is charged when the job is completed, unless you ask to be invoiced.
               </div>
             </div>
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 14 }}>
+              <input type="checkbox" checked={invoiceInstead} onChange={e => setInvoiceInstead(e.target.checked)} data-testid="invoice-instead" />
+              <span>Please invoice me instead</span>
+            </label>
             <F label="Notes (optional)">
               <textarea className="input" rows={3} value={veh.notes}
                 onChange={e => setVeh({...veh, notes: e.target.value})} data-testid="b-notes" />
