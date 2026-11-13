@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { api, formatTime, phoenixTodayStr, dateStr, getStoredAuth, jobStatusLabel } from "../lib/api";
+import { api, formatTime, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, jobStatusLabel } from "../lib/api";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
@@ -115,11 +115,12 @@ export default function Dashboard() {
 
   const newJobIds = new Set(alerts.alerts.map(a => a.job_id));
   const offerByJob = Object.fromEntries(offers.filter(o => o.status === "pending").map(o => [o.job_id, o]));
+  const dayJobs = jobs.filter(isOnDayBoard);
 
   const routingTechs = techs.filter(t => t.role !== "contractor" && t.routes_jobs !== false && t.is_active !== false);
   const colorById = Object.fromEntries(routingTechs.map(t => [t.id, t.color || "#FF5F1F"]));
   const nameById = Object.fromEntries(routingTechs.map(t => [t.id, t.name]));
-  const painted = jobs.map(j => ({
+  const painted = dayJobs.map(j => ({
     ...j,
     technician_color: j.technician_color || colorById[j.technician_id] || "#FF5F1F",
     technician_name: j.technician_name || nameById[j.technician_id] || "",
@@ -293,7 +294,7 @@ export default function Dashboard() {
         {refreshError && (
           <div style={{ color: "var(--red)", fontSize: 13, marginBottom: 10 }} data-testid="regeocode-error">{refreshError}</div>
         )}
-        {jobs.length > 0 ? (
+        {dayJobs.length > 0 ? (
           <RouteMap jobs={painted} />
         ) : (
           <div className="surface muted" style={{ padding: 16, textAlign: "center" }}>No jobs on this day.</div>

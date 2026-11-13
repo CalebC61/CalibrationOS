@@ -15,6 +15,21 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — cancelled bookings leave the day and their new-booking alert (2026-11-13)
+A shop cancel, an owner cancel, and a status change to `cancelled` already set
+`status` to `cancelled`. `GET /api/jobs` (the day board, Field, tomorrow
+preview, and route map) and `GET /api/dashboard/summary` already omit that
+status, and route reorder refuses a cancelled id. Those screens also drop
+`cancelled` and `declined` before drawing, so a stale payload cannot put the
+job back on the board or the map. The job stays in Mongo. The shop portal
+list is unchanged.
+
+The unseen new-booking alert for that job was left in place, so the owner
+still saw a new-booking notice after the booking was gone. Cancel now sets
+`seen_at` on that job's alerts only. `GET /api/notifications/new-bookings`
+also skips alerts whose job is already `cancelled`, including ones cancelled
+before this change. Other unseen alerts stay.
+
 ### Removed — Emergent badge (2026-11-12)
 The public HTML no longer includes the “Made with Emergent” badge, the `emergent-main.js` script, the PostHog snippet that script sat next to, or the Inter font that only the badge used. The page title and description were already “The Calibration Crew” and the Phoenix Valley calibration line.
 

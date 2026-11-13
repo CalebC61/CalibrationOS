@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr, jobStatusLabel } from "../lib/api";
+import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr, isOnDayBoard, jobStatusLabel } from "../lib/api";
 import JobEditModal from "../components/JobEditModal";
 
 /** Mobile-optimized PWA technician field view. Works on phone or desktop. */
@@ -24,7 +24,7 @@ export default function Field() {
         api.get(`/jobs?date_str=${todayStr()}`),
         api.get(`/contractor-offers`),
       ]);
-      setJobs(j.data);
+      setJobs((j.data || []).filter(isOnDayBoard));
       setOffers(o.data.filter(x => x.status === "pending"));
     } finally { setLoading(false); }
   }, []);

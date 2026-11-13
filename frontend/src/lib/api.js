@@ -35,6 +35,10 @@ export function setStoredAuth(d) {
   }
 }
 
+export function isOnDayBoard(job) {
+  return job?.status !== "cancelled" && job?.status !== "declined";
+}
+
 export function jobStatusLabel(status) {
   if (status === "requested") return "Pending approval";
   if (status === "declined") return "Declined";

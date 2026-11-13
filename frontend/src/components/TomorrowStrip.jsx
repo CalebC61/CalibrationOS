@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, formatTime, formatDate } from "../lib/api";
+import { api, formatTime, formatDate, isOnDayBoard } from "../lib/api";
 
 export default function TomorrowStrip({ baseDate }) {
   const [jobs, setJobs] = useState([]);
@@ -7,7 +7,7 @@ export default function TomorrowStrip({ baseDate }) {
     const d = new Date(baseDate + "T00:00:00");
     d.setDate(d.getDate() + 1);
     const tomorrow = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-    api.get(`/jobs?date_str=${tomorrow}`).then(r => setJobs(r.data));
+    api.get(`/jobs?date_str=${tomorrow}`).then(r => setJobs((r.data || []).filter(isOnDayBoard)));
   }, [baseDate]);
 
   if (jobs.length === 0) return null;
