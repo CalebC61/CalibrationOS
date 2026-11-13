@@ -100,7 +100,13 @@ export default function ShopNew() {
                 <div>{inviteState.email_status === "sent" ? "Invite sent." : inviteState.email_status === "held" ? "Held in Email preview. Shop email is off." : "Not delivered."}</div>
                 {inviteState.email_error && <div className="muted" style={{ fontSize: 13 }}>{inviteState.email_error}</div>}
                 {inviteState.register_url && (
-                  <div className="font-mono" style={{ fontSize: 12, marginTop: 8, wordBreak: "break-all" }}>{inviteState.register_url}</div>
+                  <div>
+                    <div className="font-mono" style={{ fontSize: 12, marginTop: 8, wordBreak: "break-all" }}>{inviteState.register_url}</div>
+                    <button type="button" className="btn btn-ghost" style={{ marginTop: 8 }}
+                      onClick={() => navigator.clipboard.writeText(inviteState.register_url)} data-testid="copy-invite-url">
+                      {inviteState.email_status === "held" ? "Held" : "Copy"}
+                    </button>
+                  </div>
                 )}
               </div>
             )}

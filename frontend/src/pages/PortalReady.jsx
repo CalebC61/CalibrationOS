@@ -4,8 +4,15 @@ import { portalApi } from "../lib/portalApi";
 
 export default function PortalReady() {
   const [shop, setShop] = useState(null);
-  useEffect(() => { portalApi.get("/portal/me").then(r => setShop(r.data.shop)); }, []);
-  const link = shop ? `${window.location.origin}/book/${shop.booking_link_token}` : "";
+  const [link, setLink] = useState("");
+  useEffect(() => {
+    portalApi.get("/portal/me").then(r => {
+      setShop(r.data.shop);
+      const base = (r.data.site_url || "").replace(/\/$/, "");
+      const token = r.data.shop?.booking_link_token;
+      if (base && token) setLink(`${base}/book/${token}`);
+    });
+  }, []);
   return (
     <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div className="surface" style={{ padding: 28, maxWidth: 520 }} data-testid="ready-screen">

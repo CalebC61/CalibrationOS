@@ -43,7 +43,7 @@ Any database user with read and write works, including permission to create inde
    - `TEST_EMAIL_ALLOWLIST` — your own address, so an invite or password reset can reach you while shop mail is off.
    - `BILLING_ENABLED` — leave `false` until you want a completed job to charge the card and the late-fee sweep to run. A live Stripe key is ignored until this is true.
    - `RESEND_API_KEY`, `SENDER_EMAIL` — email. `SENDER_EMAIL` must be a verified `thecalibrationcrew.us` address. `onboarding@resend.dev` is logged as an error and will not reach a shop.
-   - `FRONTEND_URL` — `https://thecalibrationcrew.us` with no path. Invite and password-reset links are built from this.
+   - `FRONTEND_URL` — optional. Invite, reset, and booking links use this host with no path. When it is blank they use `PUBLIC_SITE_URL`, or `https://www.thecalibrationcrew.us` if that is also blank. Set it when the public site host should be something else.
    - `OWNER_PHONE` — shown when an invite link is expired.
    - `STRIPE_SECRET_KEY` — test secret key (`sk_test_` or a restricted `rk_test_`). A live key is ignored until `BILLING_ENABLED` is true. `STRIPE_API_KEY` is the old name and is used only when the secret key is blank.
    - `STRIPE_WEBHOOK_SECRET` — signing secret for `https://api.thecalibrationcrew.us/api/stripe/webhook`

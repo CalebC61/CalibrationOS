@@ -4,12 +4,21 @@ Pure functions. The FastAPI routes in server.py call these so a shop cannot be
 saved, or a new shop cannot book, on rules the tests do not also enforce.
 """
 import re
+import time
 from typing import Optional
 
 from email_validator import EmailNotValidError, validate_email
 
 # Bump when the words the shop signs change. Stored with the signature.
-AGREEMENT_VERSION = "2026-11-12.3"
+AGREEMENT_VERSION = "2026-11-13.1"
+# Shops that already signed the previous wording keep booking.
+PRIOR_AGREEMENT_VERSIONS = {"2026-11-12.3", "2026-11-12"}
+PUBLIC_SITE_DEFAULT = "https://www.thecalibrationcrew.us"
+# Precise Google pins. A free-typed address with one of these is already confirmed.
+CLEAN_LOCATION_TYPES = {"ROOFTOP", "RANGE_INTERPOLATED"}
+SIGNUP_ATTEMPT_LIMIT = 8
+SIGNUP_WINDOW_SECONDS = 60 * 60
+CARD_SETUP_ATTEMPT_LIMIT = 20
 
 AGREEMENT_SECTIONS = [
     {
@@ -23,7 +32,8 @@ AGREEMENT_SECTIONS = [
         "heading": "What we do",
         "body": (
             "We calibrate ADAS cameras and sensors at your shop. Prices at signup are Static $125, "
-            "Dynamic $125, Dual $175, and Tesla $225. We can change those prices with 30 days' written notice."
+            "Dynamic $125, Dual $175, Triple / Subaru $185, and Tesla $225. "
+            "We can change those prices with 30 days' written notice."
         ),
     },
     {
@@ -191,6 +201,94 @@ def addresses_match(left: Optional[str], right: Optional[str]) -> bool:
     return bool(norm(left)) and norm(left) == norm(right)
 
 
+def resolve_frontend_url(explicit: Optional[str], public_site: Optional[str] = None) -> str:
+    """Link host. A blank FRONTEND_URL uses PUBLIC_SITE_URL, then the public site."""
+    chosen = (explicit or "").strip().rstrip("/")
+    if chosen:
+        return chosen
+    site = (public_site or "").strip().rstrip("/")
+    return site or PUBLIC_SITE_DEFAULT
+
+
+def places_selection(place_id: Optional[str]) -> bool:
+    return bool((place_id or "").strip())
+
+
+def geocode_is_clean(geo: Optional[dict]) -> bool:
+    """A precise in-valley pin. Approximate results are not clean."""
+    if not geo or geo.get("fallback") or geo.get("partial_match") or geo.get("guessed"):
+        return False
+    if geo.get("in_metro") is False or not geo.get("formatted_address"):
+        return False
+    return geo.get("location_type") in CLEAN_LOCATION_TYPES
+
+
+def address_needs_confirmation(*, place_id: Optional[str], confirmed: bool, confirmed_address: Optional[str], geo: Optional[dict]) -> bool:
+    """True when a free-typed address still needs a second submit.
+
+    A Places suggestion is the confirmed address. A free-typed address that
+    geocodes to a precise pin is confirmed. The checkbox remains for a
+    free-typed address that does not geocode cleanly, and for a shop that
+    is accepting the formatted address we already returned.
+    """
+    if places_selection(place_id):
+        return False
+    formatted = (geo or {}).get("formatted_address")
+    if confirmed and addresses_match(confirmed_address, formatted):
+        return False
+    if geocode_is_clean(geo):
+        return False
+    return True
+
+
+def reused_shop_pin(shop: Optional[dict], address: Optional[str]) -> Optional[dict]:
+    """The signup pin when this booking is still at the shop address.
+
+    Returns None when the address differs or the stored pin is not usable,
+    so the caller geocodes. A fallback pin is not reused.
+    """
+    shop = shop or {}
+    if shop.get("lat") is None or shop.get("lng") is None:
+        return None
+    if not (
+        addresses_match(address, shop.get("address"))
+        or addresses_match(address, shop.get("formatted_address"))
+    ):
+        return None
+    source = shop.get("geocode_source") or ""
+    if source in ("fallback", "mock") or shop.get("guessed"):
+        return None
+    return {
+        "lat": shop["lat"],
+        "lng": shop["lng"],
+        "formatted_address": shop.get("formatted_address") or shop.get("address") or address,
+        "in_metro": True,
+        "source": source or "google",
+        "partial_match": False,
+        "fallback": False,
+        "location_type": "ROOFTOP",
+    }
+
+
+_RATE_BUCKETS: dict = {}
+
+
+def reset_rate_limits() -> None:
+    _RATE_BUCKETS.clear()
+
+
+def rate_limit_exceeded(key: str, *, limit: int, window_seconds: int, now: Optional[float] = None) -> bool:
+    """True when this key is over the limit. An allowed call is recorded."""
+    moment = time.monotonic() if now is None else now
+    hits = [stamp for stamp in _RATE_BUCKETS.get(key, []) if moment - stamp < window_seconds]
+    if len(hits) >= limit:
+        _RATE_BUCKETS[key] = hits
+        return True
+    hits.append(moment)
+    _RATE_BUCKETS[key] = hits
+    return False
+
+
 def password_error(password: Optional[str]) -> Optional[str]:
     if not isinstance(password, str) or len(password) < 8:
         return "Password must be at least 8 characters."
@@ -216,8 +314,10 @@ def invite_register_url(frontend_url: Optional[str], token: str) -> str:
 def _signed(shop_user: Optional[dict]) -> bool:
     if not shop_user:
         return False
+    version = shop_user.get("agreement_version")
+    current = version == AGREEMENT_VERSION or version in PRIOR_AGREEMENT_VERSIONS
     return (
-        shop_user.get("agreement_version") == AGREEMENT_VERSION
+        current
         and bool(shop_user.get("terms_signed_at"))
         and bool((shop_user.get("terms_signature") or "").strip())
     )
@@ -245,9 +345,12 @@ def booking_gate(shop: Optional[dict], shop_user: Optional[dict] = None) -> dict
     has_card = _has_card(shop_user)
     accepted = _accepted_charge(shop_user)
     ready = signed and has_card and accepted
-    allowed = (not requires) or ready
+    suspended = shop.get("status") == "suspended"
+    allowed = ((not requires) or ready) and not suspended
     message = None
-    if not allowed:
+    if suspended:
+        message = "This shop is suspended and cannot book."
+    elif not allowed:
         message = "Booking opens after the shop contact signs the agreement and saves a card."
     return {
         "allowed": allowed,
@@ -255,7 +358,8 @@ def booking_gate(shop: Optional[dict], shop_user: Optional[dict] = None) -> dict
         "signed": signed,
         "has_card": has_card,
         "accepted": accepted,
-        "banner": not ready,
+        "suspended": suspended,
+        "banner": not ready or suspended,
         "message": message,
     }
 

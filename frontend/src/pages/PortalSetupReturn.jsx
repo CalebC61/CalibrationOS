@@ -13,32 +13,41 @@ export default function PortalSetupReturn() {
 
   useEffect(() => {
     if (params.get("cancelled")) { setStatus("cancelled"); return; }
+    const intent = params.get("setup_intent");
+    if (intent && params.get("redirect_status") === "succeeded") {
+      portalApi.post("/portal/complete-setup-intent", { setup_intent_id: intent })
+        .then(applyCard)
+        .catch(() => setStatus("error"));
+      return;
+    }
     const session = params.get("session_id");
     if (!session) { setStatus("missing"); return; }
     portalApi.get(`/portal/stripe-setup-status?session_id=${session}`)
-      .then(r => {
-        if (r.data.status === "complete") {
-          const su = r.data.shop_user;
-          setPortalAuth({
-            token: getPortalAuth()?.token, full_name: su.full_name,
-            shop_name: su.shop_name, shop_user_id: su.id, shop_id: su.shop_id,
-            has_payment_method: true,
-          });
-          setDetails({ brand: su.card_brand, last4: su.card_last4, needs: r.data.needs_acceptance });
-          setAcceptance(r.data.acceptance_text || CHARGE_ACCEPTANCE_FALLBACK);
-          setStatus(r.data.needs_acceptance ? "accept" : "complete");
-        } else {
-          setStatus("incomplete");
-        }
-      })
+      .then(applyCard)
       .catch(() => setStatus("error"));
   }, [params]);
+
+  function applyCard(r) {
+    if (r.data.status !== "complete") {
+      setStatus("incomplete");
+      return;
+    }
+    const su = r.data.shop_user;
+    setPortalAuth({
+      token: getPortalAuth()?.token, full_name: su.full_name,
+      shop_name: su.shop_name, shop_user_id: su.id, shop_id: su.shop_id,
+      has_payment_method: true,
+    });
+    setDetails({ brand: su.card_brand, last4: su.card_last4, needs: r.data.needs_acceptance });
+    setAcceptance(r.data.acceptance_text || CHARGE_ACCEPTANCE_FALLBACK);
+    setStatus(r.data.needs_acceptance ? "accept" : "complete");
+  }
 
   async function accept() {
     setAccepting(true);
     try {
       await portalApi.post("/portal/accept-charge", { accepted: true });
-      nav("/portal/ready");
+      nav("/portal/book");
     } catch {
       setStatus("error");
     }
@@ -56,7 +65,7 @@ export default function PortalSetupReturn() {
             {details && <div className="muted" style={{ marginBottom: 20 }}>
               {details.brand?.toUpperCase()} ending in {details.last4}
             </div>}
-            <Link to="/portal" className="btn btn-primary" style={{ width: "100%" }} data-testid="enter-portal">Enter Portal →</Link>
+            <Link to="/portal/book" className="btn btn-primary" style={{ width: "100%" }} data-testid="enter-portal">Book a job</Link>
           </>
         )}
         {status === "cancelled" && (

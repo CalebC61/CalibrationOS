@@ -42,6 +42,22 @@ def create_setup_intent(client, *, customer_id: str, shop_user_id: str) -> dict:
     return {"id": data.get("id") or intent.id, "client_secret": data.get("client_secret") or intent.client_secret}
 
 
+def create_anonymous_setup_intent(client) -> dict:
+    """SetupIntent before a shop exists. The card is attached on signup."""
+    intent = client.v1.setup_intents.create({
+        "usage": "off_session",
+        "automatic_payment_methods": {"enabled": True},
+        "metadata": {"purpose": "shop_signup"},
+    })
+    data = _data(intent)
+    return {"id": data.get("id") or intent.id, "client_secret": data.get("client_secret") or intent.client_secret}
+
+
+def retrieve_setup_intent(client, intent_id: str) -> dict:
+    intent = client.v1.setup_intents.retrieve(intent_id, {"expand": ["payment_method"]})
+    return _data(intent)
+
+
 def create_checkout_setup(client, *, customer_id: str, shop_user_id: str, success_url: str, cancel_url: str) -> str:
     session = client.v1.checkout.sessions.create({
         "mode": "setup",

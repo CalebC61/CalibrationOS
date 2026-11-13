@@ -102,6 +102,8 @@ def test_agreement_states_the_card_invoice_and_late_fee_rules():
     assert "Gilbert" in text
     assert "allowed to sign" in text
     assert "Static $125" in text and "Tesla $225" in text
+    assert "Triple / Subaru $185" in text
+    assert "Dynamic $125" in text and "Dual $175" in text
     assert "30 days' written notice" in text
     assert "card on file" in text
     assert "job notes" in text
@@ -121,7 +123,7 @@ def test_agreement_states_the_card_invoice_and_late_fee_rules():
     assert "Maricopa County" in text
     assert "$50" not in text
     assert "waiting fee" in text
-    assert AGREEMENT_VERSION == "2026-11-12.3"
+    assert AGREEMENT_VERSION == "2026-11-13.1"
 
 
 def test_new_shops_cannot_book_until_signed_and_card_saved():
@@ -154,6 +156,23 @@ def test_new_shops_cannot_book_until_signed_and_card_saved():
     missing_acceptance = dict(ready_user)
     missing_acceptance["charge_authorization_accepted_at"] = None
     assert booking_gate(shop, missing_acceptance)["allowed"] is False
+
+
+def test_a_suspended_shop_cannot_book_even_after_setup():
+    ready_user = {
+        "agreement_version": AGREEMENT_VERSION,
+        "terms_signed_at": "t",
+        "terms_signature": "Ada Glass",
+        "stripe_payment_method_id": "pm_1",
+        "charge_authorization_accepted_at": "t",
+    }
+    gate = booking_gate({"id": "new", "status": "suspended", "requires_billing_setup": True}, ready_user)
+    assert gate["allowed"] is False
+    assert gate["suspended"] is True
+    assert "suspended" in gate["message"]
+    prior = dict(ready_user)
+    prior["agreement_version"] = "2026-11-12.3"
+    assert booking_gate({"id": "new", "requires_billing_setup": True, "status": "active"}, prior)["allowed"] is True
 
 
 def test_existing_shops_keep_booking_and_still_see_a_setup_banner():

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { portalApi } from "../lib/portalApi";
@@ -6,6 +6,28 @@ import { portalApi } from "../lib/portalApi";
 const publishable = process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY || "";
 const livePublishable = publishable.startsWith("pk_live_");
 const stripePromise = publishable && !livePublishable ? loadStripe(publishable) : null;
+
+function CardFields({ bindRef, returnUrl }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  useEffect(() => {
+    if (!bindRef) return undefined;
+    bindRef.current = async () => {
+      if (!stripe || !elements) throw new Error("Card form is still loading.");
+      const result = await stripe.confirmSetup({
+        elements,
+        redirect: "if_required",
+        confirmParams: { return_url: returnUrl || (window.location.origin + "/signup") },
+      });
+      if (result.error) throw new Error(result.error.message || "Card setup failed.");
+      const paymentMethod = result.setupIntent?.payment_method;
+      if (!paymentMethod) throw new Error("Stripe did not return a card.");
+      return typeof paymentMethod === "string" ? paymentMethod : paymentMethod.id;
+    };
+    return () => { bindRef.current = null; };
+  }, [stripe, elements, bindRef, returnUrl]);
+  return <PaymentElement />;
+}
 
 function SetupForm({ onSaved }) {
   const stripe = useStripe();
@@ -56,7 +78,7 @@ function SetupForm({ onSaved }) {
   );
 }
 
-export function CardSetup({ clientSecret, onSaved }) {
+export function CardSetup({ clientSecret, onSaved, bindRef, returnUrl }) {
   if (livePublishable) {
     return (
       <p className="muted" style={{ fontSize: 14 }} data-testid="stripe-live-blocked">
@@ -76,7 +98,7 @@ export function CardSetup({ clientSecret, onSaved }) {
       clientSecret,
       appearance: { theme: "night", variables: { colorPrimary: "#FF5F1F", colorBackground: "#404653", colorText: "#F5F5F5" } },
     }}>
-      <SetupForm onSaved={onSaved} />
+      {bindRef ? <CardFields bindRef={bindRef} returnUrl={returnUrl} /> : <SetupForm onSaved={onSaved} />}
     </Elements>
   );
 }

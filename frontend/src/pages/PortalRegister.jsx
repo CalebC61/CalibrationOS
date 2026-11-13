@@ -43,7 +43,9 @@ export default function PortalRegister() {
     setRequestNote("");
     try {
       const { data } = await portalApi.post(`/public/invites/${token}/request-new`);
-      setRequestNote(data.message || "A new link is on the way.");
+      setRequestNote(data.held
+        ? (data.message || "Shop email is off, so the new link was not emailed. Call the office.")
+        : (data.message || "A new link is on the way."));
     } catch (err) {
       const detail = err.response?.data?.detail;
       setRequestNote(typeof detail === "string" ? detail : (detail?.message || "We could not email a new link."));

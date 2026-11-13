@@ -58,7 +58,7 @@ export default function HomePage() {
             <article className="step">
               <div className="step-num">01</div>
               <h3>Create your shop account</h3>
-              <p>Sign up with your shop name and contact info. Caleb sends the setup link. That account is how you get into CalibrationOS.</p>
+              <p>Sign up with the shop, a card, and the service agreement. You can book in the same sitting.</p>
             </article>
             <article className="step">
               <div className="step-num">02</div>
@@ -84,6 +84,7 @@ export default function HomePage() {
               ["Static", "$125", "Targets and tools, vehicle parked. Common after windshield work on camera systems."],
               ["Dynamic", "$125", "A road drive with the scan tool, when the OEM procedure calls for it."],
               ["Dual", "$175", "Static and dynamic together, when the vehicle needs both."],
+              ["Triple / Subaru", "$185", "Three-camera and Subaru EyeSight calibrations, when the vehicle needs the triple procedure."],
               ["Tesla", "$225", "Tesla windshield and camera calibration, following Tesla's process."],
             ].map(([name, price, copy]) => (
               <article className="price-card" key={name}>

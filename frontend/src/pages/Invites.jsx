@@ -81,13 +81,15 @@ export default function Invites() {
             ⚠ Resend API key not configured — invites are queued below for manual sending. Add RESEND_API_KEY to /app/backend/.env to enable auto-send.
           </div>
         )}
-        {lastCreated && (
+        {lastCreated?.register_url && (
           <div className="elevated" style={{ padding: 12, marginTop: 14 }} data-testid="last-invite">
             <div style={{ fontWeight: 600, marginBottom: 4 }}>Invite created for {lastCreated.shop_name}</div>
-            <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>If email didn't send, copy this link:</div>
             <div className="font-mono" style={{ fontSize: 12, padding: 8, background: "var(--bg-elevated)", borderRadius: 6, wordBreak: "break-all" }}>{lastCreated.register_url}</div>
             <button className="btn btn-ghost" style={{ marginTop: 8, fontSize: 12 }}
-              onClick={() => { navigator.clipboard.writeText(lastCreated.register_url); alert("Copied!"); }}>Copy link</button>
+              onClick={() => navigator.clipboard.writeText(lastCreated.register_url)}
+              data-testid="copy-last-invite">
+              {lastCreated.email_status === "held" ? "Held" : "Copy"}
+            </button>
           </div>
         )}
       </div>
@@ -107,19 +109,18 @@ export default function Invites() {
                 <Td>
                   <span data-testid={`invite-email-${i.id}`}>{i.email_status === "sent" ? "Sent" : i.email_status === "held" ? "Held" : "Not delivered"}</span>
                   {i.email_error && <div className="muted" style={{ fontSize: 12 }}>{i.email_error}</div>}
-                  {i.register_url && i.email_status !== "sent" && i.status !== "registered" && (
-                    <div style={{ marginTop: 6 }}>
-                      <div className="font-mono" style={{ fontSize: 12, wordBreak: "break-all" }} data-testid={`invite-link-${i.id}`}>{i.register_url}</div>
-                      <button type="button" className="btn btn-ghost" style={{ fontSize: 12, marginTop: 6 }}
-                        data-testid={`copy-invite-${i.id}`}
-                        onClick={() => { navigator.clipboard.writeText(i.register_url); alert("Copied."); }}>
-                        Copy
-                      </button>
-                    </div>
-                  )}
                 </Td>
                 <Td className="muted" style={{ fontSize: 12 }}>{new Date(i.expires_at).toLocaleDateString()}</Td>
                 <Td>
+                  {i.register_url && i.status !== "registered" && (
+                    <div>
+                      <div className="font-mono" style={{ fontSize: 12, wordBreak: "break-all", marginBottom: 6 }} data-testid={`invite-link-${i.id}`}>{i.register_url}</div>
+                      <button type="button" className="btn btn-ghost" style={{ fontSize: 12, marginRight: 8 }}
+                        onClick={() => navigator.clipboard.writeText(i.register_url)} data-testid={`copy-invite-${i.id}`}>
+                        {i.email_status === "held" ? "Held" : "Copy"}
+                      </button>
+                    </div>
+                  )}
                   {i.status !== "registered" && (
                     <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => resend(i.id)} data-testid={`resend-${i.id}`}>Resend</button>
                   )}

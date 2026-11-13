@@ -38,6 +38,42 @@ copy button says Held when the mail is held. Held invites on `/invites`
 show the same link. The raw token is not a response field and is not logged.
 A failed load shows an error instead of the empty line.
 
+### Added — glass shops sign up themselves (2026-11-13)
+`POST /api/public/shops` creates the shop, the shop user, and the signed agreement
+(version `2026-11-13.1`, which adds Triple / Subaru at $185) and returns a portal
+JWT. A duplicate email is 409 and points at login and forgot-password. A Places
+`place_id` counts as a confirmed address, so that signup does not 409 for a
+second submit. A free-typed address still confirms only when the geocode is not
+a precise pin. The same rule applies when the owner adds a shop by hand.
+
+The signup page is `/signup`: shop, contact, mobile, email, password, address,
+the agreement and signature, the Stripe card, and the charge-acceptance line,
+then one Create my shop button. Success opens Book a job. If Stripe is not
+configured the account is still created and booking stays closed until the card
+is saved from Settings. Card setup is not a one-time invite link. The public
+routes are rate-limited per IP.
+
+`/requests` is New shops. The owner can Flag or Suspend. A suspended shop cannot
+book. The new-shop email still goes out through `send_email` (kind `shop_request`),
+and only after the new shop can be read back. Shop-facing mail is unchanged and
+still waits on `SHOP_EMAILS_ENABLED`. Pending rows already in `shop_requests` stay
+on that page, and Approve still sends an invite. Invites remain for shops the
+owner adds by hand. When that mail is held, the setup URL is on screen with a
+copy button labeled Held. New shops use the same `owner_documents` read as
+the other owner lists: primary, no server-side sort. A failed load shows an
+error instead of an empty list.
+
+`FRONTEND_URL`, when blank, uses `PUBLIC_SITE_URL`, or
+`https://www.thecalibrationcrew.us`. The ready-page booking link uses that host.
+Requesting a new invite while shop mail is held does not say the mail is on the way.
+
+The first portal booking is two screens. The shop address reuses the signup pin
+and does not geocode again. Screen two is the vehicle, the calibration and price,
+and “invoice me instead”. Static $125, Dynamic $125, Dual $175, Triple / Subaru
+$185, and Tesla $225 are on the agreement and the public price lists.
+
+`BILLING_ENABLED` is unchanged. No Google Calendar events are created.
+
 ### Fixed — shop account requests show on the owner Requests page (2026-11-13)
 `POST /api/public/shop-requests` saved the request and emailed the owner, and
 `GET /api/shop-requests` returned 200, but `/requests` stayed on "No requests

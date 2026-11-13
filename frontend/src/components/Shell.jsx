@@ -28,7 +28,7 @@ export default function Shell({ children, hideNav }) {
               <nav className={"owner-nav" + (menu ? " open" : "")}>
                 {[
                   { to: "/dashboard", label: "Dispatch" },
-                  { to: "/requests", label: "Requests" },
+                  { to: "/requests", label: "New shops" },
                   { to: "/days-off", label: "Days off" },
                   { to: "/email-preview", label: "Email preview" },
                   { to: "/shops", label: "Shops" },

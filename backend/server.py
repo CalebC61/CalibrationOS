@@ -81,7 +81,6 @@ def get_stripe():
 stripe_sdk.api_key = "sk_test_emergent"
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = _env('SENDER_EMAIL', 'onboarding@resend.dev')
-FRONTEND_URL = _env("FRONTEND_URL").rstrip("/")
 OWNER_PHONE = _env("OWNER_PHONE", "(480) 269-1329")
 # Links in owner emails. A blank value uses the public site, not the browser address.
 PUBLIC_SITE_URL = _env('PUBLIC_SITE_URL', 'https://www.thecalibrationcrew.us').rstrip('/')
@@ -93,21 +92,26 @@ from xero_invoice import xero_invoice_body, line_two_description, due_date_strin
 # Card charging (real-if-Stripe-configured — see /charge-queue/{job_id}/charge)
 from charging import cents, chargeable_reason, interpret_payment_intent, decline_message
 from onboarding import (
-    AGREEMENT_PARAGRAPHS, AGREEMENT_SECTIONS, AGREEMENT_VERSION, CHARGE_ACCEPTANCE_TEXT, agreement_text,
-    addresses_match, address_problem, app_link, booking_gate, canonical_email,
-    duplicate_fields, invite_email_html, invite_register_url, normalize_phone,
-    password_error, sender_email_problem, shop_contact_errors, welcome_email_html,
+    AGREEMENT_PARAGRAPHS, AGREEMENT_SECTIONS, AGREEMENT_VERSION, CARD_SETUP_ATTEMPT_LIMIT,
+    CHARGE_ACCEPTANCE_TEXT, SIGNUP_ATTEMPT_LIMIT, SIGNUP_WINDOW_SECONDS, agreement_text,
+    address_needs_confirmation, addresses_match, address_problem, app_link, booking_gate,
+    canonical_email, duplicate_fields, invite_email_html, invite_register_url, normalize_phone,
+    password_error, rate_limit_exceeded, resolve_frontend_url, reused_shop_pin,
+    sender_email_problem, shop_contact_errors, welcome_email_html,
 )
 from owner_reads import owner_documents, public_invite
+# Invite, reset, and booking links. A blank FRONTEND_URL uses the public site.
+FRONTEND_URL = resolve_frontend_url(_env("FRONTEND_URL"), PUBLIC_SITE_URL)
 from billing import (
     CHARGE_MODE, INVOICE_MODE, TRIP_FEE_REASONS, amount_due, apply_late_fee, apply_trip_fee_only,
     billing_plan, payment_mode, set_outside_service_area, treat_decline_as_invoice,
 )
 from payments import (
     charge_job as stripe_charge_job,
-    create_checkout_setup, create_customer as stripe_create_customer,
+    create_anonymous_setup_intent, create_checkout_setup, create_customer as stripe_create_customer,
     create_job_invoice, create_late_fee_invoice, create_setup_intent,
-    mark_invoice_paid_out_of_band, retrieve_setup_checkout, save_payment_method,
+    mark_invoice_paid_out_of_band, retrieve_setup_checkout, retrieve_setup_intent,
+    save_payment_method,
 )
 # Google Maps (real-if-configured, else mock — same pattern; see geocode_address()/get_drive_time())
 from google_maps import (
@@ -1003,7 +1007,7 @@ class ShopIn(BaseModel):
     place_id: Optional[str] = None
 
 class ShopUpdate(ShopIn):
-    status: Optional[Literal["active", "paused", "inactive"]] = None
+    status: Optional[Literal["active", "paused", "inactive", "suspended"]] = None
 
 class SlotQuery(BaseModel):
     booking_token: str
@@ -1168,6 +1172,35 @@ class ShopRequestIn(BaseModel):
     confirmed_address: Optional[str] = None
     place_id: Optional[str] = None
 
+
+class PublicShopIn(BaseModel):
+    shop_name: str = Field(max_length=160)
+    contact_name: str = Field(max_length=160)
+    mobile: str = Field(max_length=32)
+    email: str = Field(max_length=200)
+    password: str = Field(max_length=200)
+    address: str = Field(max_length=300)
+    address_confirmed: bool = False
+    confirmed_address: Optional[str] = Field(default=None, max_length=300)
+    place_id: Optional[str] = Field(default=None, max_length=200)
+    terms_signature: str = Field(max_length=160)
+    terms_agreed: bool = False
+    charge_accepted: bool = False
+    second_location: bool = False
+    payment_method_id: Optional[str] = Field(default=None, max_length=80)
+
+
+class SetupIntentCompleteIn(BaseModel):
+    setup_intent_id: str = Field(max_length=80)
+
+
+class ShopFlagIn(BaseModel):
+    flagged: bool = True
+
+
+class ShopSuspendIn(BaseModel):
+    suspended: bool = True
+
 class ContactIn(BaseModel):
     shop_name: Optional[str] = None
     name: str
@@ -1301,7 +1334,9 @@ async def _duplicate_lists():
     return shops, users
 
 
-async def _checked_shop_address(address: str, confirmed: bool, confirmed_address: Optional[str]) -> dict:
+async def _checked_shop_address(
+    address: str, confirmed: bool, confirmed_address: Optional[str], place_id: Optional[str] = None,
+) -> dict:
     try:
         geo = await geocode_address(address)
     except AddressNotFound as exc:
@@ -1310,7 +1345,9 @@ async def _checked_shop_address(address: str, confirmed: bool, confirmed_address
     problem = address_problem(geo)
     if problem:
         raise HTTPException(400, problem)
-    if not confirmed or not addresses_match(confirmed_address, geo.get("formatted_address")):
+    if address_needs_confirmation(
+        place_id=place_id, confirmed=confirmed, confirmed_address=confirmed_address, geo=geo,
+    ):
         raise HTTPException(status_code=409, detail={
             "code": "needs_confirmation",
             "message": "Confirm the address we found before saving.",
@@ -1363,7 +1400,9 @@ def _shop_document(data: ShopIn, geo: dict) -> dict:
 
 @api.post("/shops")
 async def create_shop(data: ShopIn, tech=Depends(require_owner)):
-    geo = await _checked_shop_address(data.address, data.address_confirmed, data.confirmed_address)
+    geo = await _checked_shop_address(
+        data.address, data.address_confirmed, data.confirmed_address, data.place_id,
+    )
     errors = shop_contact_errors(
         name=data.name, phone=data.contact_phone, email=data.contact_email, address=data.address,
     )
@@ -1442,13 +1481,14 @@ async def _booking_gate_for_shop(shop: dict) -> dict:
 
 @api.get("/public/shop/{token}")
 async def public_shop(token: str):
-    shop = await db.shops.find_one({"booking_link_token": token, "status": "active"},
+    shop = await db.shops.find_one({"booking_link_token": token},
                                    {"_id": 0, "custom_rate_static": 1, "custom_rate_dynamic": 1,
                                     "custom_rate_dual": 1, "custom_rate_triple": 1, "custom_rate_tesla": 1,
                                     "pricing_tier": 1, "name": 1, "address": 1, "contact_phone": 1,
                                     "contact_email": 1, "id": 1, "booking_link_token": 1, "zone": 1,
-                                    "requires_billing_setup": 1})
-    if not shop:
+                                    "requires_billing_setup": 1, "status": 1, "lat": 1, "lng": 1,
+                                    "formatted_address": 1, "geocode_source": 1})
+    if not shop or shop.get("status") not in ("active", "suspended"):
         raise HTTPException(404, "This booking link is not active. Contact The Calibration Crew.")
     gate = await _booking_gate_for_shop(shop)
     return {**shop, "booking_open": gate["allowed"], "booking_message": gate["message"]}
@@ -2038,19 +2078,41 @@ async def _arrival_plan(tech, day, start: datetime, new_point: tuple, jobs: list
     decided["duration_minutes"] = ctx["duration"]
     return decided
 
+async def _shop_for_booking_token(token: str) -> dict:
+    """Active shop for a booking link. A suspended shop is a 403, not a missing link."""
+    shop = await db.shops.find_one({"booking_link_token": token})
+    if shop and shop.get("status") == "suspended":
+        raise HTTPException(403, "This shop is suspended and cannot book.")
+    if not shop or shop.get("status") != "active":
+        raise HTTPException(404, "Invalid booking link")
+    return shop
+
+
+async def _pin_for_job(shop: dict, address: str) -> dict:
+    """Reuse the shop's signup pin when the job is still at that address."""
+    saved = reused_shop_pin(shop, address)
+    if saved and not pin_refusal(saved):
+        return saved
+    try:
+        return await geocode_address(address)
+    except AddressNotFound as exc:
+        raise HTTPException(400, str(exc))
+
+
 @api.post("/public/availability")
 async def public_availability(query: SlotQuery):
-    shop = await db.shops.find_one({"booking_link_token": query.booking_token, "status": "active"})
-    if not shop:
-        raise HTTPException(404, "Invalid booking link")
+    try:
+        shop = await _shop_for_booking_token(query.booking_token)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
+                    "message": exc.detail if isinstance(exc.detail, str) else "This shop is suspended and cannot book."}
+        raise
     gate = await _booking_gate_for_shop(shop)
     if not gate["allowed"]:
         return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
                 "message": gate["message"]}
-    try:
-        geo = await geocode_address(query.job_address)
-    except AddressNotFound as exc:
-        raise HTTPException(400, str(exc))
+    geo = await _pin_for_job(shop, query.job_address)
     if not geo["in_metro"] or pin_refusal(geo):
         return {"zone": None, "in_metro": False, "slots": [],
                 "message": OUTSIDE_VALLEY}
@@ -2093,16 +2155,11 @@ async def public_book(data: BookingIn):
         data.notification_phone = normalize_us_phone(data.notification_phone)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    shop = await db.shops.find_one({"booking_link_token": data.booking_token, "status": "active"})
-    if not shop:
-        raise HTTPException(404, "Invalid booking link")
+    shop = await _shop_for_booking_token(data.booking_token)
     gate = await _booking_gate_for_shop(shop)
     if not gate["allowed"]:
         raise HTTPException(403, gate["message"])
-    try:
-        geo = await geocode_address(data.job_address)
-    except AddressNotFound as exc:
-        raise HTTPException(400, str(exc))
+    geo = await _pin_for_job(shop, data.job_address)
     if not geo["in_metro"] or pin_refusal(geo):
         raise HTTPException(400, OUTSIDE_VALLEY)
     zone = detect_zone(geo["lng"])
@@ -2223,14 +2280,6 @@ async def public_book(data: BookingIn):
         "requires_approval": pending,
         "shop_email_delivered": bool(shop_mail and shop_mail.get("delivered")),
     }
-
-async def _shop_for_booking_token(token: str) -> dict:
-    shop = await db.shops.find_one(
-        {"booking_link_token": token, "status": "active"}, {"_id": 0},
-    )
-    if not shop:
-        raise HTTPException(404, "This booking link is not active.")
-    return shop
 
 async def _job_for_shop_token(token: str, job_id: str) -> tuple:
     shop = await _shop_for_booking_token(token)
@@ -3723,7 +3772,7 @@ async def _issue_invite(shop: dict, recipient_email: str, previous_id: Optional[
     """14-day invite. The link always comes from FRONTEND_URL, never the browser origin."""
     token = secrets.token_urlsafe(24)
     try:
-        register_url = invite_register_url(FRONTEND_URL, token)
+        register_url = invite_register_url(resolve_frontend_url(FRONTEND_URL, PUBLIC_SITE_URL), token)
         link_error = None
     except ValueError as exc:
         register_url = None
@@ -3966,6 +4015,51 @@ async def portal_setup_intent(su=Depends(get_current_shop_user)):
     return {"client_secret": setup["client_secret"]}
 
 
+@api.post("/portal/complete-setup-intent")
+async def portal_complete_setup_intent(body: SetupIntentCompleteIn, su=Depends(get_current_shop_user)):
+    """Save the card after Stripe redirects back from 3-D Secure."""
+    client = get_stripe()
+    if client is None:
+        raise HTTPException(400, "Stripe is not configured.")
+    try:
+        intent = await asyncio.to_thread(retrieve_setup_intent, client, body.setup_intent_id)
+    except Exception as exc:
+        logger.error("[STRIPE] could not read setup intent: %s", exc)
+        raise HTTPException(400, "That card setup could not be confirmed.")
+    if intent.get("status") != "succeeded":
+        raise HTTPException(400, "The card was not saved.")
+    payment_method_id = _payment_method_id(intent)
+    if not payment_method_id:
+        raise HTTPException(400, "Stripe did not return a card.")
+    customer_id = su.get("stripe_customer_id")
+    if not customer_id:
+        try:
+            customer_id = await asyncio.to_thread(
+                stripe_create_customer, client,
+                email=su["email"], name=su.get("full_name") or su["email"], shop_id=su["shop_id"],
+            )
+        except Exception as exc:
+            logger.error("[STRIPE] customer create failed: %s", exc)
+            raise HTTPException(502, "Could not save that card.")
+        await db.shop_users.update_one({"id": su["id"]}, {"$set": {"stripe_customer_id": customer_id}})
+        su = {**su, "stripe_customer_id": customer_id}
+    try:
+        card = await asyncio.to_thread(
+            save_payment_method, client,
+            customer_id=customer_id, payment_method_id=payment_method_id,
+        )
+    except Exception as exc:
+        logger.error("[STRIPE] could not save card: %s", exc)
+        raise HTTPException(502, "Could not save that card.")
+    fresh = await _store_card(su, card)
+    return {
+        "status": "complete",
+        "shop_user": fresh,
+        "needs_acceptance": not fresh.get("charge_authorization_accepted_at"),
+        "acceptance_text": CHARGE_ACCEPTANCE_TEXT,
+    }
+
+
 @api.post("/portal/payment-method")
 async def portal_save_payment_method(body: PaymentMethodIn, su=Depends(get_current_shop_user)):
     client = get_stripe()
@@ -3999,26 +4093,7 @@ async def portal_accept_charge(body: AcceptChargeIn, request: Request, su=Depend
     shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
     fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
     if shop and not su.get("charge_authorization_accepted_at"):
-        try:
-            booking_url = app_link(FRONTEND_URL, f"/book/{shop['booking_link_token']}")
-        except ValueError:
-            booking_url = f"/book/{shop['booking_link_token']}"
-            logger.error("[EMAIL] FRONTEND_URL is not set, welcome email has a relative booking link.")
-        await _send_booking_message({
-            "to": fresh["email"],
-            "subject": f"You're set — {shop['name']}",
-            "html": welcome_email_html(shop["name"], booking_url),
-            "kind": "welcome",
-            "reply_to": owner_notify_email(),
-            "meta": {"shop_id": shop["id"]},
-        }, "shop")
-        await send_email(
-            owner_notify_email(),
-            f"{shop['name']} finished signup",
-            f"<p>{shop['name']} finished signup. Booking link: {booking_url}</p>",
-            kind="signup_finished",
-            meta={"shop_id": shop["id"]},
-        )
+        await _send_signup_finished(shop, fresh["email"])
     return {"shop_user": fresh, "booking_link_token": (shop or {}).get("booking_link_token")}
 
 
@@ -4067,7 +4142,10 @@ async def portal_login(body: ShopUserLoginIn):
 @api.get("/portal/me")
 async def portal_me(su=Depends(get_current_shop_user)):
     shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
-    return {"shop_user": su, "shop": shop, "setup": booking_gate(shop or {}, su)}
+    return {
+        "shop_user": su, "shop": shop, "setup": booking_gate(shop or {}, su),
+        "site_url": FRONTEND_URL,
+    }
 
 
 @api.post("/portal/auth/forgot-password")
@@ -4125,7 +4203,238 @@ async def public_agreement():
 
 @api.get("/public/site")
 async def public_site():
-    return {"owner_phone": OWNER_PHONE, "owner_email": owner_notify_email()}
+    return {"owner_phone": OWNER_PHONE, "owner_email": owner_notify_email(), "site_url": FRONTEND_URL}
+
+
+def _signup_limited(request: Request, kind: str, limit: int) -> None:
+    ip = _client_ip(request) or "unknown"
+    if rate_limit_exceeded(f"{kind}:{ip}", limit=limit, window_seconds=SIGNUP_WINDOW_SECONDS):
+        raise HTTPException(429, "Too many attempts from this network. Wait an hour and try again, or call the office.")
+
+
+async def _send_signup_finished(shop: dict, email: str) -> None:
+    """Welcome the shop and tell the owner. Shop mail still follows SHOP_EMAILS_ENABLED."""
+    try:
+        booking_url = app_link(FRONTEND_URL, f"/book/{shop['booking_link_token']}")
+    except ValueError:
+        booking_url = f"/book/{shop['booking_link_token']}"
+        logger.error("[EMAIL] FRONTEND_URL is not set, welcome email has a relative booking link.")
+    await _send_booking_message({
+        "to": email,
+        "subject": f"You're set — {shop['name']}",
+        "html": welcome_email_html(shop["name"], booking_url),
+        "kind": "welcome",
+        "reply_to": owner_notify_email(),
+        "meta": {"shop_id": shop["id"]},
+    }, "shop")
+    await send_email(
+        owner_notify_email(),
+        f"{shop['name']} finished signup",
+        f"<p>{shop['name']} finished signup. Booking link: {booking_url}</p>",
+        kind="signup_finished",
+        meta={"shop_id": shop["id"]},
+    )
+
+
+def _payment_method_id(intent: dict) -> Optional[str]:
+    method = intent.get("payment_method")
+    if isinstance(method, dict):
+        return method.get("id")
+    if isinstance(method, str) and method:
+        return method
+    return None
+
+
+@api.post("/public/card-setup")
+async def public_card_setup(request: Request):
+    """SetupIntent for the signup page. No shop is created."""
+    _signup_limited(request, "card-setup", CARD_SETUP_ATTEMPT_LIMIT)
+    client = get_stripe()
+    if client is None:
+        return {
+            "stripe_unavailable": True,
+            "message": "Card setup is not available yet. The account can still be created, and the card is added from Settings after you log in.",
+        }
+    try:
+        setup = await asyncio.to_thread(create_anonymous_setup_intent, client)
+    except Exception as exc:
+        logger.error("[STRIPE] signup setup intent failed: %s", exc)
+        return {
+            "stripe_unavailable": True,
+            "message": "Card setup did not start. You can add the card from Settings after you log in.",
+        }
+    return {"client_secret": setup.get("client_secret"), "setup_intent_id": setup.get("id"), "stripe_unavailable": False}
+
+
+@api.post("/public/card-setup/complete")
+async def public_card_setup_complete(body: SetupIntentCompleteIn, request: Request):
+    """Payment method id after a card redirect. The shop is created by the next call."""
+    _signup_limited(request, "card-setup", CARD_SETUP_ATTEMPT_LIMIT)
+    client = get_stripe()
+    if client is None:
+        raise HTTPException(400, "Stripe is not configured.")
+    try:
+        intent = await asyncio.to_thread(retrieve_setup_intent, client, body.setup_intent_id)
+    except Exception as exc:
+        logger.error("[STRIPE] could not read setup intent: %s", exc)
+        raise HTTPException(400, "That card setup could not be confirmed.")
+    if intent.get("status") != "succeeded":
+        raise HTTPException(400, "The card was not saved.")
+    payment_method_id = _payment_method_id(intent)
+    if not payment_method_id:
+        raise HTTPException(400, "Stripe did not return a card.")
+    return {"payment_method_id": payment_method_id}
+
+
+@api.post("/public/shops")
+async def public_create_shop(body: PublicShopIn, request: Request):
+    """Create the shop, the shop user, and the signed agreement. Returns a portal JWT."""
+    _signup_limited(request, "public-shop", SIGNUP_ATTEMPT_LIMIT)
+    if not (body.contact_name or "").strip():
+        raise HTTPException(400, {"contact_name": "Contact name is required."})
+    if not body.terms_agreed or not (body.terms_signature or "").strip():
+        raise HTTPException(400, "Sign the agreement to create the shop.")
+    if not body.charge_accepted:
+        raise HTTPException(400, "Accept the card charge terms to create the shop.")
+    pw_problem = password_error(body.password)
+    if pw_problem:
+        raise HTTPException(400, pw_problem)
+    errors = shop_contact_errors(
+        name=body.shop_name, phone=body.mobile, email=body.email, address=body.address,
+    )
+    if errors:
+        raise HTTPException(400, errors)
+    email = canonical_email(body.email)
+    geo = await _checked_shop_address(
+        body.address, body.address_confirmed, body.confirmed_address, body.place_id,
+    )
+    shops, users = await _duplicate_lists()
+    dupes = duplicate_fields(body.shop_name, email, shops, users)
+    if "email" in dupes:
+        raise HTTPException(status_code=409, detail={
+            "code": "duplicate_email",
+            "message": "That email already has a shop account. Log in, or reset the password.",
+            "login_path": "/portal/login",
+            "forgot_path": "/portal/forgot",
+        })
+    if "name" in dupes and not body.second_location:
+        raise HTTPException(status_code=409, detail={
+            "code": "duplicate_name",
+            "message": "A shop with this name is already on file. Check the box if this is a second location.",
+        })
+
+    client = get_stripe()
+    card = None
+    stripe_error = None
+    stripe_unavailable = client is None
+    if client is not None and not body.payment_method_id:
+        raise HTTPException(400, "Save a card to create the shop.")
+    shop_id = gen_id()
+    user_id = gen_id()
+    if client is not None and body.payment_method_id:
+        try:
+            customer_id = await asyncio.to_thread(
+                stripe_create_customer, client,
+                email=email, name=body.contact_name.strip(), shop_id=shop_id,
+            )
+            card = await asyncio.to_thread(
+                save_payment_method, client,
+                customer_id=customer_id, payment_method_id=body.payment_method_id,
+            )
+            card["stripe_customer_id"] = customer_id
+        except Exception as exc:
+            logger.error("[STRIPE] signup card was not saved: %s", exc)
+            raise HTTPException(502, "Could not save that card. Try another card, or call the office.")
+
+    signed_at = iso(now_utc())
+    shop = {
+        "id": shop_id,
+        "name": body.shop_name.strip(),
+        "contact_name": body.contact_name.strip(),
+        "contact_phone": normalize_phone(body.mobile),
+        "contact_email": email,
+        "address": geo.get("formatted_address") or body.address.strip(),
+        "formatted_address": geo.get("formatted_address"),
+        "city": None, "state": "AZ", "zip": None,
+        "lat": geo["lat"], "lng": geo["lng"],
+        "geocode_source": geo.get("source") or "google",
+        "zone": detect_zone(geo["lng"]),
+        "place_id": body.place_id,
+        "booking_link_token": secrets.token_hex(16),
+        "pricing_tier": "standard",
+        "terms_signed_at": signed_at,
+        "terms_signed_by": body.terms_signature.strip(),
+        "requires_billing_setup": True,
+        "status": "active",
+        "signup_source": "self_serve",
+        "second_location": bool(body.second_location),
+        "flagged": bool(body.second_location),
+        "flag_reason": "second_location" if body.second_location else None,
+        "notes": None,
+        "created_at": signed_at,
+        "updated_at": signed_at,
+    }
+    accepted_at = signed_at if card else None
+    su = {
+        "id": user_id,
+        "email": email,
+        "full_name": body.contact_name.strip(),
+        "password_hash": hash_password(body.password),
+        "shop_id": shop_id,
+        "shop_name": shop["name"],
+        "stripe_customer_id": (card or {}).get("stripe_customer_id"),
+        "stripe_payment_method_id": (card or {}).get("stripe_payment_method_id"),
+        "card_brand": (card or {}).get("card_brand"),
+        "card_last4": (card or {}).get("card_last4"),
+        "card_exp_month": (card or {}).get("card_exp_month"),
+        "card_exp_year": (card or {}).get("card_exp_year"),
+        "terms_signature": body.terms_signature.strip(),
+        "terms_signed_at": signed_at,
+        "agreement_version": AGREEMENT_VERSION,
+        "agreement_text": agreement_text(),
+        "agreement_ip": _client_ip(request),
+        "agreement_user_agent": request.headers.get("user-agent", ""),
+        "charge_authorization_accepted_at": accepted_at,
+        "charge_authorization_text": CHARGE_ACCEPTANCE_TEXT if accepted_at else None,
+        "charge_authorization_ip": _client_ip(request) if accepted_at else None,
+        "charge_authorization_user_agent": request.headers.get("user-agent", "") if accepted_at else None,
+        "is_active": True,
+        "created_at": signed_at,
+    }
+    await db.shops.insert_one(shop.copy())
+    await db.shop_users.insert_one(su.copy())
+    saved_shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
+    if not saved_shop:
+        logger.error("[SHOP SIGNUP] id %s was not readable after insert", shop_id)
+        raise HTTPException(500, "Could not save that shop. Call (480) 269-1329.")
+    review_url = f"{PUBLIC_SITE_URL}/requests"
+    html = (
+        f"<p>{shop['contact_name']} created {shop['name']}.</p>"
+        f"<ul><li>{shop['contact_phone']}</li><li>{shop['contact_email']}</li><li>{shop['address']}</li></ul>"
+        f"<p><a href=\"{review_url}\">Review new shops</a></p>"
+    )
+    await send_email(
+        owner_notify_email(),
+        f"New shop — {shop['name']}",
+        html, kind="shop_request", meta={"shop_id": shop_id},
+    )
+    if accepted_at:
+        await _send_signup_finished(shop, email)
+    token = make_portal_token(user_id)
+    public_user = {k: v for k, v in su.items() if k != "password_hash"}
+    return {
+        "token": token,
+        "shop_user_id": user_id,
+        "shop_id": shop_id,
+        "shop_name": shop["name"],
+        "full_name": su["full_name"],
+        "has_payment_method": bool(card),
+        "stripe_unavailable": stripe_unavailable,
+        "stripe_error": stripe_error,
+        "booking_open": booking_gate(shop, public_user)["allowed"],
+        "shop_user": public_user,
+        "shop": shop,
+    }
 
 
 @api.post("/public/contact")
@@ -4152,7 +4461,9 @@ async def create_shop_request(body: ShopRequestIn):
     )
     if errors:
         raise HTTPException(400, errors)
-    geo = await _checked_shop_address(body.address, body.address_confirmed, body.confirmed_address)
+    geo = await _checked_shop_address(
+        body.address, body.address_confirmed, body.confirmed_address, body.place_id,
+    )
     record = {
         "id": gen_id(),
         "shop_name": body.shop_name.strip(),
@@ -4268,6 +4579,40 @@ async def decline_shop_request(request_id: str, tech=Depends(require_owner)):
     return {"ok": True}
 
 
+@api.get("/new-shops")
+async def list_new_shops(tech=Depends(require_owner)):
+    """Shops that created themselves. Pending requests stay on /shop-requests."""
+    return await owner_documents(
+        db.shops, query={"signup_source": "self_serve"}, limit=200,
+        sort_key="created_at", reverse=True,
+    )
+
+
+@api.post("/shops/{shop_id}/flag")
+async def flag_shop(shop_id: str, body: ShopFlagIn, tech=Depends(require_owner)):
+    shop = await db.shops.find_one({"id": shop_id})
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    await db.shops.update_one({"id": shop_id}, {"$set": {
+        "flagged": body.flagged,
+        "flagged_at": iso(now_utc()) if body.flagged else None,
+        "updated_at": iso(now_utc()),
+    }})
+    return {"id": shop_id, "flagged": body.flagged}
+
+
+@api.post("/shops/{shop_id}/suspend")
+async def suspend_shop(shop_id: str, body: ShopSuspendIn, tech=Depends(require_owner)):
+    shop = await db.shops.find_one({"id": shop_id})
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    status_value = "suspended" if body.suspended else "active"
+    await db.shops.update_one({"id": shop_id}, {"$set": {
+        "status": status_value, "updated_at": iso(now_utc()),
+    }})
+    return {"id": shop_id, "status": status_value}
+
+
 @api.get("/billing/late-fees")
 async def list_late_fees(tech=Depends(require_owner)):
     events = await db.billing_events.find({"kind": "late_fee"}, {"_id": 0}).sort("applied_at", -1).to_list(200)
@@ -4379,8 +4724,10 @@ async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_
 @api.post("/portal/book")
 async def portal_book(data: BookingIn, su=Depends(get_current_shop_user)):
     """Booking through the portal — uses authenticated shop_user instead of token."""
-    shop = await db.shops.find_one({"id": su["shop_id"], "status": "active"})
-    if not shop:
+    shop = await db.shops.find_one({"id": su["shop_id"]})
+    if shop and shop.get("status") == "suspended":
+        raise HTTPException(403, "This shop is suspended and cannot book.")
+    if not shop or shop.get("status") != "active":
         raise HTTPException(400, "Your shop is not active")
     # Override booking_token to the shop's current token internally
     data.booking_token = shop["booking_link_token"]
@@ -4710,11 +5057,11 @@ def security_self_check():
     if sender_problem:
         logger.error("[EMAIL] %s", sender_problem)
         warnings.append(sender_problem)
-    if not FRONTEND_URL:
-        logger.error(
-            "[EMAIL] FRONTEND_URL is not set. Invite, reset, and booking links are not built from the browser address."
+    if not _env("FRONTEND_URL"):
+        logger.info(
+            "[EMAIL] FRONTEND_URL is not set. Invite, reset, and booking links use %s.",
+            FRONTEND_URL,
         )
-        warnings.append("FRONTEND_URL is not set — invite and reset links cannot be built.")
     if cors_allow_origins() == ["*"]:
         warnings.append("CORS_ORIGINS is '*' (any site) — set it to your app domain(s).")
     if IS_PRODUCTION and not SEED_OWNER_PASSWORD:
