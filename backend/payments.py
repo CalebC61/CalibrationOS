@@ -43,10 +43,15 @@ def create_setup_intent(client, *, customer_id: str, shop_user_id: str) -> dict:
 
 
 def create_anonymous_setup_intent(client) -> dict:
-    """SetupIntent before a shop exists. The card is attached on signup."""
+    """Card-only SetupIntent before a shop exists. The card is attached on signup.
+
+    automatic_payment_methods would offer Link, BLIK, Kakao Pay, Pix, and bank
+    methods. Signup saves a card for off-session job charges, so the intent
+    lists card only. The signup Payment Element also hides Link and wallets.
+    """
     intent = client.v1.setup_intents.create({
         "usage": "off_session",
-        "automatic_payment_methods": {"enabled": True},
+        "payment_method_types": ["card"],
         "metadata": {"purpose": "shop_signup"},
     })
     data = _data(intent)

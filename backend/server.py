@@ -93,7 +93,8 @@ from xero_invoice import xero_invoice_body, line_two_description, due_date_strin
 from charging import cents, chargeable_reason, interpret_payment_intent, decline_message
 from onboarding import (
     AGREEMENT_PARAGRAPHS, AGREEMENT_SECTIONS, AGREEMENT_VERSION, CARD_SETUP_ATTEMPT_LIMIT,
-    CHARGE_ACCEPTANCE_TEXT, SIGNUP_ATTEMPT_LIMIT, SIGNUP_WINDOW_SECONDS, agreement_text,
+    CHARGE_ACCEPTANCE_TEXT, PASSWORD_MIN_LENGTH, PASSWORD_RULE, SIGNUP_ATTEMPT_LIMIT,
+    SIGNUP_WINDOW_SECONDS, agreement_text,
     address_needs_confirmation, addresses_match, address_problem, app_link, booking_gate,
     canonical_email, duplicate_fields, invite_email_html, invite_register_url, normalize_phone,
     password_error, rate_limit_exceeded, resolve_frontend_url, reused_shop_pin,
@@ -4198,6 +4199,8 @@ async def public_agreement():
         "paragraphs": AGREEMENT_PARAGRAPHS,
         "sections": AGREEMENT_SECTIONS,
         "acceptance": CHARGE_ACCEPTANCE_TEXT,
+        "password_min_length": PASSWORD_MIN_LENGTH,
+        "password_rule": PASSWORD_RULE,
     }
 
 
@@ -4286,10 +4289,12 @@ async def public_card_setup_complete(body: SetupIntentCompleteIn, request: Reque
     return {"payment_method_id": payment_method_id}
 
 
-@api.post("/public/shops")
-async def public_create_shop(body: PublicShopIn, request: Request):
-    """Create the shop, the shop user, and the signed agreement. Returns a portal JWT."""
-    _signup_limited(request, "public-shop", SIGNUP_ATTEMPT_LIMIT)
+async def _prepare_public_shop(body: PublicShopIn):
+    """Signup checks shared by the pre-check and by create. Does not write or charge.
+
+    Address confirmation is raised before a duplicate email, matching create, so a
+    free-typed address does not reveal that the email is already on file.
+    """
     if not (body.contact_name or "").strip():
         raise HTTPException(400, {"contact_name": "Contact name is required."})
     if not body.terms_agreed or not (body.terms_signature or "").strip():
@@ -4322,6 +4327,27 @@ async def public_create_shop(body: PublicShopIn, request: Request):
             "code": "duplicate_name",
             "message": "A shop with this name is already on file. Check the box if this is a second location.",
         })
+    return email, geo
+
+
+@api.post("/public/shops/check")
+async def public_check_shop(body: PublicShopIn, request: Request):
+    """Duplicate email, duplicate name, and address confirmation before the card is confirmed.
+
+    Same status codes and detail objects as POST /public/shops. Uses that route's
+    rate limit so this is not a second way to learn whether an email is on file.
+    Does not create a shop and does not require a card.
+    """
+    _signup_limited(request, "public-shop", SIGNUP_ATTEMPT_LIMIT)
+    await _prepare_public_shop(body)
+    return {"ok": True}
+
+
+@api.post("/public/shops")
+async def public_create_shop(body: PublicShopIn, request: Request):
+    """Create the shop, the shop user, and the signed agreement. Returns a portal JWT."""
+    _signup_limited(request, "public-shop", SIGNUP_ATTEMPT_LIMIT)
+    email, geo = await _prepare_public_shop(body)
 
     client = get_stripe()
     card = None
