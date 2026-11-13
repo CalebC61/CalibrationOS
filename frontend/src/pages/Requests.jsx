@@ -6,10 +6,23 @@ export default function Requests() {
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   async function load() {
-    const { data } = await api.get("/shop-requests");
-    setRows(data);
+    setLoadError("");
+    try {
+      const { data } = await api.get("/shop-requests");
+      const list = Array.isArray(data) ? data : data?.requests;
+      if (!Array.isArray(list)) {
+        setRows([]);
+        setLoadError("Couldn't read shop requests. Reload the page.");
+        return;
+      }
+      setRows(list);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setLoadError(typeof detail === "string" ? detail : "Couldn't load shop requests. Reload the page.");
+    }
   }
   useEffect(() => { load(); }, []);
 
@@ -38,6 +51,7 @@ export default function Requests() {
       <h1 className="h1" style={{ marginBottom: 8 }}>Shop requests</h1>
       <p className="muted" style={{ marginBottom: 16 }}>Approve creates the shop and emails the setup link. Decline leaves them off the schedule.</p>
       {note && <div className="surface" style={{ padding: 12, marginBottom: 16 }}>{note}</div>}
+      {loadError && <div className="surface" style={{ padding: 12, marginBottom: 16 }} role="alert">{loadError}</div>}
       <div className="surface" style={{ overflow: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -62,7 +76,7 @@ export default function Requests() {
                 </Td>
               </tr>
             ))}
-            {rows.length === 0 && <tr><Td colSpan="5" style={{ textAlign: "center" }} className="muted">No requests yet.</Td></tr>}
+            {rows.length === 0 && !loadError && <tr><Td colSpan="5" style={{ textAlign: "center" }} className="muted">No requests yet.</Td></tr>}
           </tbody>
         </table>
       </div>
