@@ -6,9 +6,24 @@ import Shell from "../components/Shell";
 export default function ShopsList() {
   const [shops, setShops] = useState([]);
   const [q, setQ] = useState("");
+  const [loadError, setLoadError] = useState("");
   const nav = useNavigate();
 
-  async function load() { const { data } = await api.get("/shops"); setShops(data); }
+  async function load() {
+    setLoadError("");
+    try {
+      const { data } = await api.get("/shops");
+      const list = Array.isArray(data) ? data : data?.shops;
+      if (!Array.isArray(list)) {
+        setLoadError("Couldn't read shops. Reload the page.");
+        return;
+      }
+      setShops(list);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setLoadError(typeof detail === "string" ? detail : "Couldn't load shops. Reload the page.");
+    }
+  }
   useEffect(() => { load(); }, []);
 
   function copyLink(token) {
@@ -17,7 +32,7 @@ export default function ShopsList() {
     alert(`Booking link copied:\n${url}`);
   }
 
-  const filtered = shops.filter(s => s.name.toLowerCase().includes(q.toLowerCase()));
+  const filtered = shops.filter(s => String(s.name || "").toLowerCase().includes(q.toLowerCase()));
 
   return (
     <Shell>
@@ -27,6 +42,11 @@ export default function ShopsList() {
       </div>
       <input className="input" placeholder="Search shops…" value={q} onChange={e => setQ(e.target.value)}
         style={{ maxWidth: 320, marginBottom: 16 }} data-testid="shop-search" />
+      {loadError && (
+        <div role="alert" data-testid="shops-load-error" style={{ color: "var(--red)", marginBottom: 16 }}>
+          {loadError}
+        </div>
+      )}
       <div className="surface" style={{ overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -53,7 +73,7 @@ export default function ShopsList() {
                 </Td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+            {filtered.length === 0 && !loadError && (
               <tr><Td colSpan="5" style={{ textAlign: "center", padding: 32 }} className="muted">No shops yet.</Td></tr>
             )}
           </tbody>

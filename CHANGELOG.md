@@ -15,6 +15,29 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — owner Shops and Invites lists, and the held setup link (2026-11-13)
+Approving shop request `6ea62a50-7898-4e6e-a730-196b4cf30606` returned 200.
+Shop mail is off, so the invite was stored as `email_status: held` with no
+error string. Requests said "Invite was not delivered." and did not show
+`register_url`, which is built from `FRONTEND_URL`.
+
+`GET /api/invites`, `GET /api/jobs`, and `GET /api/email-log` still sorted
+inside the Mongo find. That is the query that hid shop requests: a sorted
+find can follow an index and omit documents that are not in it, then return
+200 and `[]`. `GET /api/shops` did not sort and does not filter on status,
+cancelled, archived, or an owner id. The client was already pinned to the
+primary. Shops and Invites still painted "No shops yet." / "No invitations
+yet." when the load threw or the body was not a list, and a shop with no
+string `name` crashed the Shops table. Invites loads shops, invites, and the
+email log together, so one bad body left every list empty.
+
+Owner reads for jobs, shops, invites, the email log, and shop requests now
+go through `owner_documents`: primary, no server-side sort, then order in
+process. Approve returns `register_url`. Requests shows that link, and the
+copy button says Held when the mail is held. Held invites on `/invites`
+show the same link. The raw token is not a response field and is not logged.
+A failed load shows an error instead of the empty line.
+
 ### Fixed — shop account requests show on the owner Requests page (2026-11-13)
 `POST /api/public/shop-requests` saved the request and emailed the owner, and
 `GET /api/shop-requests` returned 200, but `/requests` stayed on "No requests
