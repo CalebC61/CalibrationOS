@@ -31,11 +31,13 @@ is saved from Settings. Card setup is not a one-time invite link. The public
 routes are rate-limited per IP.
 
 `/requests` is New shops. The owner can Flag or Suspend. A suspended shop cannot
-book. The new-shop email still goes out through `send_email` (kind `shop_request`).
-Shop-facing mail is unchanged and still waits on `SHOP_EMAILS_ENABLED`. Pending
-rows already in `shop_requests` stay on that page, and Approve still sends an
-invite. Invites remain for shops the owner adds by hand. When that mail is held,
-the setup URL is on screen with a copy button labeled Held.
+book. The new-shop email still goes out through `send_email` (kind `shop_request`),
+and only after the new shop can be read back. Shop-facing mail is unchanged and
+still waits on `SHOP_EMAILS_ENABLED`. Pending rows already in `shop_requests` stay
+on that page, and Approve still sends an invite. Invites remain for shops the
+owner adds by hand. When that mail is held, the setup URL is on screen with a
+copy button labeled Held. The owner lists still read from the primary with no
+server-side sort, and a failed load shows an error instead of an empty list.
 
 `FRONTEND_URL`, when blank, uses `PUBLIC_SITE_URL`, or
 `https://www.thecalibrationcrew.us`. The ready-page booking link uses that host.
@@ -47,6 +49,18 @@ and “invoice me instead”. Static $125, Dynamic $125, Dual $175, Triple / Sub
 $185, and Tesla $225 are on the agreement and the public price lists.
 
 `BILLING_ENABLED` is unchanged. No Google Calendar events are created.
+
+### Fixed — shop account requests show on the owner Requests page (2026-11-13)
+`POST /api/public/shop-requests` saved the request and emailed the owner, and
+`GET /api/shop-requests` returned 200, but `/requests` stayed on "No requests
+yet." The page renders that line only when the JSON array is empty. The list
+was a sorted Mongo find, which can follow an index and omit a document that is
+not in the index. The client also followed `readPreference` from `MONGO_URL`,
+so a secondary read could miss a write the primary had already accepted. The
+list now reads from the primary with no server-side sort, then orders by
+`created_at`. The signup handler emails the owner only after it can read the
+new request back. `/requests` shows a load error when the response is not a
+list, and leaves the empty line for a list that really is empty.
 
 ### Fixed — cancelled bookings leave the day and their new-booking alert (2026-11-13)
 A shop cancel, an owner cancel, and a status change to `cancelled` already set

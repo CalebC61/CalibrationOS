@@ -6,6 +6,12 @@ function copyText(value) {
   navigator.clipboard.writeText(value);
 }
 
+function asList(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.requests)) return data.requests;
+  return null;
+}
+
 export default function Requests() {
   const [shops, setShops] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -21,10 +27,19 @@ export default function Requests() {
         api.get("/new-shops"),
         api.get("/shop-requests"),
       ]);
-      setShops(created.data);
-      setRequests(pending.data);
-    } catch {
-      setLoadError("Could not load new shops.");
+      const shopList = asList(created.data);
+      const requestList = asList(pending.data);
+      if (!shopList || !requestList) {
+        setShops([]);
+        setRequests([]);
+        setLoadError("Couldn't read shop requests. Reload the page.");
+        return;
+      }
+      setShops(shopList);
+      setRequests(requestList);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setLoadError(typeof detail === "string" ? detail : "Couldn't load shop requests. Reload the page.");
     }
   }
   useEffect(() => { load(); }, []);
@@ -83,7 +98,7 @@ export default function Requests() {
           </button>
         </div>
       )}
-      {loadError && <p role="alert" style={{ color: "var(--red)", marginBottom: 12 }}>{loadError}</p>}
+      {loadError && <div className="surface" style={{ padding: 12, marginBottom: 16 }} role="alert">{loadError}</div>}
       <div className="surface" style={{ overflow: "auto", marginBottom: 28 }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>

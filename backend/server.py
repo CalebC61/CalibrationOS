@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-from pymongo import ReturnDocument
+from pymongo import ReadPreference, ReturnDocument
 import os
 import asyncio
 import logging
@@ -43,7 +43,10 @@ def cors_allow_origins() -> list[str]:
 
 
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+# Writes always land on the primary. A URI readPreference of secondary (or
+# secondaryPreferred) would let the owner list miss a request that was just
+# inserted. Pin reads to the primary so the list sees that write.
+client = AsyncIOMotorClient(mongo_url, read_preference=ReadPreference.PRIMARY)
 db = client[os.environ['DB_NAME']]
 
 # Stripe + Resend setup
@@ -4392,6 +4395,10 @@ async def public_create_shop(body: PublicShopIn, request: Request):
     }
     await db.shops.insert_one(shop.copy())
     await db.shop_users.insert_one(su.copy())
+    saved_shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
+    if not saved_shop:
+        logger.error("[SHOP SIGNUP] id %s was not readable after insert", shop_id)
+        raise HTTPException(500, "Could not save that shop. Call (480) 269-1329.")
     review_url = f"{PUBLIC_SITE_URL}/requests"
     html = (
         f"<p>{shop['contact_name']} created {shop['name']}.</p>"
@@ -4464,6 +4471,10 @@ async def create_shop_request(body: ShopRequestIn):
         "created_at": iso(now_utc()),
     }
     await db.shop_requests.insert_one(record.copy())
+    saved = await db.shop_requests.find_one({"id": record["id"]}, {"_id": 0})
+    if not saved:
+        logger.error("[SHOP REQUEST] id %s was not readable after insert", record["id"])
+        raise HTTPException(500, "Could not save that request. Call (480) 269-1329.")
     html = (
         f"<p>{record['contact_name']} at {record['shop_name']} asked for a shop account.</p>"
         f"<ul><li>{record['mobile']}</li><li>{record['email']}</li><li>{record['address']}</li></ul>"
@@ -4477,9 +4488,42 @@ async def create_shop_request(body: ShopRequestIn):
     return {"ok": True, "message": "Caleb will send your setup link shortly."}
 
 
+_SHOP_REQUEST_FIELDS = (
+    "id", "shop_name", "contact_name", "mobile", "email", "address",
+    "formatted_address", "lat", "lng", "place_id", "zone", "status",
+    "created_at", "shop_id", "invite_id", "decided_at",
+)
+
+
+def _public_shop_request(doc: dict) -> dict:
+    """Plain JSON fields. Drops Mongo types the owner page does not render."""
+    out = {}
+    for key in _SHOP_REQUEST_FIELDS:
+        if key not in doc or doc[key] is None:
+            continue
+        value = doc[key]
+        if key in ("lat", "lng"):
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+        out[key] = value
+    return out
+
+
 @api.get("/shop-requests")
 async def list_shop_requests(tech=Depends(require_owner)):
-    return await db.shop_requests.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    """Every shop account request, newest first.
+
+    Do not sort inside the query. A sorted find can use an index and leave out
+    documents that are not in that index, which is an empty page for the owner
+    even though the insert succeeded. Read the collection, then order here.
+    """
+    docs = await db.shop_requests.find({}, {"_id": 0}).to_list(200)
+    docs.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    rows = [_public_shop_request(doc) for doc in docs]
+    logger.info("[SHOP REQUEST] owner list %s", len(rows))
+    return rows
 
 
 @api.post("/shop-requests/{request_id}/approve")
@@ -4526,8 +4570,9 @@ async def decline_shop_request(request_id: str, tech=Depends(require_owner)):
 @api.get("/new-shops")
 async def list_new_shops(tech=Depends(require_owner)):
     """Shops that created themselves. Pending requests stay on /shop-requests."""
-    shops = await db.shops.find({"signup_source": "self_serve"}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return shops
+    docs = await db.shops.find({"signup_source": "self_serve"}, {"_id": 0}).to_list(200)
+    docs.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    return docs
 
 
 @api.post("/shops/{shop_id}/flag")
