@@ -2,10 +2,6 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import Shell from "../components/Shell";
 
-function copyText(value) {
-  navigator.clipboard.writeText(value);
-}
-
 function asList(data) {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.requests)) return data.requests;
@@ -18,7 +14,8 @@ export default function Requests() {
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
-  const [lastInvite, setLastInvite] = useState(null);
+  const [setupLink, setSetupLink] = useState("");
+  const [linkHeld, setLinkHeld] = useState(false);
 
   async function load() {
     setLoadError("");
@@ -61,15 +58,25 @@ export default function Requests() {
   async function decide(id, action) {
     setBusy(id + action);
     setNote("");
-    setLastInvite(null);
+    setSetupLink("");
+    setLinkHeld(false);
     try {
       const { data } = await api.post(`/shop-requests/${id}/${action}`);
       if (action === "approve") {
-        const status = data.invite?.email_status;
-        setLastInvite(data.invite || null);
-        if (status === "sent") setNote(`Shop created and the invite was sent to ${data.invite.recipient_email}.`);
-        else if (status === "held") setNote("Shop created. Shop email is held. Copy the setup link.");
-        else setNote(`Shop created. Invite was not delivered${data.invite?.email_error ? `: ${data.invite.email_error}` : "."}`);
+        const invite = data.invite || {};
+        const url = data.register_url || invite.register_url || "";
+        const held = invite.email_status === "held";
+        setSetupLink(url);
+        setLinkHeld(held);
+        if (invite.email_status === "sent") {
+          setNote(`Shop created and the invite was sent to ${invite.recipient_email}.`);
+        } else if (held) {
+          setNote(url
+            ? "Shop created. Shop email is off, so the setup link is held here."
+            : "Shop created. Shop email is off, and the setup link could not be built.");
+        } else {
+          setNote(`Shop created. Invite was not delivered${invite.email_error ? `: ${invite.email_error}` : "."}`);
+        }
       }
       await load();
     } catch (err) {
@@ -88,13 +95,14 @@ export default function Requests() {
       <p className="muted" style={{ marginBottom: 16 }}>
         These shops created their own accounts. Flag one to look at later. Suspend one to stop booking. You do not approve them first.
       </p>
-      {note && <div className="surface" style={{ padding: 12, marginBottom: 16 }}>{note}</div>}
-      {lastInvite?.register_url && (
-        <div className="surface" style={{ padding: 12, marginBottom: 16 }} data-testid="request-invite-link">
-          <div className="font-mono" style={{ fontSize: 12, wordBreak: "break-all" }}>{lastInvite.register_url}</div>
+      {note && <div className="surface" style={{ padding: 12, marginBottom: 16 }} data-testid="approve-note">{note}</div>}
+      {setupLink && (
+        <div className="surface" style={{ padding: 12, marginBottom: 16 }} data-testid="approve-invite-link">
+          <div className="font-mono" style={{ fontSize: 12, wordBreak: "break-all" }}>{setupLink}</div>
           <button type="button" className="btn btn-ghost" style={{ marginTop: 8 }}
-            onClick={() => copyText(lastInvite.register_url)} data-testid="copy-request-invite">
-            {lastInvite.email_status === "held" ? "Held" : "Copy"}
+            data-testid="copy-approve-link"
+            onClick={() => navigator.clipboard.writeText(setupLink)}>
+            {linkHeld ? "Held" : "Copy"}
           </button>
         </div>
       )}

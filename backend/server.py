@@ -44,8 +44,9 @@ def cors_allow_origins() -> list[str]:
 
 mongo_url = os.environ['MONGO_URL']
 # Writes always land on the primary. A URI readPreference of secondary (or
-# secondaryPreferred) would let the owner list miss a request that was just
-# inserted. Pin reads to the primary so the list sees that write.
+# secondaryPreferred) would let an owner list miss a write the primary already
+# accepted. Pin the client to the primary. Owner lists also go through
+# owner_documents, which pins the collection and does not sort in the query.
 client = AsyncIOMotorClient(mongo_url, read_preference=ReadPreference.PRIMARY)
 db = client[os.environ['DB_NAME']]
 
@@ -98,6 +99,7 @@ from onboarding import (
     password_error, rate_limit_exceeded, resolve_frontend_url, reused_shop_pin,
     sender_email_problem, shop_contact_errors, welcome_email_html,
 )
+from owner_reads import owner_documents, public_invite
 # Invite, reset, and booking links. A blank FRONTEND_URL uses the public site.
 FRONTEND_URL = resolve_frontend_url(_env("FRONTEND_URL"), PUBLIC_SITE_URL)
 from billing import (
@@ -1318,7 +1320,9 @@ async def admin_regeocode(date: Optional[str] = None, tech=Depends(require_owner
 # ---------- Shops ----------
 @api.get("/shops")
 async def list_shops(tech=Depends(require_owner)):
-    shops = await db.shops.find({}, {"_id": 0}).to_list(1000)
+    """Every shop. No status, archived, or owner filter, and no server-side sort."""
+    shops = await owner_documents(db.shops, limit=1000, sort_key="name")
+    logger.info("[SHOPS] owner list %s", len(shops))
     return shops
 
 async def _duplicate_lists():
@@ -2379,7 +2383,7 @@ async def list_jobs(
     }
     if tech["role"] == "contractor":
         q["technician_id"] = tech["id"]
-    jobs = await db.jobs.find(q, {"_id": 0}).sort("scheduled_start", 1).to_list(500)
+    jobs = await owner_documents(db.jobs, query=q, limit=500, sort_key="scheduled_start")
     return annotate_at_risk(jobs)
 
 @api.get("/jobs/{job_id}")
@@ -3815,7 +3819,7 @@ async def create_invite(body: InviteCreateIn, tech=Depends(require_owner)):
     if not shop:
         raise HTTPException(404, "Shop not found")
     # body.origin is ignored on purpose. A preview URL must not land in a shop inbox.
-    return await _issue_invite(shop, str(body.recipient_email))
+    return public_invite(await _issue_invite(shop, str(body.recipient_email)))
 
 
 @api.post("/invites/{invite_id}/resend")
@@ -3830,12 +3834,16 @@ async def resend_invite(invite_id: str, tech=Depends(require_owner)):
     if not shop:
         raise HTTPException(404, "Shop not found")
     await db.invites.update_one({"id": invite_id}, {"$set": {"status": "revoked", "revoked_at": iso(now_utc())}})
-    return await _issue_invite(shop, old["recipient_email"], previous_id=invite_id)
+    return public_invite(await _issue_invite(shop, old["recipient_email"], previous_id=invite_id))
 
 @api.get("/invites")
 async def list_invites(tech=Depends(require_owner)):
-    invites = await db.invites.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return invites
+    """Every invite, newest first. The raw token is not included."""
+    invites = await owner_documents(db.invites, limit=200, sort_key="created_at", reverse=True)
+    rows = [public_invite(row) for row in invites]
+    held = sum(1 for row in rows if row.get("email_status") == "held")
+    logger.info("[INVITES] owner list %s held %s", len(rows), held)
+    return rows
 
 def _invite_unusable(inv: dict) -> Optional[dict]:
     if inv.get("status") == "revoked":
@@ -4519,8 +4527,7 @@ async def list_shop_requests(tech=Depends(require_owner)):
     documents that are not in that index, which is an empty page for the owner
     even though the insert succeeded. Read the collection, then order here.
     """
-    docs = await db.shop_requests.find({}, {"_id": 0}).to_list(200)
-    docs.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    docs = await owner_documents(db.shop_requests, limit=200, sort_key="created_at", reverse=True)
     rows = [_public_shop_request(doc) for doc in docs]
     logger.info("[SHOP REQUEST] owner list %s", len(rows))
     return rows
@@ -4551,7 +4558,12 @@ async def approve_shop_request(request_id: str, tech=Depends(require_owner)):
         "status": "approved", "shop_id": shop["id"], "invite_id": invite["id"],
         "decided_at": iso(now_utc()),
     }})
-    return {"shop": shop, "invite": invite}
+    shown = public_invite(invite)
+    logger.info(
+        "[SHOPS] approved request %s shop %s invite %s email_status %s",
+        request_id, shop.get("id"), invite.get("id"), shown.get("email_status"),
+    )
+    return {"shop": shop, "invite": shown, "register_url": shown.get("register_url")}
 
 
 @api.post("/shop-requests/{request_id}/decline")
@@ -4570,9 +4582,10 @@ async def decline_shop_request(request_id: str, tech=Depends(require_owner)):
 @api.get("/new-shops")
 async def list_new_shops(tech=Depends(require_owner)):
     """Shops that created themselves. Pending requests stay on /shop-requests."""
-    docs = await db.shops.find({"signup_source": "self_serve"}, {"_id": 0}).to_list(200)
-    docs.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
-    return docs
+    return await owner_documents(
+        db.shops, query={"signup_source": "self_serve"}, limit=200,
+        sort_key="created_at", reverse=True,
+    )
 
 
 @api.post("/shops/{shop_id}/flag")
@@ -4838,10 +4851,15 @@ async def skip_charge(job_id: str, body: SkipChargeIn, tech=Depends(require_owne
 # ---------- Email log ----------
 @api.get("/email-log")
 async def email_log(tech=Depends(require_owner)):
-    logs = await db.email_log.find({}, {"_id": 0}).sort("sent_at", -1).limit(100).to_list(100)
-    pending = await db.admin_notifications.find(
-        {"subject": {"$regex": "^\\[MANUAL SEND\\]"}}, {"_id": 0}
-    ).sort("sent_at", -1).limit(50).to_list(50)
+    logs = await owner_documents(db.email_log, limit=100, sort_key="sent_at", reverse=True)
+    pending = await owner_documents(
+        db.admin_notifications,
+        query={"subject": {"$regex": "^\\[MANUAL SEND\\]"}},
+        limit=50,
+        sort_key="sent_at",
+        reverse=True,
+    )
+    logger.info("[EMAIL LOG] owner list sent %s pending %s", len(logs), len(pending))
     return {"sent": logs, "pending_manual": pending}
 
 @api.get("/email-outbox")

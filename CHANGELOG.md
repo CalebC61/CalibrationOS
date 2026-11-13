@@ -15,6 +15,29 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — owner Shops and Invites lists, and the held setup link (2026-11-13)
+Approving shop request `6ea62a50-7898-4e6e-a730-196b4cf30606` returned 200.
+Shop mail is off, so the invite was stored as `email_status: held` with no
+error string. Requests said "Invite was not delivered." and did not show
+`register_url`, which is built from `FRONTEND_URL`.
+
+`GET /api/invites`, `GET /api/jobs`, and `GET /api/email-log` still sorted
+inside the Mongo find. That is the query that hid shop requests: a sorted
+find can follow an index and omit documents that are not in it, then return
+200 and `[]`. `GET /api/shops` did not sort and does not filter on status,
+cancelled, archived, or an owner id. The client was already pinned to the
+primary. Shops and Invites still painted "No shops yet." / "No invitations
+yet." when the load threw or the body was not a list, and a shop with no
+string `name` crashed the Shops table. Invites loads shops, invites, and the
+email log together, so one bad body left every list empty.
+
+Owner reads for jobs, shops, invites, the email log, and shop requests now
+go through `owner_documents`: primary, no server-side sort, then order in
+process. Approve returns `register_url`. Requests shows that link, and the
+copy button says Held when the mail is held. Held invites on `/invites`
+show the same link. The raw token is not a response field and is not logged.
+A failed load shows an error instead of the empty line.
+
 ### Added — glass shops sign up themselves (2026-11-13)
 `POST /api/public/shops` creates the shop, the shop user, and the signed agreement
 (version `2026-11-13.1`, which adds Triple / Subaru at $185) and returns a portal
@@ -36,8 +59,9 @@ and only after the new shop can be read back. Shop-facing mail is unchanged and
 still waits on `SHOP_EMAILS_ENABLED`. Pending rows already in `shop_requests` stay
 on that page, and Approve still sends an invite. Invites remain for shops the
 owner adds by hand. When that mail is held, the setup URL is on screen with a
-copy button labeled Held. The owner lists still read from the primary with no
-server-side sort, and a failed load shows an error instead of an empty list.
+copy button labeled Held. New shops use the same `owner_documents` read as
+the other owner lists: primary, no server-side sort. A failed load shows an
+error instead of an empty list.
 
 `FRONTEND_URL`, when blank, uses `PUBLIC_SITE_URL`, or
 `https://www.thecalibrationcrew.us`. The ready-page booking link uses that host.
