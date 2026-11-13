@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { formatTime } from "../lib/api";
+import { formatTime, isOnDayBoard } from "../lib/api";
 import { MapContainer, Marker, Polyline, Tooltip, useMap } from "react-leaflet";
 import DarkBasemap from "./DarkBasemap";
 import L from "leaflet";
@@ -30,7 +30,7 @@ function pinText(color) {
 }
 
 export default function RouteMap({ jobs }) {
-  const valid = jobs.filter(j => j.job_lat && j.job_lng);
+  const valid = jobs.filter(j => isOnDayBoard(j) && j.job_lat && j.job_lng);
   const points = valid.map(j => [j.job_lat, j.job_lng]);
   const center = points[0] || [33.4484, -112.0740];
   const byTech = new Map();

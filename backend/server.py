@@ -2271,6 +2271,7 @@ async def public_booking_cancel(token: str, job_id: str):
         {"id": job["id"]},
         {"$set": {"status": "cancelled", "updated_at": now}, "$push": {"edit_history": entry}},
     )
+    await dismiss_new_booking_alert(job["id"])
     return await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
 
 # ---------- Jobs (dispatcher + field) ----------
@@ -2518,6 +2519,8 @@ async def update_status(job_id: str, body: JobStatusUpdate, tech=Depends(get_cur
         if job.get("notification_phone"):
             await mock_send_sms(job["notification_phone"], msg, kind="cancelled", job_id=job_id)
     await db.jobs.update_one({"id": job_id}, {"$set": update})
+    if body.status == "cancelled":
+        await dismiss_new_booking_alert(job_id)
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     return fresh
 
@@ -2978,6 +2981,7 @@ async def cancel_job(job_id: str, body: CancelIn, tech=Depends(require_owner)):
         "cancelled_at": iso(now_utc()),
         "updated_at": iso(now_utc()),
     }})
+    await dismiss_new_booking_alert(job_id)
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     await email_shop_event(fresh, await _shop_for_job(fresh), "cancelled")
     return fresh
@@ -3230,6 +3234,49 @@ async def xero_poll(tech=Depends(require_owner)):
     return {"updated": updated}
 
 # ---------- New-booking alerts ----------
+async def dismiss_new_booking_alert(job_id: str) -> None:
+    """Mark this job's unseen new-booking alerts seen.
+
+    Other jobs' alerts stay unseen. A missing alerts collection is ignored so
+    a cancel still succeeds on older doubles that do not mount one.
+    """
+    if not job_id:
+        return
+    store = getattr(db, "new_booking_alerts", None)
+    if store is None:
+        return
+    try:
+        await store.update_many(
+            {"job_id": job_id, "seen_at": None},
+            {"$set": {"seen_at": iso(now_utc())}},
+        )
+    except Exception as exc:
+        logger.warning("could not dismiss new-booking alert for %s: %s", job_id, exc)
+
+
+async def _alerts_for_open_jobs(alerts: list) -> list:
+    """Drop notices for jobs that are already cancelled.
+
+    A cancel that happened before this write still leaves seen_at empty.
+    Those notices are not new bookings anymore. Other unseen alerts stay.
+    """
+    if not alerts:
+        return []
+    ids = [alert.get("job_id") for alert in alerts if alert.get("job_id")]
+    jobs_store = getattr(db, "jobs", None)
+    closed = set()
+    if jobs_store is not None and ids:
+        try:
+            rows = await jobs_store.find(
+                {"id": {"$in": ids}}, {"_id": 0, "id": 1, "status": 1},
+            ).to_list(len(ids))
+        except Exception as exc:
+            logger.warning("could not check jobs for new-booking alerts: %s", exc)
+            rows = []
+        closed = {row.get("id") for row in rows if row.get("status") == "cancelled"}
+    return [alert for alert in alerts if alert.get("job_id") not in closed]
+
+
 @api.get("/notifications/new-bookings")
 async def new_booking_alerts(tech=Depends(require_owner)):
     """Returns unseen new-booking alerts for the owner."""
@@ -3237,6 +3284,7 @@ async def new_booking_alerts(tech=Depends(require_owner)):
         {"owner_id": tech["id"], "seen_at": None},
         {"_id": 0}
     ).sort("created_at", -1).to_list(50)
+    alerts = await _alerts_for_open_jobs(alerts)
     return {"count": len(alerts), "alerts": alerts}
 
 @api.post("/notifications/mark-seen")
