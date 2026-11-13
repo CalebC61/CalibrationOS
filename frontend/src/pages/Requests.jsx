@@ -6,6 +6,8 @@ export default function Requests() {
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
+  const [setupLink, setSetupLink] = useState("");
+  const [linkHeld, setLinkHeld] = useState(false);
   const [loadError, setLoadError] = useState("");
 
   async function load() {
@@ -29,13 +31,25 @@ export default function Requests() {
   async function decide(id, action) {
     setBusy(id + action);
     setNote("");
+    setSetupLink("");
+    setLinkHeld(false);
     try {
       const { data } = await api.post(`/shop-requests/${id}/${action}`);
       if (action === "approve") {
-        const status = data.invite?.email_status;
-        setNote(status === "sent"
-          ? `Shop created and the invite was sent to ${data.invite.recipient_email}.`
-          : `Shop created. Invite was not delivered${data.invite?.email_error ? `: ${data.invite.email_error}` : "."}`);
+        const invite = data.invite || {};
+        const url = data.register_url || invite.register_url || "";
+        const held = invite.email_status === "held";
+        setSetupLink(url);
+        setLinkHeld(held);
+        if (invite.email_status === "sent") {
+          setNote(`Shop created and the invite was sent to ${invite.recipient_email}.`);
+        } else if (held) {
+          setNote(url
+            ? "Shop created. Shop email is off, so the setup link is held here."
+            : "Shop created. Shop email is off, and the setup link could not be built.");
+        } else {
+          setNote(`Shop created. Invite was not delivered${invite.email_error ? `: ${invite.email_error}` : "."}`);
+        }
       }
       await load();
     } catch (err) {
@@ -50,7 +64,17 @@ export default function Requests() {
     <Shell>
       <h1 className="h1" style={{ marginBottom: 8 }}>Shop requests</h1>
       <p className="muted" style={{ marginBottom: 16 }}>Approve creates the shop and emails the setup link. Decline leaves them off the schedule.</p>
-      {note && <div className="surface" style={{ padding: 12, marginBottom: 16 }}>{note}</div>}
+      {note && <div className="surface" style={{ padding: 12, marginBottom: 16 }} data-testid="approve-note">{note}</div>}
+      {setupLink && (
+        <div className="surface" style={{ padding: 12, marginBottom: 16 }} data-testid="approve-invite-link">
+          <div className="font-mono" style={{ fontSize: 12, wordBreak: "break-all" }}>{setupLink}</div>
+          <button type="button" className="btn btn-ghost" style={{ marginTop: 8, fontSize: 12 }}
+            data-testid="copy-approve-link"
+            onClick={() => { navigator.clipboard.writeText(setupLink); alert("Copied."); }}>
+            {linkHeld ? "Held" : "Copy"}
+          </button>
+        </div>
+      )}
       {loadError && <div className="surface" style={{ padding: 12, marginBottom: 16 }} role="alert">{loadError}</div>}
       <div className="surface" style={{ overflow: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>

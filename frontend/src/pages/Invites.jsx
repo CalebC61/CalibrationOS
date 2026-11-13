@@ -10,10 +10,27 @@ export default function Invites() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [lastCreated, setLastCreated] = useState(null);
+  const [loadError, setLoadError] = useState("");
 
   async function load() {
-    const [s, i, e] = await Promise.all([api.get("/shops"), api.get("/invites"), api.get("/email-log")]);
-    setShops(s.data); setInvites(i.data); setEmailLog(e.data);
+    setLoadError("");
+    try {
+      const [s, i, e] = await Promise.all([api.get("/shops"), api.get("/invites"), api.get("/email-log")]);
+      const shopList = Array.isArray(s.data) ? s.data : null;
+      const inviteList = Array.isArray(i.data) ? i.data : null;
+      const sent = e.data && Array.isArray(e.data.sent) ? e.data.sent : null;
+      const pending = e.data && Array.isArray(e.data.pending_manual) ? e.data.pending_manual : null;
+      if (!shopList || !inviteList || !sent || !pending) {
+        setLoadError("Couldn't read shops or invites. Reload the page.");
+        return;
+      }
+      setShops(shopList);
+      setInvites(inviteList);
+      setEmailLog({ sent, pending_manual: pending });
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setLoadError(typeof detail === "string" ? detail : "Couldn't load shops or invites. Reload the page.");
+    }
   }
   useEffect(() => { load(); }, []);
 
@@ -41,6 +58,11 @@ export default function Invites() {
   return (
     <Shell>
       <h1 className="h1" style={{ marginBottom: 16 }}>Portal Invitations</h1>
+      {loadError && (
+        <div role="alert" data-testid="invites-load-error" style={{ color: "var(--red)", marginBottom: 16 }}>
+          {loadError}
+        </div>
+      )}
 
       <div className="surface" style={{ padding: 20, marginBottom: 24, maxWidth: 720 }}>
         <div className="h3" style={{ marginBottom: 12 }}>Send a new invitation</div>
@@ -85,6 +107,16 @@ export default function Invites() {
                 <Td>
                   <span data-testid={`invite-email-${i.id}`}>{i.email_status === "sent" ? "Sent" : i.email_status === "held" ? "Held" : "Not delivered"}</span>
                   {i.email_error && <div className="muted" style={{ fontSize: 12 }}>{i.email_error}</div>}
+                  {i.register_url && i.email_status !== "sent" && i.status !== "registered" && (
+                    <div style={{ marginTop: 6 }}>
+                      <div className="font-mono" style={{ fontSize: 12, wordBreak: "break-all" }} data-testid={`invite-link-${i.id}`}>{i.register_url}</div>
+                      <button type="button" className="btn btn-ghost" style={{ fontSize: 12, marginTop: 6 }}
+                        data-testid={`copy-invite-${i.id}`}
+                        onClick={() => { navigator.clipboard.writeText(i.register_url); alert("Copied."); }}>
+                        Copy
+                      </button>
+                    </div>
+                  )}
                 </Td>
                 <Td className="muted" style={{ fontSize: 12 }}>{new Date(i.expires_at).toLocaleDateString()}</Td>
                 <Td>
@@ -94,7 +126,7 @@ export default function Invites() {
                 </Td>
               </tr>
             ))}
-            {invites.length === 0 && <tr><Td colSpan="6" style={{ textAlign: "center", padding: 24 }} className="muted">No invitations yet.</Td></tr>}
+            {invites.length === 0 && !loadError && <tr><Td colSpan="6" style={{ textAlign: "center", padding: 24 }} className="muted">No invitations yet.</Td></tr>}
           </tbody>
         </table>
       </div>
