@@ -15,6 +15,18 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — shop account requests show on the owner Requests page (2026-11-13)
+`POST /api/public/shop-requests` saved the request and emailed the owner, and
+`GET /api/shop-requests` returned 200, but `/requests` stayed on "No requests
+yet." The page renders that line only when the JSON array is empty. The list
+was a sorted Mongo find, which can follow an index and omit a document that is
+not in the index. The client also followed `readPreference` from `MONGO_URL`,
+so a secondary read could miss a write the primary had already accepted. The
+list now reads from the primary with no server-side sort, then orders by
+`created_at`. The signup handler emails the owner only after it can read the
+new request back. `/requests` shows a load error when the response is not a
+list, and leaves the empty line for a list that really is empty.
+
 ### Fixed — cancelled bookings leave the day and their new-booking alert (2026-11-13)
 A shop cancel, an owner cancel, and a status change to `cancelled` already set
 `status` to `cancelled`. `GET /api/jobs` (the day board, Field, tomorrow
