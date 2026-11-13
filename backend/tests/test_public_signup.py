@@ -15,6 +15,7 @@ os.environ.setdefault("DB_NAME", "ci")
 import server  # noqa: E402
 from onboarding import (  # noqa: E402
     AGREEMENT_VERSION,
+    SIGNUP_ATTEMPT_LIMIT,
     reset_rate_limits,
     resolve_frontend_url,
 )
@@ -320,6 +321,184 @@ def test_request_new_does_not_claim_mail_is_on_the_way_when_held(monkeypatch):
     assert created[-1]["register_url"].startswith("https://")
     assert "/portal/invite/" in created[-1]["register_url"]
     assert created[-1]["email_status"] == "held"
+
+
+def test_shop_check_ok_does_not_create_a_shop(monkeypatch):
+    db, emails = _install(monkeypatch)
+
+    async def run():
+        async with _client() as client:
+            return await client.post("/api/public/shops/check", json=_body())
+
+    response = asyncio.run(run())
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True}
+    assert db.shops.docs == []
+    assert db.shop_users.docs == []
+    assert emails == []
+
+
+def test_shop_check_duplicate_email_matches_signup_and_creates_nothing(monkeypatch):
+    db, _emails = _install(monkeypatch)
+
+    async def run():
+        async with _client() as client:
+            created = await client.post("/api/public/shops", json=_body())
+            checked = await client.post("/api/public/shops/check", json=_body(
+                shop_name="Another Glass", email="Ada@jarvis.example",
+            ))
+            again = await client.post("/api/public/shops", json=_body(
+                shop_name="Another Glass", email="Ada@jarvis.example",
+            ))
+            return created, checked, again
+
+    created, checked, again = asyncio.run(run())
+    assert created.status_code == 200, created.text
+    assert checked.status_code == 409
+    assert again.status_code == 409
+    assert checked.json()["detail"] == again.json()["detail"]
+    assert checked.json()["detail"]["code"] == "duplicate_email"
+    assert set(checked.json().keys()) == {"detail"}
+    assert len(db.shops.docs) == 1
+
+
+def test_shop_check_duplicate_name_and_second_location(monkeypatch):
+    _install(monkeypatch)
+
+    async def run():
+        async with _client() as client:
+            await client.post("/api/public/shops", json=_body())
+            checked = await client.post("/api/public/shops/check", json=_body(
+                email="other@jarvis.example",
+            ))
+            allowed = await client.post("/api/public/shops/check", json=_body(
+                email="second@jarvis.example", second_location=True,
+            ))
+            return checked, allowed
+
+    checked, allowed = asyncio.run(run())
+    assert checked.status_code == 409
+    assert checked.json()["detail"]["code"] == "duplicate_name"
+    assert "second location" in checked.json()["detail"]["message"]
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json() == {"ok": True}
+
+
+def test_shop_check_asks_for_address_confirmation_without_creating(monkeypatch):
+    db, _emails = _install(monkeypatch)
+
+    async def run():
+        async with _client() as client:
+            checked = await client.post("/api/public/shops/check", json=_body(
+                place_id=None, address_confirmed=False,
+            ))
+            created = await client.post("/api/public/shops", json=_body(
+                place_id=None, address_confirmed=False, email="other@jarvis.example",
+                shop_name="Other Glass",
+            ))
+            return checked, created
+
+    checked, created = asyncio.run(run())
+    assert checked.status_code == 409
+    assert checked.json()["detail"]["code"] == "needs_confirmation"
+    assert checked.json()["detail"]["formatted_address"] == ROUGH_PIN["formatted_address"]
+    assert checked.json()["detail"] == created.json()["detail"]
+    assert db.shops.docs == []
+
+
+def test_shop_check_confirms_the_address_before_reporting_a_duplicate_email(monkeypatch):
+    db, _emails = _install(monkeypatch)
+    db.shop_users.docs.append({"email": "ada@jarvis.example", "shop_id": "existing"})
+
+    async def run():
+        async with _client() as client:
+            return await client.post("/api/public/shops/check", json=_body(
+                place_id=None, address_confirmed=False,
+            ))
+
+    response = asyncio.run(run())
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "needs_confirmation"
+
+
+def test_shop_check_does_not_require_a_card(monkeypatch):
+    _install(monkeypatch)
+    monkeypatch.setattr(server, "get_stripe", lambda: object())
+
+    async def run():
+        async with _client() as client:
+            return await client.post("/api/public/shops/check", json=_body())
+
+    response = asyncio.run(run())
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ok": True}
+
+
+def test_shop_check_shares_the_signup_rate_limit(monkeypatch):
+    _install(monkeypatch)
+
+    async def run():
+        async with _client() as client:
+            codes = []
+            for i in range(SIGNUP_ATTEMPT_LIMIT):
+                response = await client.post("/api/public/shops/check", json=_body(
+                    email=f"user{i}@jarvis.example", shop_name=f"Shop {i} Glass",
+                ))
+                codes.append(response.status_code)
+            blocked_check = await client.post("/api/public/shops/check", json=_body(
+                email="blocked@jarvis.example", shop_name="Blocked Glass",
+            ))
+            blocked_create = await client.post("/api/public/shops", json=_body(
+                email="create@jarvis.example", shop_name="Create Glass",
+            ))
+            return codes, blocked_check.status_code, blocked_create.status_code
+
+    codes, check_status, create_status = asyncio.run(run())
+    assert codes == [200] * SIGNUP_ATTEMPT_LIMIT
+    assert check_status == 429
+    assert create_status == 429
+
+
+def test_signup_card_setup_accepts_only_cards(monkeypatch):
+    _install(monkeypatch)
+    created = []
+
+    class _Intent:
+        id = "seti_test"
+        client_secret = "seti_test_secret"
+
+    class _SetupIntents:
+        def create(self, payload):
+            created.append(payload)
+            return _Intent()
+
+    class _Client:
+        def __init__(self):
+            self.v1 = type("V1", (), {"setup_intents": _SetupIntents()})()
+
+    monkeypatch.setattr(server, "get_stripe", lambda: _Client())
+
+    async def run():
+        async with _client() as client:
+            return await client.post("/api/public/card-setup")
+
+    response = asyncio.run(run())
+    assert response.status_code == 200, response.text
+    assert response.json()["client_secret"] == "seti_test_secret"
+    assert created[0]["payment_method_types"] == ["card"]
+    assert "automatic_payment_methods" not in created[0]
+
+
+def test_agreement_tells_the_shop_the_password_rule():
+    async def run():
+        async with _client() as client:
+            return await client.get("/api/public/agreement")
+
+    response = asyncio.run(run())
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["password_min_length"] == 8
+    assert body["password_rule"] == "At least 8 characters."
 
 
 def test_blank_frontend_url_uses_the_public_site():

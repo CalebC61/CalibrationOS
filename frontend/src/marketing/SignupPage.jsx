@@ -25,6 +25,13 @@ function emptyForm() {
   };
 }
 
+function passwordIssue(password, minLength) {
+  if (typeof password !== "string" || password.length < minLength) {
+    return `Password must be at least ${minLength} characters.`;
+  }
+  return "";
+}
+
 export default function SignupPage() {
   const nav = useNavigate();
   const cardRef = useRef(null);
@@ -43,11 +50,19 @@ export default function SignupPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [dupEmail, setDupEmail] = useState(false);
+  const [passwordRule, setPasswordRule] = useState("At least 8 characters.");
+  const [passwordMin, setPasswordMin] = useState(8);
+  const [passwordError, setPasswordError] = useState("");
+  const [confirmError, setConfirmError] = useState("");
+  const [placesOn, setPlacesOn] = useState(Boolean(process.env.REACT_APP_GOOGLE_MAPS_API_KEY));
 
   useEffect(() => {
     axios.get(`${API}/public/agreement`).then(r => {
       setAgreement(r.data);
       if (r.data.acceptance) setAcceptance(r.data.acceptance);
+      if (r.data.password_rule) setPasswordRule(r.data.password_rule);
+      const min = Number(r.data.password_min_length);
+      if (Number.isFinite(min) && min > 0) setPasswordMin(min);
     }).catch(() => {});
     axios.post(`${API}/public/card-setup`).then(r => {
       if (r.data.client_secret) setClientSecret(r.data.client_secret);
@@ -95,6 +110,17 @@ export default function SignupPage() {
     }
   }
 
+  function onPassword(value) {
+    set("password", value);
+    setPasswordError(value ? passwordIssue(value, passwordMin) : "");
+    if (form.confirm) setConfirmError(value === form.confirm ? "" : "Passwords don't match.");
+  }
+
+  function onConfirm(value) {
+    set("confirm", value);
+    setConfirmError(value && value !== form.password ? "Passwords don't match." : "");
+  }
+
   function payload(extra = {}) {
     return {
       shop_name: form.shop_name,
@@ -132,14 +158,11 @@ export default function SignupPage() {
     event.preventDefault();
     setError("");
     setDupEmail(false);
-    if (form.password !== form.confirm) {
-      setError("Passwords don't match.");
-      return;
-    }
-    if (form.password.length < 8) {
-      setError("Password must be at least 8 characters.");
-      return;
-    }
+    const issue = passwordIssue(form.password, passwordMin);
+    const mismatch = form.password !== form.confirm ? "Passwords don't match." : "";
+    setPasswordError(issue);
+    setConfirmError(mismatch);
+    if (issue || mismatch) return;
     if (!agreed || !signature.trim()) {
       setError("Sign the agreement to create the shop.");
       return;
@@ -150,9 +173,11 @@ export default function SignupPage() {
     }
     setBusy(true);
     try {
+      const body = payload();
+      await axios.post(`${API}/public/shops/check`, body);
       let paymentMethodId = null;
       if (clientSecret && cardRef.current) {
-        sessionStorage.setItem(DRAFT_KEY, JSON.stringify(payload()));
+        sessionStorage.setItem(DRAFT_KEY, JSON.stringify(body));
         paymentMethodId = await cardRef.current();
       }
       await finish(payload(paymentMethodId ? { payment_method_id: paymentMethodId } : {}));
@@ -201,11 +226,14 @@ export default function SignupPage() {
           </div>
           <div>
             <label className="label" htmlFor="password">Password</label>
-            <input id="password" type="password" value={form.password} onChange={e => set("password", e.target.value)} required autoComplete="new-password" minLength={8} data-testid="signup-password" />
+            <input id="password" type="password" value={form.password} onChange={e => onPassword(e.target.value)} required autoComplete="new-password" minLength={passwordMin} aria-describedby="password-rule" data-testid="signup-password" />
+            <p className="notice" id="password-rule" data-testid="signup-password-rule">{passwordRule}</p>
+            {passwordError && <p className="form-msg is-on" data-testid="signup-password-error">{passwordError}</p>}
           </div>
           <div>
             <label className="label" htmlFor="confirm">Confirm password</label>
-            <input id="confirm" type="password" value={form.confirm} onChange={e => set("confirm", e.target.value)} required autoComplete="new-password" data-testid="signup-confirm" />
+            <input id="confirm" type="password" value={form.confirm} onChange={e => onConfirm(e.target.value)} required autoComplete="new-password" data-testid="signup-confirm" />
+            {confirmError && <p className="form-msg is-on" data-testid="signup-confirm-error">{confirmError}</p>}
           </div>
           <div>
             <label className="label" htmlFor="address">Shop address</label>
@@ -218,11 +246,16 @@ export default function SignupPage() {
                 setConfirm(null);
                 setAcceptedAddress(false);
               }}
+              onPlaces={setPlacesOn}
               required
               placeholder="Street, city, AZ"
               testId="signup-address"
             />
-            <p className="notice">Phoenix Valley only. A suggestion you pick is the confirmed address.</p>
+            <p className="notice" data-testid="signup-address-hint">
+              {placesOn
+                ? "Phoenix Valley only. A suggestion you pick is the confirmed address."
+                : "Phoenix Valley only. Type the shop address. After you submit, confirm the address we find."}
+            </p>
           </div>
           {confirm && (
             <label className="check-row">

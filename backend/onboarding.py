@@ -19,6 +19,8 @@ CLEAN_LOCATION_TYPES = {"ROOFTOP", "RANGE_INTERPOLATED"}
 SIGNUP_ATTEMPT_LIMIT = 8
 SIGNUP_WINDOW_SECONDS = 60 * 60
 CARD_SETUP_ATTEMPT_LIMIT = 20
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_RULE = "At least 8 characters."
 
 AGREEMENT_SECTIONS = [
     {
@@ -290,8 +292,8 @@ def rate_limit_exceeded(key: str, *, limit: int, window_seconds: int, now: Optio
 
 
 def password_error(password: Optional[str]) -> Optional[str]:
-    if not isinstance(password, str) or len(password) < 8:
-        return "Password must be at least 8 characters."
+    if not isinstance(password, str) or len(password) < PASSWORD_MIN_LENGTH:
+        return f"Password must be at least {PASSWORD_MIN_LENGTH} characters."
     return None
 
 

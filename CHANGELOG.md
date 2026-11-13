@@ -15,6 +15,38 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — signup retry no longer re-confirms a saved card (2026-11-13)
+The signup page created one SetupIntent and called `stripe.confirmSetup()` before
+`POST /api/public/shops`. A 409 (duplicate email, or `needs_confirmation` for a
+typed address) left that SetupIntent succeeded, and the retry confirmed it
+again. Stripe returned `setup_intent_unexpected_state` ("A processing error
+occurred.").
+
+After a successful confirm, the payment method id is kept and reused. A card
+edit clears it. Before confirming, the page reads the SetupIntent and uses the
+payment method when the status is already `succeeded`. `setup_intent_unexpected_state`
+and other Stripe errors use plain copy.
+
+`POST /api/public/shops/check` runs the same duplicate-email, duplicate-name,
+and address-confirmation checks as create, including `needs_confirmation` and
+`formatted_address`. It shares the signup rate limit, creates nothing, and does
+not add a new way to learn whether an email exists. The page calls it before
+`confirmSetup`.
+
+The signup SetupIntent is `payment_method_types: ["card"]`. The signup Payment
+Element hides Link, Apple Pay, and Google Pay. With no
+`REACT_APP_GOOGLE_MAPS_API_KEY`, the address hint tells the shop to type the
+address and confirm the one the server finds. The password field shows the
+rule from `GET /api/public/agreement` (`password_rule`, `password_min_length`;
+at least 8 characters) and checks it before submit.
+
+The address field uses Places API (New): `PlaceAutocompleteElement`, loaded
+with `loading=async` and `importLibrary("places")`, limited to US addresses
+inside the Phoenix Valley. A picked suggestion still sends `place_id` and the
+formatted address. If the Maps script or Places fails (`ApiNotActivatedMapError`,
+`gm_authFailure`, `gmp-error`), the field stays an enabled text input and the
+server confirm step handles it.
+
 ### Fixed — owner Shops and Invites lists, and the held setup link (2026-11-13)
 Approving shop request `6ea62a50-7898-4e6e-a730-196b4cf30606` returned 200.
 Shop mail is off, so the invite was stored as `email_status: held` with no
