@@ -111,7 +111,7 @@ export function SiteChrome({ children }) {
 
 export const FAQS = [
   ["How do we start booking with you?", "Create a shop account in CalibrationOS. That is how you get access to book, track jobs, and pull reports. You can also call or text (480) 269-1329."],
-  ["What does a calibration cost?", "Static and dynamic calibrations are $125. Dual is $175. Tesla is $225. Your first job with us is $50, and that $50 is covered by the 5-Star Guarantee: you only pay it if the first job earns your shop a 5-star review."],
+  ["What does a calibration cost?", "Static and dynamic calibrations are $125. Dual is $175. Triple / Subaru is $185. Tesla is $225. Your first job with us is $50, and that $50 is covered by the 5-Star Guarantee: you only pay it if the first job earns your shop a 5-star review."],
   ["Do you come to the shop or to the customer?", "Both. We calibrate at your bay or at your customer's driveway, whichever the job needs."],
   ["Where do you service?", "The Phoenix Valley, East and West. We travel as far west as Buckeye, as far north as Black Canyon City, as far east as Gold Canyon and Highway 79, and as far south as Casa Grande. We are based in Gilbert."],
   ["What days are you available?", "Monday through Saturday. Same-day add-ons are welcome at no additional charge if a slot is open. Call or text the office to check."],

@@ -180,7 +180,7 @@
   color: var(--accent);
   letter-spacing: 0.04em;
   margin-bottom: 0.6rem;
-}.marketing .step h3, .marketing .svc h3, .marketing .benefit h3 { font-size: 1.15rem; margin-bottom: 0.4rem; }.marketing .step p, .marketing .svc p, .marketing .benefit p, .marketing .card p { color: var(--text-muted); }.marketing .svc-grid, .marketing .benefit-grid, .marketing .price-grid, .marketing .city-grid { display: grid; gap: 1rem; margin-top: 2rem; }.marketing .svc-grid, .marketing .benefit-grid { grid-template-columns: repeat(2, 1fr); }.marketing .price-grid { grid-template-columns: repeat(4, 1fr); }.marketing .svc .price-tag, .marketing .price-card .amount {
+}.marketing .step h3, .marketing .svc h3, .marketing .benefit h3 { font-size: 1.15rem; margin-bottom: 0.4rem; }.marketing .step p, .marketing .svc p, .marketing .benefit p, .marketing .card p { color: var(--text-muted); }.marketing .svc-grid, .marketing .benefit-grid, .marketing .price-grid, .marketing .city-grid { display: grid; gap: 1rem; margin-top: 2rem; }.marketing .svc-grid, .marketing .benefit-grid { grid-template-columns: repeat(2, 1fr); }.marketing .price-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }.marketing .svc .price-tag, .marketing .price-card .amount {
   font-family: "Oswald", sans-serif;
   color: var(--accent-ink);
   font-size: 2rem;
@@ -273,10 +273,26 @@
   border-radius: 8px;
   padding: 0.8rem 0.9rem;
   font-size: 0.92rem;
-}.marketing .form-msg.is-on { display: block; }.marketing .contact-facts { display: grid; gap: 0.85rem; }.marketing .fact { padding: 1rem 1.1rem; }.marketing .fact h3 { font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.25rem; }.marketing .fact a { color: var(--text-primary); font-weight: 700; }.marketing .fact a:hover { color: var(--accent-ink); }.marketing .page-hero { padding: 3.25rem 0 1.5rem; }.marketing .page-hero h1 { font-size: clamp(2.6rem, 6vw, 4.4rem); }.marketing .price-card { padding: 1.4rem 1.2rem 1.5rem; }.marketing .price-card h3 { font-size: 1.1rem; margin-bottom: 0; }.marketing .price-card .amount { margin: 0.55rem 0 0.2rem; }.marketing .price-card .each { color: var(--text-subtle); font-size: 0.85rem; margin-bottom: 0.6rem; }.marketing .signup-wrap { width: min(520px, calc(100% - 40px)); margin: 3rem auto 5rem; }.marketing .signup-wrap h1 { text-align: center; font-size: clamp(2.2rem, 5vw, 3.2rem); }.marketing .signup-wrap .lede { text-align: center; margin: 0 auto 1.5rem; }.marketing .notice {
+}.marketing .form-msg.is-on { display: block; }.marketing .contact-facts { display: grid; gap: 0.85rem; }.marketing .fact { padding: 1rem 1.1rem; }.marketing .fact h3 { font-size: 0.78rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.25rem; }.marketing .fact a { color: var(--text-primary); font-weight: 700; }.marketing .fact a:hover { color: var(--accent-ink); }.marketing .page-hero { padding: 3.25rem 0 1.5rem; }.marketing .page-hero h1 { font-size: clamp(2.6rem, 6vw, 4.4rem); }.marketing .price-card { padding: 1.4rem 1.2rem 1.5rem; }.marketing .price-card h3 { font-size: 1.1rem; margin-bottom: 0; }.marketing .price-card .amount { margin: 0.55rem 0 0.2rem; }.marketing .price-card .each { color: var(--text-subtle); font-size: 0.85rem; margin-bottom: 0.6rem; }.marketing .signup-wrap { width: min(640px, calc(100% - 40px)); margin: 3rem auto 5rem; }.marketing .signup-wrap h1 { text-align: center; font-size: clamp(2.2rem, 5vw, 3.2rem); }.marketing .signup-wrap .lede { text-align: center; margin: 0 auto 1.5rem; }.marketing .notice {
   color: var(--text-subtle);
   font-size: 0.88rem;
-  margin-top: 1rem;
+  margin-top: 0.35rem;
+}.marketing .form input[type="checkbox"] { width: auto; margin-top: 0.2rem; }.marketing .check-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  color: var(--text-primary);
+  line-height: 1.45;
+}.marketing .agreement-pane {
+  max-height: 18rem;
+  overflow: auto;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-elevated);
+}.marketing .agreement-pane h2, .marketing .form h2 {
+  font-size: 1.15rem;
+  margin: 0 0 0.6rem;
 }.marketing /* Footer */
 .site-footer {
   border-top: 1px solid var(--border);

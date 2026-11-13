@@ -10,7 +10,7 @@ export function ServicesPage() {
         <div className="container">
           <p className="section-kicker">Services</p>
           <h1 className="display">ADAS calibration, at your shop or on the driveway</h1>
-          <p className="lede">Static, dynamic, dual, and Tesla work for auto glass shops, plus radar and camera calibrations for collision and body shops. Every job follows the OEM procedure for that vehicle.</p>
+          <p className="lede">Static, dynamic, dual, triple / Subaru, and Tesla work for auto glass shops, plus radar and camera calibrations for collision and body shops. Every job follows the OEM procedure for that vehicle.</p>
           <div className="btn-row">
             <Link className="btn btn-primary" to="/signup">Create your shop account</Link>
             <Link className="btn btn-ghost" to="/pricing">View pricing</Link>
@@ -48,6 +48,16 @@ export function ServicesPage() {
                 <li>Common after some windshield replacements</li>
                 <li>One visit covers the target work and the road drive</li>
                 <li>Priced as a combined calibration, not two separate invoices</li>
+              </ul>
+            </article>
+            <article className="svc">
+              <h3>Triple / Subaru calibration</h3>
+              <div className="price-tag">$185</div>
+              <p>Three-camera and Subaru EyeSight calibrations, when the OEM procedure calls for the triple setup.</p>
+              <ul>
+                <li>Multi-camera systems that need more than a dual calibration</li>
+                <li>Subaru EyeSight after windshield replacement</li>
+                <li>Booked as its own calibration type</li>
               </ul>
             </article>
             <article className="svc">
@@ -121,6 +131,7 @@ export function PricingPage() {
               ["Static calibration", "$125", "Parked, target-based calibration for cameras and other systems the OEM process can complete in the bay."],
               ["Dynamic calibration", "$125", "A road drive with the scan tool when the manufacturer requires it."],
               ["Dual calibration", "$175", "Static and dynamic in one job, when the vehicle needs both."],
+              ["Triple / Subaru", "$185", "Three-camera and Subaru EyeSight calibrations, booked as their own type."],
               ["Tesla calibration", "$225", "Tesla windshield and camera calibration, booked as its own type."],
             ].map(([name, price, copy]) => (
               <article className="price-card" key={name}>

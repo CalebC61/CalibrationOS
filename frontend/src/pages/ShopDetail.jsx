@@ -83,6 +83,7 @@ export default function ShopDetail() {
                 <option value="active">Active</option>
                 <option value="paused">Paused</option>
                 <option value="inactive">Inactive</option>
+                <option value="suspended">Suspended</option>
               </select>
             </Field>
           </Row>

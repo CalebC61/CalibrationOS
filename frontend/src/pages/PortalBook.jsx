@@ -16,6 +16,8 @@ const LABELS = {
   dual: "Dual ADAS Calibration", triple: "Triple Camera / Subaru", tesla: "Tesla ADAS",
 };
 const fmt = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+const normAddr = (value) => (value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const sameAddress = (left, right) => Boolean(normAddr(left)) && normAddr(left) === normAddr(right);
 
 export default function PortalBook() {
   const nav = useNavigate();
@@ -43,7 +45,8 @@ export default function PortalBook() {
     portalApi.get("/portal/me").then(r => {
       setShop(r.data.shop);
       setSetup(r.data.setup);
-      setAddress(r.data.shop.address);
+      setAddress(r.data.shop.address || "");
+      setZoneInfo({ in_metro: true, reused: true });
       setNotifyPhone(r.data.shop.contact_phone || "");
     });
   }, []);
@@ -52,17 +55,25 @@ export default function PortalBook() {
   if (setup.allowed === false) {
     return <PortalShell>
       <div className="surface" style={{ padding: 24, textAlign: "center", maxWidth: 500, margin: "40px auto" }} data-testid="booking-closed">
-        <div className="h2" style={{ marginBottom: 8 }}>Finish setup to book</div>
+        <div className="h2" style={{ marginBottom: 8 }}>{setup.suspended ? "Booking is paused" : "Finish setup to book"}</div>
         <div className="muted" style={{ marginBottom: 16 }}>{setup.message}</div>
-        <button className="btn btn-primary" onClick={() => nav("/portal/settings")} data-testid="goto-add-card">Finish setup</button>
+        {!setup.suspended && <button className="btn btn-primary" onClick={() => nav("/portal/settings")} data-testid="goto-add-card">Finish setup</button>}
       </div>
     </PortalShell>;
   }
 
-  async function geo() {
+  function atShop(value) {
+    return sameAddress(value, shop.address) || sameAddress(value, shop.formatted_address);
+  }
+  async function geo(value = address) {
+    if (atShop(value)) {
+      setAddressError("");
+      setZoneInfo({ in_metro: true, reused: true });
+      return;
+    }
     setAddressError("");
     try {
-      const { data } = await portalApi.post("/geocode", { address });
+      const { data } = await portalApi.post("/geocode", { address: value });
       setZoneInfo(data);
     } catch (e) {
       setZoneInfo(null);
@@ -134,23 +145,26 @@ export default function PortalBook() {
       <h1 className="h1" style={{ marginBottom: 16 }}>Book a Calibration</h1>
       <div style={{ maxWidth: 640 }}>
         {step === 1 && (
-          <Card title="Where is the vehicle?" sub="Defaults to your shop address. Override if at customer's location.">
-            <input className="input" value={address} onChange={e => { setAddress(e.target.value); setZoneInfo(null); }}
-              onBlur={geo} data-testid="b-addr" />
-            {zoneInfo?.in_metro && <div style={{ marginTop: 10, fontSize: 14 }}>
-              In our Phoenix service area.
-            </div>}
+          <Card title="Where and when?" sub="The shop address is already confirmed. Change it only if the vehicle is somewhere else.">
+            <input className="input" value={address} onChange={e => {
+              const value = e.target.value;
+              setAddress(value);
+              setChosen(null);
+              setSlots([]);
+              if (atShop(value)) setZoneInfo({ in_metro: true, reused: true });
+              else setZoneInfo(null);
+            }} onBlur={e => geo(e.target.value)} data-testid="b-addr" />
+            {zoneInfo?.in_metro && <div style={{ marginTop: 10, fontSize: 14 }}>In our Phoenix service area.</div>}
             {addressError && <div role="alert" style={{ color: "var(--red)", marginTop: 10, fontSize: 14 }}>{addressError}</div>}
             {zoneInfo && !zoneInfo.in_metro && <div style={{ color: "var(--red)", marginTop: 10, fontSize: 14 }}>That address is outside the Phoenix Valley.</div>}
-            <Nav onNext={() => setStep(2)} nextDisabled={!zoneInfo?.in_metro} />
-          </Card>
-        )}
-        {step === 2 && (
-          <Card title="Pick a date">
-            <input className="input" type="date" value={date}
-              min={phoenixTodayStr()}
-              max={phoenixTodayStr(new Date(Date.now() + 21 * 86400000))}
-              onChange={e => { setDate(e.target.value); loadSlots(e.target.value); }} data-testid="b-date" />
+            <div style={{ marginTop: 16 }}>
+              <label className="label" htmlFor="b-date">Date</label>
+              <input id="b-date" className="input" type="date" value={date}
+                min={phoenixTodayStr()}
+                max={phoenixTodayStr(new Date(Date.now() + 21 * 86400000))}
+                disabled={!zoneInfo?.in_metro}
+                onChange={e => { setDate(e.target.value); setChosen(null); loadSlots(e.target.value); }} data-testid="b-date" />
+            </div>
             {slotsMsg && <div style={{ marginTop: 10, fontSize: 14, color: slotsError ? "var(--red)" : "var(--yellow)" }} data-testid="portal-slots-message">{slotsMsg}</div>}
             {slotsError && (
               <button type="button" className="btn btn-ghost" style={{ marginTop: 12 }}
@@ -176,11 +190,11 @@ export default function PortalBook() {
                 </div>
               </div>
             )}
-            <Nav onBack={() => setStep(1)} onNext={() => setStep(3)} nextDisabled={!chosen} />
+            <Nav onNext={() => setStep(2)} nextDisabled={!zoneInfo?.in_metro || !chosen} />
           </Card>
         )}
-        {step === 3 && (
-          <Card title="Vehicle">
+        {step === 2 && (
+          <Card title="Vehicle and price">
             <R>
               <F label="Customer first name"><input className="input" value={veh.customer_first_name}
                 onChange={e => setVeh({...veh, customer_first_name: e.target.value})} data-testid="b-fn" /></F>
@@ -202,13 +216,7 @@ export default function PortalBook() {
                 {ADAS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
               </select>
             </F>
-            <Nav onBack={() => setStep(2)} onNext={() => setStep(4)}
-              nextDisabled={!veh.customer_last_name || !veh.year || !veh.make || !veh.model} />
-          </Card>
-        )}
-        {step === 4 && (
-          <Card title="Calibration type & confirm">
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, margin: "8px 0 16px" }}>
               {Object.entries(LABELS).map(([k, l]) => (
                 <button key={k} type="button"
                   className={"btn " + (calType === k ? "btn-primary" : "btn-ghost")}
@@ -243,9 +251,9 @@ export default function PortalBook() {
               <textarea className="input" rows={3} value={veh.notes}
                 onChange={e => setVeh({...veh, notes: e.target.value})} data-testid="b-notes" />
             </F>
-            <Nav onBack={() => setStep(3)} onNext={submit}
+            <Nav onBack={() => setStep(1)} onNext={submit}
               nextLabel={submitting ? "Booking…" : (chosen?.requires_approval ? "Request this time" : "Confirm Booking")}
-              nextDisabled={submitting} />
+              nextDisabled={submitting || !veh.customer_last_name || !veh.year || !veh.make || !veh.model} />
           </Card>
         )}
       </div>
