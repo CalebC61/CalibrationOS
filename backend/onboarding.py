@@ -5,6 +5,7 @@ saved, or a new shop cannot book, on rules the tests do not also enforce.
 """
 import re
 import time
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from email_validator import EmailNotValidError, validate_email
@@ -325,43 +326,190 @@ def _signed(shop_user: Optional[dict]) -> bool:
     )
 
 
-def _has_card(shop_user: Optional[dict]) -> bool:
-    return bool(shop_user and shop_user.get("stripe_payment_method_id"))
+CARD_FIELD_KEYS = (
+    "stripe_customer_id",
+    "stripe_payment_method_id",
+    "card_brand",
+    "card_last4",
+    "card_exp_month",
+    "card_exp_year",
+    "card_status",
+)
+REMOVED_CARD_STATUSES = {"detached", "removed", "missing"}
+# A shop document that already satisfies the booking gate. Tests that book a job
+# spread this onto the shop so the gate and the charge use the same card.
+READY_BILLING = {
+    "stripe_customer_id": "cus_ready",
+    "stripe_payment_method_id": "pm_ready",
+    "card_brand": "visa",
+    "card_last4": "4242",
+    "card_exp_month": 12,
+    "card_exp_year": 2099,
+    "card_status": "active",
+    "charge_authorization_accepted_at": "2026-01-01T00:00:00+00:00",
+    "billing_card_backfilled": True,
+}
+CARD_MESSAGES = {
+    "missing": "Add a card in Settings before booking. A shop needs a valid card on file.",
+    "removed": "The card on file was removed. Update it in Settings before booking.",
+    "expired": "The card on file is expired. Update it in Settings before booking.",
+    "failed": "A charge on the card on file did not go through. Update the card in Settings before booking.",
+    "terms": "Accept the charge terms in Settings before booking.",
+    "signature": "Booking opens after the shop contact signs the agreement and saves a card.",
+    "suspended": "This shop is suspended and cannot book.",
+}
 
 
-def _accepted_charge(shop_user: Optional[dict]) -> bool:
-    return bool(shop_user and shop_user.get("charge_authorization_accepted_at"))
+def card_is_expired(month, year, *, today: Optional[date] = None) -> bool:
+    """True when the card's expiry month is already over.
+
+    A card is good through the last day of its expiry month. A missing month or
+    year is not treated as expired; the caller decides whether a card with no
+    expiry can be saved.
+    """
+    if month in (None, "") or year in (None, ""):
+        return False
+    try:
+        month_n = int(month)
+        year_n = int(year)
+    except (TypeError, ValueError):
+        return True
+    if year_n < 100:
+        year_n += 2000
+    if month_n < 1 or month_n > 12:
+        return True
+    current = today or datetime.now(timezone.utc).date()
+    if year_n < current.year:
+        return True
+    if year_n == current.year and month_n < current.month:
+        return True
+    return False
 
 
-def booking_gate(shop: Optional[dict], shop_user: Optional[dict] = None) -> dict:
-    """Whether this shop may book, and whether the portal should nag them.
+def shop_owns_card(shop: Optional[dict]) -> bool:
+    """The shop document is the card of record, including when that card was cleared."""
+    shop = shop or {}
+    if shop.get("billing_card_backfilled"):
+        return True
+    status = shop.get("card_status")
+    if status in REMOVED_CARD_STATUSES or status == "active":
+        return True
+    if (shop.get("stripe_payment_method_id") or "").strip():
+        return True
+    return False
 
-    Shops saved before card-on-file billing do not have requires_billing_setup.
-    They keep booking. The portal still asks them to finish setup.
-    A shop created under this agreement cannot book until the contact has
-    signed, saved a card, and accepted the charge wording.
+
+def billing_view(shop: Optional[dict], shop_user: Optional[dict] = None) -> dict:
+    """The one card the booking gate and a charge both use.
+
+    Once the shop has stored a card (or an explicit removal), that record wins.
+    Otherwise the billing user's card is used. Charge acceptance is kept if
+    either record has it.
     """
     shop = shop or {}
+    user = shop_user or {}
+    source = shop if shop_owns_card(shop) else user
+    view = {key: source.get(key) for key in CARD_FIELD_KEYS}
+    if not view.get("stripe_customer_id"):
+        view["stripe_customer_id"] = shop.get("stripe_customer_id") or user.get("stripe_customer_id")
+    view["charge_authorization_accepted_at"] = (
+        shop.get("charge_authorization_accepted_at") or user.get("charge_authorization_accepted_at")
+    )
+    view["unresolved_charge_failure"] = bool(shop.get("unresolved_charge_failure"))
+    return view
+
+
+def card_block_reason(record: Optional[dict], *, today: Optional[date] = None) -> Optional[str]:
+    """Why this card cannot be used, or None when it can."""
+    record = record or {}
+    if record.get("card_status") in REMOVED_CARD_STATUSES:
+        return "removed"
+    if not (record.get("stripe_payment_method_id") or "").strip():
+        return "missing"
+    if card_is_expired(record.get("card_exp_month"), record.get("card_exp_year"), today=today):
+        return "expired"
+    return None
+
+
+def pick_billing_user(users: list) -> Optional[dict]:
+    """The shop's billing contact: the earliest active user, then the earliest user."""
+    active = [user for user in users if user.get("is_active", True)]
+    pool = active or list(users)
+    if not pool:
+        return None
+    pool.sort(key=lambda user: (str(user.get("created_at") or ""), str(user.get("id") or "")))
+    return pool[0]
+
+
+def shop_card_backfill(shop: dict, user: Optional[dict]) -> dict:
+    """Copy a billing user's card onto the shop once.
+
+    A shop that already has a card keeps it. A second call, after
+    billing_card_backfilled is set, copies nothing.
+    """
+    if shop.get("billing_card_backfilled"):
+        return {}
+    user = user or {}
+    fields = {"billing_card_backfilled": True}
+    if not (shop.get("stripe_payment_method_id") or "").strip() and (user.get("stripe_payment_method_id") or "").strip():
+        for key in ("stripe_payment_method_id", "card_brand", "card_last4", "card_exp_month", "card_exp_year"):
+            if user.get(key) not in (None, ""):
+                fields[key] = user.get(key)
+        fields["card_status"] = user.get("card_status") or "active"
+    if not shop.get("stripe_customer_id") and user.get("stripe_customer_id"):
+        fields["stripe_customer_id"] = user["stripe_customer_id"]
+    if not shop.get("charge_authorization_accepted_at") and user.get("charge_authorization_accepted_at"):
+        fields["charge_authorization_accepted_at"] = user["charge_authorization_accepted_at"]
+    return fields
+
+
+def _shop_signed(shop: Optional[dict]) -> bool:
+    shop = shop or {}
+    signed_by = (shop.get("terms_signed_by") or shop.get("terms_signature") or "").strip()
+    return bool(shop.get("terms_signed_at") and signed_by)
+
+
+def booking_gate(shop: Optional[dict], shop_user: Optional[dict] = None, *, today: Optional[date] = None) -> dict:
+    """Whether this shop may book a job.
+
+    Every shop needs a current card and accepted charge terms. A blank, removed,
+    detached, or expired card blocks booking. An unresolved failed charge blocks
+    booking until the card is replaced or a later charge succeeds. Shops flagged
+    requires_billing_setup also need a signed agreement. Owner job actions are
+    not this gate.
+    """
+    shop = shop or {}
+    user = shop_user or {}
+    view = billing_view(shop, user)
     requires = shop.get("requires_billing_setup") is True
-    signed = _signed(shop_user)
-    has_card = _has_card(shop_user)
-    accepted = _accepted_charge(shop_user)
-    ready = signed and has_card and accepted
+    signed = _signed(user) or _shop_signed(shop)
+    reason = card_block_reason(view, today=today)
+    has_card = reason is None
+    accepted = bool(view.get("charge_authorization_accepted_at"))
+    failed = bool(view.get("unresolved_charge_failure"))
     suspended = shop.get("status") == "suspended"
-    allowed = ((not requires) or ready) and not suspended
+    allowed = (not suspended) and has_card and (not failed) and accepted and ((not requires) or signed)
     message = None
     if suspended:
-        message = "This shop is suspended and cannot book."
-    elif not allowed:
-        message = "Booking opens after the shop contact signs the agreement and saves a card."
+        message = CARD_MESSAGES["suspended"]
+    elif failed:
+        message = CARD_MESSAGES["failed"]
+    elif not has_card:
+        message = CARD_MESSAGES.get(reason or "missing", CARD_MESSAGES["missing"])
+    elif not accepted:
+        message = CARD_MESSAGES["terms"]
+    elif requires and not signed:
+        message = CARD_MESSAGES["signature"]
     return {
         "allowed": allowed,
-        "grandfathered": not requires,
+        "grandfathered": False,
         "signed": signed,
         "has_card": has_card,
         "accepted": accepted,
+        "card_problem": reason,
+        "charge_failed": failed,
         "suspended": suspended,
-        "banner": not ready or suspended,
+        "banner": not allowed,
         "message": message,
     }
 

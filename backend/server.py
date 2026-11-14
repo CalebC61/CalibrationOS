@@ -95,10 +95,11 @@ from onboarding import (
     AGREEMENT_PARAGRAPHS, AGREEMENT_SECTIONS, AGREEMENT_VERSION, CARD_SETUP_ATTEMPT_LIMIT,
     CHARGE_ACCEPTANCE_TEXT, PASSWORD_MIN_LENGTH, PASSWORD_RULE, SIGNUP_ATTEMPT_LIMIT,
     SIGNUP_WINDOW_SECONDS, agreement_text,
-    address_needs_confirmation, addresses_match, address_problem, app_link, booking_gate,
-    canonical_email, duplicate_fields, invite_email_html, invite_register_url, normalize_phone,
-    password_error, rate_limit_exceeded, resolve_frontend_url, reused_shop_pin,
-    sender_email_problem, shop_contact_errors, welcome_email_html,
+    address_needs_confirmation, addresses_match, address_problem, app_link, billing_view,
+    booking_gate, canonical_email, duplicate_fields, invite_email_html, invite_register_url,
+    normalize_phone, password_error, pick_billing_user, rate_limit_exceeded, resolve_frontend_url,
+    reused_shop_pin, sender_email_problem, shop_card_backfill, shop_contact_errors,
+    welcome_email_html,
 )
 from owner_reads import owner_documents, public_invite
 # Invite, reset, and booking links. A blank FRONTEND_URL uses the public site.
@@ -108,11 +109,13 @@ from billing import (
     billing_plan, payment_mode, set_outside_service_area, treat_decline_as_invoice,
 )
 from payments import (
+    CardSetupError,
     charge_job as stripe_charge_job,
     create_anonymous_setup_intent, create_checkout_setup, create_customer as stripe_create_customer,
     create_job_invoice, create_late_fee_invoice, create_setup_intent,
+    delete_customer, detach_payment_method,
     mark_invoice_paid_out_of_band, retrieve_setup_checkout, retrieve_setup_intent,
-    save_payment_method,
+    save_payment_method, verified_card,
 )
 # Google Maps (real-if-configured, else mock — same pattern; see geocode_address()/get_drive_time())
 from google_maps import (
@@ -286,6 +289,8 @@ async def get_current_shop_user(token: Optional[str] = Depends(oauth2_scheme)):
         su = await db.shop_users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
         if not su:
             raise HTTPException(status_code=401, detail="Shop user not found")
+        if not su.get("is_active", True):
+            raise HTTPException(status_code=403, detail="Account disabled")
         return su
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -1198,7 +1203,9 @@ class PublicShopIn(BaseModel):
     terms_agreed: bool = False
     charge_accepted: bool = False
     second_location: bool = False
+    # Ignored. A payment method id is not proof the card was set up for this signup.
     payment_method_id: Optional[str] = Field(default=None, max_length=80)
+    setup_intent_id: Optional[str] = Field(default=None, max_length=80)
 
 
 class SetupIntentCompleteIn(BaseModel):
@@ -1236,7 +1243,7 @@ class ResetPasswordIn(BaseModel):
     password: str
 
 class PaymentMethodIn(BaseModel):
-    payment_method_id: str
+    setup_intent_id: str = Field(max_length=80)
 
 class AcceptChargeIn(BaseModel):
     accepted: bool = False
@@ -1483,26 +1490,26 @@ async def regenerate_link(shop_id: str, tech=Depends(require_owner)):
 
 # ---------- Public booking by token ----------
 async def _booking_gate_for_shop(shop: dict) -> dict:
-    users_col = getattr(db, "shop_users", None)
-    user = None
-    if users_col is not None and shop.get("id"):
-        user = await users_col.find_one({"shop_id": shop["id"]}, {"_id": 0})
+    user = await _billing_user_for(shop.get("id"))
     return booking_gate(shop, user)
+
+
+_PUBLIC_SHOP_KEYS = (
+    "custom_rate_static", "custom_rate_dynamic", "custom_rate_dual", "custom_rate_triple",
+    "custom_rate_tesla", "pricing_tier", "name", "address", "contact_phone", "contact_email",
+    "id", "booking_link_token", "zone", "requires_billing_setup", "status", "lat", "lng",
+    "formatted_address", "geocode_source",
+)
 
 
 @api.get("/public/shop/{token}")
 async def public_shop(token: str):
-    shop = await db.shops.find_one({"booking_link_token": token},
-                                   {"_id": 0, "custom_rate_static": 1, "custom_rate_dynamic": 1,
-                                    "custom_rate_dual": 1, "custom_rate_triple": 1, "custom_rate_tesla": 1,
-                                    "pricing_tier": 1, "name": 1, "address": 1, "contact_phone": 1,
-                                    "contact_email": 1, "id": 1, "booking_link_token": 1, "zone": 1,
-                                    "requires_billing_setup": 1, "status": 1, "lat": 1, "lng": 1,
-                                    "formatted_address": 1, "geocode_source": 1})
+    shop = await db.shops.find_one({"booking_link_token": token}, {"_id": 0})
     if not shop or shop.get("status") not in ("active", "suspended"):
         raise HTTPException(404, "This booking link is not active. Contact The Calibration Crew.")
     gate = await _booking_gate_for_shop(shop)
-    return {**shop, "booking_open": gate["allowed"], "booking_message": gate["message"]}
+    public = {key: shop.get(key) for key in _PUBLIC_SHOP_KEYS if key in shop}
+    return {**public, "booking_open": gate["allowed"], "booking_message": gate["message"]}
 
 def shop_price_for(shop: dict, cal_type: str) -> float:
     if shop.get("pricing_tier") == "custom":
@@ -2592,19 +2599,37 @@ async def update_status(job_id: str, body: JobStatusUpdate, tech=Depends(get_cur
     return fresh
 
 def _client_ip(request: Request) -> str:
+    """Client IP as Render records it.
+
+    Render appends the connecting address to X-Forwarded-For. The left entries
+    are whatever the caller sent, so the trusted value is the rightmost one.
+    """
     forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    parts = [part.strip() for part in forwarded.split(",") if part.strip()]
+    if parts:
+        return parts[-1]
     if request.client:
         return request.client.host
     return ""
 
 
-async def _shop_user_for(shop_id: str):
+async def _billing_user_for(shop_id: str):
+    """The same shop user the gate and a charge fall back to when the shop has no card yet."""
     col = getattr(db, "shop_users", None)
     if col is None or not shop_id:
         return None
-    return await col.find_one({"shop_id": shop_id}, {"_id": 0})
+    found = await col.find({"shop_id": shop_id}, {"_id": 0}).to_list(100)
+    return pick_billing_user(found)
+
+
+async def _shop_user_for(shop_id: str):
+    return await _billing_user_for(shop_id)
+
+
+async def _set_unresolved_charge(shop_id: Optional[str], failed: bool) -> None:
+    if not shop_id:
+        return
+    await db.shops.update_one({"id": shop_id}, {"$set": {"unresolved_charge_failure": failed}})
 
 
 async def _record_local_invoice(job, shop, description: str, provider: str, stripe_invoice_id=None, hosted_url=None, total=None) -> dict:
@@ -2694,8 +2719,9 @@ async def _charge_saved_card(job, shop) -> dict:
     plan = billing_plan(job)
     if not plan["charge"]:
         return job
-    shop_user = await _shop_user_for(job.get("shop_id"))
-    if not shop_user or not shop_user.get("stripe_customer_id") or not shop_user.get("stripe_payment_method_id"):
+    shop_user = await _billing_user_for(job.get("shop_id"))
+    account = billing_view(shop, shop_user)
+    if not account.get("stripe_customer_id") or not account.get("stripe_payment_method_id"):
         message = "No card on file to charge."
         await db.jobs.update_one({"id": job["id"]}, {"$set": {
             "payment_status": "payment_failed",
@@ -2715,8 +2741,8 @@ async def _charge_saved_card(job, shop) -> dict:
     try:
         result = await asyncio.to_thread(
             stripe_charge_job, client,
-            job=job, customer_id=shop_user["stripe_customer_id"],
-            payment_method_id=shop_user["stripe_payment_method_id"],
+            job=job, customer_id=account["stripe_customer_id"],
+            payment_method_id=account["stripe_payment_method_id"],
             receipt_email=None,
         )
     except stripe_sdk.error.CardError as exc:
@@ -2733,6 +2759,7 @@ async def _charge_saved_card(job, shop) -> dict:
             "charge_attempts": attempt,
         }})
         failed = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+        await _set_unresolved_charge(job.get("shop_id"), True)
         await _notify_payment_failed(failed, shop, message)
         logger.warning("[CHARGE] job %s declined: %s", job["id"], message)
         return failed
@@ -2745,6 +2772,7 @@ async def _charge_saved_card(job, shop) -> dict:
             "charge_attempts": int(job.get("charge_attempts") or 0) + 1,
         }})
         failed = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+        await _set_unresolved_charge(job.get("shop_id"), True)
         await _notify_payment_failed(failed, shop, message)
         logger.error("[CHARGE] job %s failed: %s", job["id"], message)
         return failed
@@ -2761,8 +2789,10 @@ async def _charge_saved_card(job, shop) -> dict:
             "charge_attempts": int(job.get("charge_attempts") or 0) + 1,
         }})
         failed = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+        await _set_unresolved_charge(job.get("shop_id"), True)
         await _notify_payment_failed(failed, shop, message)
         return failed
+    await _set_unresolved_charge(job.get("shop_id"), False)
     await db.jobs.update_one({"id": job["id"]}, {"$set": {
         "charged_at": iso(now_utc()),
         "charge_method": "stripe",
@@ -2780,7 +2810,7 @@ async def _charge_saved_card(job, shop) -> dict:
         except Exception as exc:
             logger.warning("[CHARGE] could not mark invoice %s paid out of band: %s", invoice_id, exc)
     logger.info("[CHARGE] job %s charged %s", job["id"], result.get("payment_intent_id"))
-    receipt_to = shop_user.get("email") or shop.get("contact_email")
+    receipt_to = (shop_user or {}).get("email") or shop.get("contact_email")
     if receipt_to:
         await _send_booking_message({
             "to": receipt_to,
@@ -2801,13 +2831,14 @@ async def _settle_completed_job(job_id: str) -> dict:
     description = job.get("billing_description") or job.get("calibration_label") or "ADAS calibration"
     if plan["create_invoice"]:
         client = get_stripe()
-        shop_user = await _shop_user_for(job.get("shop_id"))
+        shop_user = await _billing_user_for(job.get("shop_id"))
+        account = billing_view(shop, shop_user)
         invoice = None
-        if client and shop_user and shop_user.get("stripe_customer_id"):
+        if client and account.get("stripe_customer_id"):
             try:
                 created = await asyncio.to_thread(
                     create_job_invoice, client,
-                    customer_id=shop_user["stripe_customer_id"], job=job, description=description,
+                    customer_id=account["stripe_customer_id"], job=job, description=description,
                     email_customer=shop_emails_enabled(),
                 )
                 invoice = await _record_local_invoice(
@@ -3972,7 +4003,8 @@ async def register_shop_user(token: str, body: ShopUserRegisterIn, request: Requ
     if client and stripe_customer_id and FRONTEND_URL:
         try:
             setup = await asyncio.to_thread(
-                create_setup_intent, client, customer_id=stripe_customer_id, shop_user_id=user_id,
+                create_setup_intent, client,
+                customer_id=stripe_customer_id, shop_user_id=user_id, shop_id=inv["shop_id"],
             )
             checkout_url = await asyncio.to_thread(
                 create_checkout_setup, client,
@@ -3994,9 +4026,122 @@ async def register_shop_user(token: str, body: ShopUserRegisterIn, request: Requ
     }
 
 
-async def _store_card(su: dict, card: dict) -> dict:
-    await db.shop_users.update_one({"id": su["id"]}, {"$set": {**card, "updated_at": iso(now_utc())}})
+async def _audit_card_change(shop_id, shop_user_id, action, previous_last4, new_last4, brand) -> None:
+    """Brand and last4 only. Never a card number, CVC, or client secret."""
+    col = getattr(db, "card_changes", None)
+    if col is None or not shop_id:
+        return
+    await col.insert_one({
+        "id": gen_id(),
+        "shop_id": shop_id,
+        "shop_user_id": shop_user_id,
+        "action": action,
+        "previous_last4": previous_last4,
+        "card_last4": new_last4,
+        "card_brand": brand,
+        "at": iso(now_utc()),
+    })
+
+
+def _card_fields(card: dict, customer_id: Optional[str]) -> dict:
+    return {
+        "stripe_customer_id": customer_id or card.get("stripe_customer_id"),
+        "stripe_payment_method_id": card.get("stripe_payment_method_id"),
+        "card_brand": card.get("card_brand"),
+        "card_last4": card.get("card_last4"),
+        "card_exp_month": card.get("card_exp_month"),
+        "card_exp_year": card.get("card_exp_year"),
+        "card_status": card.get("card_status") or "active",
+        "updated_at": iso(now_utc()),
+    }
+
+
+async def _store_card(su: dict, card: dict, *, action: str = "saved") -> dict:
+    """Write the verified card on the shop and on this user. Clears a failed-charge block."""
+    shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0}) or {}
+    previous_last4 = shop.get("card_last4") if shop.get("card_last4") is not None else su.get("card_last4")
+    customer_id = card.get("stripe_customer_id") or su.get("stripe_customer_id") or shop.get("stripe_customer_id")
+    fields = _card_fields(card, customer_id)
+    await db.shop_users.update_one({"id": su["id"]}, {"$set": fields})
+    await db.shops.update_one({"id": su["shop_id"]}, {"$set": {
+        **fields,
+        "billing_card_backfilled": True,
+        "unresolved_charge_failure": False,
+    }})
+    await _audit_card_change(
+        su["shop_id"], su.get("id"), action, previous_last4, fields.get("card_last4"), fields.get("card_brand"),
+    )
     return await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
+
+
+async def _clear_saved_card(shop_id: str, previous_last4, brand) -> None:
+    """The card is gone in Stripe. Booking stays closed until a new one is verified."""
+    fields = {
+        "stripe_payment_method_id": None,
+        "card_brand": None,
+        "card_last4": None,
+        "card_exp_month": None,
+        "card_exp_year": None,
+        "card_status": "removed",
+        "updated_at": iso(now_utc()),
+    }
+    await db.shops.update_one({"id": shop_id}, {"$set": {**fields, "billing_card_backfilled": True}})
+    users_col = getattr(db, "shop_users", None)
+    if users_col is not None:
+        users = await users_col.find({"shop_id": shop_id}, {"_id": 0}).to_list(50)
+        for user in users:
+            if user.get("stripe_payment_method_id"):
+                await users_col.update_one({"id": user["id"]}, {"$set": fields})
+    await _audit_card_change(shop_id, None, "removed", previous_last4, None, brand)
+
+
+async def _load_setup_intent(client, intent_id: str) -> dict:
+    try:
+        return await asyncio.to_thread(retrieve_setup_intent, client, intent_id)
+    except Exception as exc:
+        logger.error("[STRIPE] could not read setup intent: %s", exc)
+        raise HTTPException(400, "That card setup could not be confirmed.")
+
+
+async def _commit_verified_card(client, su: dict, intent: dict, *, action: str = "replaced") -> dict:
+    """Attach a succeeded card SetupIntent, make it the default, then detach the previous card."""
+    shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0}) or {}
+    customer_id = su.get("stripe_customer_id") or shop.get("stripe_customer_id")
+    if not customer_id:
+        intent_customer = intent.get("customer")
+        if isinstance(intent_customer, dict):
+            intent_customer = intent_customer.get("id")
+        meta = intent.get("metadata") or {}
+        same_shop = meta.get("shop_id") in (None, "", su.get("shop_id"))
+        if intent_customer and meta.get("shop_user_id") == su.get("id") and same_shop:
+            customer_id = intent_customer
+            su = {**su, "stripe_customer_id": customer_id}
+        else:
+            raise HTTPException(400, "That card setup is not for this shop.")
+    try:
+        checked = verified_card(intent, customer_id=customer_id, shop_id=su.get("shop_id"))
+    except CardSetupError as exc:
+        raise HTTPException(400, str(exc))
+    previous = shop.get("stripe_payment_method_id") or su.get("stripe_payment_method_id")
+    if previous and previous == checked["stripe_payment_method_id"]:
+        fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
+        return fresh or su
+    try:
+        card = await asyncio.to_thread(
+            save_payment_method, client,
+            customer_id=customer_id, payment_method_id=checked["stripe_payment_method_id"],
+        )
+    except Exception as exc:
+        logger.error("[STRIPE] could not save card: %s", exc)
+        raise HTTPException(502, "Could not save that card.")
+    card["stripe_customer_id"] = customer_id
+    fresh = await _store_card(su, card, action=action)
+    if previous and previous != card.get("stripe_payment_method_id"):
+        try:
+            await asyncio.to_thread(detach_payment_method, client, previous)
+        except Exception as exc:
+            logger.warning("[STRIPE] could not detach the previous card: %s", exc)
+    return fresh
 
 
 @api.post("/portal/setup-intent")
@@ -4005,7 +4150,8 @@ async def portal_setup_intent(su=Depends(get_current_shop_user)):
     client = get_stripe()
     if client is None:
         raise HTTPException(400, "Stripe is not configured. Set STRIPE_SECRET_KEY to a test key.")
-    customer_id = su.get("stripe_customer_id")
+    shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0, "stripe_customer_id": 1}) or {}
+    customer_id = su.get("stripe_customer_id") or shop.get("stripe_customer_id")
     if not customer_id:
         try:
             customer_id = await asyncio.to_thread(
@@ -4016,9 +4162,12 @@ async def portal_setup_intent(su=Depends(get_current_shop_user)):
             logger.error("[STRIPE] customer create failed: %s", exc)
             raise HTTPException(502, "Could not start card setup.")
         await db.shop_users.update_one({"id": su["id"]}, {"$set": {"stripe_customer_id": customer_id}})
+        await db.shops.update_one({"id": su["shop_id"]}, {"$set": {"stripe_customer_id": customer_id}})
+        su = {**su, "stripe_customer_id": customer_id}
     try:
         setup = await asyncio.to_thread(
-            create_setup_intent, client, customer_id=customer_id, shop_user_id=su["id"],
+            create_setup_intent, client,
+            customer_id=customer_id, shop_user_id=su["id"], shop_id=su["shop_id"],
         )
     except Exception as exc:
         logger.error("[STRIPE] setup intent failed: %s", exc)
@@ -4032,37 +4181,8 @@ async def portal_complete_setup_intent(body: SetupIntentCompleteIn, su=Depends(g
     client = get_stripe()
     if client is None:
         raise HTTPException(400, "Stripe is not configured.")
-    try:
-        intent = await asyncio.to_thread(retrieve_setup_intent, client, body.setup_intent_id)
-    except Exception as exc:
-        logger.error("[STRIPE] could not read setup intent: %s", exc)
-        raise HTTPException(400, "That card setup could not be confirmed.")
-    if intent.get("status") != "succeeded":
-        raise HTTPException(400, "The card was not saved.")
-    payment_method_id = _payment_method_id(intent)
-    if not payment_method_id:
-        raise HTTPException(400, "Stripe did not return a card.")
-    customer_id = su.get("stripe_customer_id")
-    if not customer_id:
-        try:
-            customer_id = await asyncio.to_thread(
-                stripe_create_customer, client,
-                email=su["email"], name=su.get("full_name") or su["email"], shop_id=su["shop_id"],
-            )
-        except Exception as exc:
-            logger.error("[STRIPE] customer create failed: %s", exc)
-            raise HTTPException(502, "Could not save that card.")
-        await db.shop_users.update_one({"id": su["id"]}, {"$set": {"stripe_customer_id": customer_id}})
-        su = {**su, "stripe_customer_id": customer_id}
-    try:
-        card = await asyncio.to_thread(
-            save_payment_method, client,
-            customer_id=customer_id, payment_method_id=payment_method_id,
-        )
-    except Exception as exc:
-        logger.error("[STRIPE] could not save card: %s", exc)
-        raise HTTPException(502, "Could not save that card.")
-    fresh = await _store_card(su, card)
+    intent = await _load_setup_intent(client, body.setup_intent_id)
+    fresh = await _commit_verified_card(client, su, intent, action="replaced")
     return {
         "status": "complete",
         "shop_user": fresh,
@@ -4073,26 +4193,32 @@ async def portal_complete_setup_intent(body: SetupIntentCompleteIn, su=Depends(g
 
 @api.post("/portal/payment-method")
 async def portal_save_payment_method(body: PaymentMethodIn, su=Depends(get_current_shop_user)):
+    """Replace the card. The body is a SetupIntent id, not a payment method id."""
     client = get_stripe()
-    if client is None or not su.get("stripe_customer_id"):
+    if client is None:
         raise HTTPException(400, "Card setup is not available yet.")
-    try:
-        card = await asyncio.to_thread(
-            save_payment_method, client,
-            customer_id=su["stripe_customer_id"], payment_method_id=body.payment_method_id,
-        )
-    except Exception as exc:
-        logger.error("[STRIPE] could not save card: %s", exc)
-        raise HTTPException(502, "Could not save that card.")
-    fresh = await _store_card(su, card)
-    return {"status": "complete", "shop_user": fresh, "needs_acceptance": not fresh.get("charge_authorization_accepted_at")}
+    intent = await _load_setup_intent(client, body.setup_intent_id)
+    fresh = await _commit_verified_card(client, su, intent, action="replaced")
+    return {
+        "status": "complete",
+        "shop_user": fresh,
+        "needs_acceptance": not fresh.get("charge_authorization_accepted_at"),
+        "acceptance_text": CHARGE_ACCEPTANCE_TEXT,
+    }
+
+
+@api.delete("/portal/payment-method")
+async def portal_remove_payment_method(su=Depends(get_current_shop_user)):
+    """A shop cannot end up with no card. Replacing the card is the only change."""
+    raise HTTPException(400, "Replace the card in Settings. A shop cannot remove its only card.")
 
 
 @api.post("/portal/accept-charge")
 async def portal_accept_charge(body: AcceptChargeIn, request: Request, su=Depends(get_current_shop_user)):
     if not body.accepted:
         raise HTTPException(400, "Accept the card agreement to finish setup.")
-    if not su.get("stripe_payment_method_id"):
+    shop_card = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0, "stripe_payment_method_id": 1})
+    if not su.get("stripe_payment_method_id") and not (shop_card or {}).get("stripe_payment_method_id"):
         raise HTTPException(400, "Save a card before accepting.")
     accepted_at = iso(now_utc())
     await db.shop_users.update_one({"id": su["id"]}, {"$set": {
@@ -4100,6 +4226,9 @@ async def portal_accept_charge(body: AcceptChargeIn, request: Request, su=Depend
         "charge_authorization_text": CHARGE_ACCEPTANCE_TEXT,
         "charge_authorization_ip": _client_ip(request),
         "charge_authorization_user_agent": request.headers.get("user-agent", ""),
+    }})
+    await db.shops.update_one({"id": su["shop_id"]}, {"$set": {
+        "charge_authorization_accepted_at": accepted_at,
     }})
     shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
     fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
@@ -4117,20 +4246,19 @@ async def portal_stripe_setup_status(session_id: str, su=Depends(get_current_sho
     try:
         session = await asyncio.to_thread(retrieve_setup_checkout, client, session_id)
     except Exception as exc:
-        raise HTTPException(500, f"Could not retrieve setup session: {exc}")
+        logger.error("[STRIPE] could not read setup session: %s", exc)
+        raise HTTPException(400, "That card setup could not be confirmed.")
+    session_customer = session.get("customer")
+    if isinstance(session_customer, dict):
+        session_customer = session_customer.get("id")
+    shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0, "stripe_customer_id": 1}) or {}
+    expected = su.get("stripe_customer_id") or shop.get("stripe_customer_id")
+    if not expected or session_customer != expected:
+        raise HTTPException(400, "That card setup is not for this shop.")
     setup_intent = session.get("setup_intent") or {}
-    pm = setup_intent.get("payment_method") or {}
-    pm_id = pm.get("id") if isinstance(pm, dict) else pm
-    if not pm_id:
+    if not isinstance(setup_intent, dict) or setup_intent.get("status") != "succeeded":
         return {"status": "incomplete", "session_status": session.get("status")}
-    try:
-        card = await asyncio.to_thread(
-            save_payment_method, client,
-            customer_id=su["stripe_customer_id"], payment_method_id=pm_id,
-        )
-    except Exception as exc:
-        raise HTTPException(500, f"Could not attach payment method: {exc}")
-    fresh = await _store_card(su, card)
+    fresh = await _commit_verified_card(client, su, setup_intent, action="replaced")
     return {
         "status": "complete",
         "shop_user": fresh,
@@ -4249,15 +4377,6 @@ async def _send_signup_finished(shop: dict, email: str) -> None:
     )
 
 
-def _payment_method_id(intent: dict) -> Optional[str]:
-    method = intent.get("payment_method")
-    if isinstance(method, dict):
-        return method.get("id")
-    if isinstance(method, str) and method:
-        return method
-    return None
-
-
 @api.post("/public/card-setup")
 async def public_card_setup(request: Request):
     """SetupIntent for the signup page. No shop is created."""
@@ -4266,7 +4385,7 @@ async def public_card_setup(request: Request):
     if client is None:
         return {
             "stripe_unavailable": True,
-            "message": "Card setup is not available yet. The account can still be created, and the card is added from Settings after you log in.",
+            "message": f"Card setup is not available right now. Try again, or call {OWNER_PHONE}.",
         }
     try:
         setup = await asyncio.to_thread(create_anonymous_setup_intent, client)
@@ -4274,29 +4393,28 @@ async def public_card_setup(request: Request):
         logger.error("[STRIPE] signup setup intent failed: %s", exc)
         return {
             "stripe_unavailable": True,
-            "message": "Card setup did not start. You can add the card from Settings after you log in.",
+            "message": f"Card setup did not start. Try again, or call {OWNER_PHONE}.",
         }
     return {"client_secret": setup.get("client_secret"), "setup_intent_id": setup.get("id"), "stripe_unavailable": False}
 
 
 @api.post("/public/card-setup/complete")
 async def public_card_setup_complete(body: SetupIntentCompleteIn, request: Request):
-    """Payment method id after a card redirect. The shop is created by the next call."""
+    """Confirm a signup SetupIntent after a redirect. The shop is created by the next call.
+
+    The response does not include a payment method id. POST /public/shops reads
+    the SetupIntent itself.
+    """
     _signup_limited(request, "card-setup", CARD_SETUP_ATTEMPT_LIMIT)
     client = get_stripe()
     if client is None:
         raise HTTPException(400, "Stripe is not configured.")
+    intent = await _load_setup_intent(client, body.setup_intent_id)
     try:
-        intent = await asyncio.to_thread(retrieve_setup_intent, client, body.setup_intent_id)
-    except Exception as exc:
-        logger.error("[STRIPE] could not read setup intent: %s", exc)
-        raise HTTPException(400, "That card setup could not be confirmed.")
-    if intent.get("status") != "succeeded":
-        raise HTTPException(400, "The card was not saved.")
-    payment_method_id = _payment_method_id(intent)
-    if not payment_method_id:
-        raise HTTPException(400, "Stripe did not return a card.")
-    return {"payment_method_id": payment_method_id}
+        verified_card(intent, purpose="shop_signup")
+    except CardSetupError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True, "setup_intent_id": body.setup_intent_id}
 
 
 async def _prepare_public_shop(body: PublicShopIn):
@@ -4353,6 +4471,36 @@ async def public_check_shop(body: PublicShopIn, request: Request):
     return {"ok": True}
 
 
+async def _signup_card(client, setup_intent_id: Optional[str], email: str, name: str, shop_id: str) -> dict:
+    """Verify the signup SetupIntent, then attach it. Delete the customer if attach fails."""
+    if not setup_intent_id:
+        raise HTTPException(400, "Save a card to create the shop.")
+    intent = await _load_setup_intent(client, setup_intent_id)
+    try:
+        checked = verified_card(intent, purpose="shop_signup")
+    except CardSetupError as exc:
+        raise HTTPException(400, str(exc))
+    customer_id = None
+    try:
+        customer_id = await asyncio.to_thread(
+            stripe_create_customer, client, email=email, name=name, shop_id=shop_id,
+        )
+        card = await asyncio.to_thread(
+            save_payment_method, client,
+            customer_id=customer_id, payment_method_id=checked["stripe_payment_method_id"],
+        )
+        card["stripe_customer_id"] = customer_id
+        return card
+    except Exception as exc:
+        logger.error("[STRIPE] signup card was not saved: %s", exc)
+        if customer_id:
+            try:
+                await asyncio.to_thread(delete_customer, client, customer_id)
+            except Exception as delete_exc:
+                logger.error("[STRIPE] could not delete the unused customer: %s", delete_exc)
+        raise HTTPException(502, "Could not save that card. Try another card, or call the office.")
+
+
 @api.post("/public/shops")
 async def public_create_shop(body: PublicShopIn, request: Request):
     """Create the shop, the shop user, and the signed agreement. Returns a portal JWT."""
@@ -4363,24 +4511,10 @@ async def public_create_shop(body: PublicShopIn, request: Request):
     card = None
     stripe_error = None
     stripe_unavailable = client is None
-    if client is not None and not body.payment_method_id:
-        raise HTTPException(400, "Save a card to create the shop.")
     shop_id = gen_id()
     user_id = gen_id()
-    if client is not None and body.payment_method_id:
-        try:
-            customer_id = await asyncio.to_thread(
-                stripe_create_customer, client,
-                email=email, name=body.contact_name.strip(), shop_id=shop_id,
-            )
-            card = await asyncio.to_thread(
-                save_payment_method, client,
-                customer_id=customer_id, payment_method_id=body.payment_method_id,
-            )
-            card["stripe_customer_id"] = customer_id
-        except Exception as exc:
-            logger.error("[STRIPE] signup card was not saved: %s", exc)
-            raise HTTPException(502, "Could not save that card. Try another card, or call the office.")
+    if client is not None:
+        card = await _signup_card(client, body.setup_intent_id, email, body.contact_name.strip(), shop_id)
 
     signed_at = iso(now_utc())
     shop = {
@@ -4401,6 +4535,16 @@ async def public_create_shop(body: PublicShopIn, request: Request):
         "terms_signed_at": signed_at,
         "terms_signed_by": body.terms_signature.strip(),
         "requires_billing_setup": True,
+        "stripe_customer_id": (card or {}).get("stripe_customer_id"),
+        "stripe_payment_method_id": (card or {}).get("stripe_payment_method_id"),
+        "card_brand": (card or {}).get("card_brand"),
+        "card_last4": (card or {}).get("card_last4"),
+        "card_exp_month": (card or {}).get("card_exp_month"),
+        "card_exp_year": (card or {}).get("card_exp_year"),
+        "card_status": "active" if card else None,
+        "billing_card_backfilled": True,
+        "unresolved_charge_failure": False,
+        "charge_authorization_accepted_at": signed_at if card else None,
         "status": "active",
         "signup_source": "self_serve",
         "second_location": bool(body.second_location),
@@ -4424,6 +4568,7 @@ async def public_create_shop(body: PublicShopIn, request: Request):
         "card_last4": (card or {}).get("card_last4"),
         "card_exp_month": (card or {}).get("card_exp_month"),
         "card_exp_year": (card or {}).get("card_exp_year"),
+        "card_status": "active" if card else None,
         "terms_signature": body.terms_signature.strip(),
         "terms_signed_at": signed_at,
         "agreement_version": AGREEMENT_VERSION,
@@ -4442,7 +4587,16 @@ async def public_create_shop(body: PublicShopIn, request: Request):
     saved_shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
     if not saved_shop:
         logger.error("[SHOP SIGNUP] id %s was not readable after insert", shop_id)
+        if client is not None and (card or {}).get("stripe_customer_id"):
+            try:
+                await asyncio.to_thread(delete_customer, client, card["stripe_customer_id"])
+            except Exception as exc:
+                logger.error("[STRIPE] could not delete the unused customer: %s", exc)
         raise HTTPException(500, "Could not save that shop. Call (480) 269-1329.")
+    if card:
+        await _audit_card_change(
+            shop_id, user_id, "signup", None, card.get("card_last4"), card.get("card_brand"),
+        )
     review_url = f"{PUBLIC_SITE_URL}/requests"
     html = (
         f"<p>{shop['contact_name']} created {shop['name']}.</p>"
@@ -4679,7 +4833,71 @@ async def stripe_webhook(request: Request):
         await _apply_payment_intent_event(kind, data)
     elif kind.startswith("invoice."):
         await _apply_invoice_event(kind, data)
+    elif kind == "payment_method.detached":
+        await _apply_payment_method_detached(data)
+    elif kind == "setup_intent.succeeded":
+        await _apply_setup_intent_succeeded(data)
     return {"received": True}
+
+
+async def _apply_payment_method_detached(raw) -> None:
+    """Clear the card only when the detached method is the one stored for the shop."""
+    data = _stripe_obj(raw)
+    pm_id = data.get("id")
+    if not pm_id:
+        return
+    shops = await db.shops.find({"stripe_payment_method_id": pm_id}, {"_id": 0}).to_list(20)
+    seen = set()
+    for shop in shops:
+        seen.add(shop.get("id"))
+        await _clear_saved_card(shop["id"], shop.get("card_last4"), shop.get("card_brand"))
+    users_col = getattr(db, "shop_users", None)
+    if users_col is None:
+        return
+    users = await users_col.find({"stripe_payment_method_id": pm_id}, {"_id": 0}).to_list(20)
+    for user in users:
+        shop_id = user.get("shop_id")
+        if shop_id and shop_id not in seen:
+            seen.add(shop_id)
+            await _clear_saved_card(shop_id, user.get("card_last4"), user.get("card_brand"))
+
+
+async def _apply_setup_intent_succeeded(raw) -> None:
+    """Save a card when Stripe says the SetupIntent succeeded for a known customer."""
+    data = _stripe_obj(raw)
+    customer_id = data.get("customer")
+    if isinstance(customer_id, dict):
+        customer_id = customer_id.get("id")
+    intent_id = data.get("id")
+    if not customer_id or not intent_id:
+        return
+    client = get_stripe()
+    if client is None:
+        logger.error("[STRIPE] setup_intent.succeeded was not saved. Stripe is not configured.")
+        return
+    try:
+        intent = await asyncio.to_thread(retrieve_setup_intent, client, intent_id)
+    except Exception as exc:
+        logger.error("[STRIPE] could not read setup intent: %s", exc)
+        raise HTTPException(500, "Could not save that card.")
+    user = None
+    users_col = getattr(db, "shop_users", None)
+    if users_col is not None:
+        user = await users_col.find_one({"stripe_customer_id": customer_id}, {"_id": 0, "password_hash": 0})
+    shop = await db.shops.find_one({"stripe_customer_id": customer_id}, {"_id": 0})
+    if user and not shop:
+        shop = await db.shops.find_one({"id": user.get("shop_id")}, {"_id": 0})
+    if shop and not user:
+        user = await _billing_user_for(shop.get("id"))
+    if not shop or not user or user.get("shop_id") != shop.get("id"):
+        return
+    user = {**user, "stripe_customer_id": user.get("stripe_customer_id") or customer_id}
+    try:
+        await _commit_verified_card(client, user, intent, action="webhook")
+    except HTTPException as exc:
+        if exc.status_code >= 500:
+            raise
+        logger.warning("[STRIPE] setup_intent.succeeded ignored: %s", exc.detail)
 
 @api.get("/portal/jobs")
 async def portal_jobs(su=Depends(get_current_shop_user)):
@@ -4773,23 +4991,30 @@ async def portal_book(data: BookingIn, su=Depends(get_current_shop_user)):
 @api.get("/charge-queue")
 async def charge_queue(tech=Depends(require_owner)):
     """Completed jobs from portal shops whose card is on file, not yet charged."""
-    portal_users = await db.shop_users.find(
-        {"stripe_payment_method_id": {"$ne": None}}, {"_id": 0}
-    ).to_list(500)
-    shop_id_to_user = {u["shop_id"]: u for u in portal_users}
+    shops = await db.shops.find({}, {"_id": 0}).to_list(500)
+    users = await db.shop_users.find({}, {"_id": 0, "password_hash": 0}).to_list(2000)
+    users_by_shop = {}
+    for user in users:
+        users_by_shop.setdefault(user.get("shop_id"), []).append(user)
+    ready = {}
+    for shop in shops:
+        user = pick_billing_user(users_by_shop.get(shop.get("id"), []))
+        view = billing_view(shop, user)
+        if (view.get("stripe_payment_method_id") or "").strip():
+            ready[shop["id"]] = {**view, "email": (user or {}).get("email")}
     jobs = await db.jobs.find({
         "status": "complete",
-        "shop_id": {"$in": list(shop_id_to_user.keys())},
+        "shop_id": {"$in": list(ready.keys())},
         "charged_at": {"$exists": False},
     }, {"_id": 0}).sort("actual_completion", -1).to_list(200)
     enriched = []
     for j in jobs:
-        u = shop_id_to_user.get(j["shop_id"], {})
+        view = ready.get(j["shop_id"], {})
         enriched.append({
             **j,
-            "card_brand": u.get("card_brand"),
-            "card_last4": u.get("card_last4"),
-            "shop_user_email": u.get("email"),
+            "card_brand": view.get("card_brand"),
+            "card_last4": view.get("card_last4"),
+            "shop_user_email": view.get("email"),
         })
     return enriched
 
@@ -4804,8 +5029,10 @@ async def charge_job(job_id: str, tech=Depends(require_owner)):
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
-    shop_user = await db.shop_users.find_one({"shop_id": job["shop_id"]}, {"_id": 0})
-    reason = chargeable_reason(job, shop_user)
+    shop = await db.shops.find_one({"id": job["shop_id"]}, {"_id": 0}) or {}
+    shop_user = await _billing_user_for(job["shop_id"])
+    account = billing_view(shop, shop_user)
+    reason = chargeable_reason(job, account)
     if reason:
         raise HTTPException(400, reason)
     if not stripe_configured():
@@ -4817,8 +5044,8 @@ async def charge_job(job_id: str, tech=Depends(require_owner)):
         pi = await asyncio.to_thread(
             stripe_sdk.PaymentIntent.create,
             amount=cents(job["price"]), currency="usd",
-            customer=shop_user["stripe_customer_id"],
-            payment_method=shop_user["stripe_payment_method_id"],
+            customer=account["stripe_customer_id"],
+            payment_method=account["stripe_payment_method_id"],
             off_session=True, confirm=True,
             description=(f"CalibrationOS — {job.get('calibration_label', 'ADAS Calibration')} — "
                          f"{job.get('vehicle_year')} {job.get('vehicle_make')} {job.get('vehicle_model')}"),
@@ -5146,6 +5373,7 @@ async def _apply_payment_intent_event(kind: str, raw) -> None:
             "stripe_payment_intent_id": data.get("id"),
             "charged_amount": round((data.get("amount") or 0) / 100, 2),
         }})
+        await _set_unresolved_charge(job.get("shop_id"), False)
         logger.info("[STRIPE] payment_intent.succeeded for job %s", job_id)
         return
     if kind in ("payment_intent.payment_failed", "payment_intent.requires_action"):
@@ -5162,6 +5390,7 @@ async def _apply_payment_intent_event(kind: str, raw) -> None:
         }})
         shop = await db.shops.find_one({"id": job.get("shop_id")}) or {"name": job.get("shop_name"), "id": job.get("shop_id")}
         fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+        await _set_unresolved_charge(job.get("shop_id"), True)
         await _notify_payment_failed(fresh, shop, message)
         logger.warning("[STRIPE] %s for job %s: %s", kind, job_id, message)
 
@@ -5183,6 +5412,7 @@ async def _apply_invoice_event(kind: str, raw) -> None:
             "invoice_status": "paid",
             "stripe_invoice_id": data.get("id") or None,
         }})
+        await _set_unresolved_charge((await db.jobs.find_one({"id": job_id}, {"_id": 0, "shop_id": 1}) or {}).get("shop_id"), False)
         logger.info("[STRIPE] invoice paid for job %s", job_id)
     elif kind == "invoice.payment_failed":
         await db.jobs.update_one({"id": job_id}, {"$set": {
@@ -5194,6 +5424,7 @@ async def _apply_invoice_event(kind: str, raw) -> None:
         job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
         shop = await db.shops.find_one({"id": (job or {}).get("shop_id")}) or {"name": "Shop"}
         if job:
+            await _set_unresolved_charge(job.get("shop_id"), True)
             await _notify_payment_failed(job, shop, "Invoice payment failed.")
     elif kind == "invoice.finalized":
         await db.jobs.update_one({"id": job_id}, {"$set": {
@@ -5262,12 +5493,13 @@ async def run_late_fee_sweep() -> dict:
                 "reply_to": owner_notify_email(),
             }, "shop")
         client = get_stripe()
-        shop_user = await _shop_user_for(job.get("shop_id"))
-        if client and shop_user and shop_user.get("stripe_customer_id") and not job.get("stripe_late_fee_invoice_id"):
+        shop_user = await _billing_user_for(job.get("shop_id"))
+        account = billing_view(shop, shop_user)
+        if client and account.get("stripe_customer_id") and not job.get("stripe_late_fee_invoice_id"):
             try:
                 created = await asyncio.to_thread(
                     create_late_fee_invoice, client,
-                    customer_id=shop_user["stripe_customer_id"], job=job,
+                    customer_id=account["stripe_customer_id"], job=job,
                 )
                 await db.jobs.update_one({"id": job["id"]}, {"$set": {
                     "stripe_late_fee_invoice_id": created["stripe_invoice_id"],
@@ -5293,11 +5525,36 @@ async def _late_fee_loop():
         await asyncio.sleep(60 * 60)
 
 
+async def backfill_shop_cards() -> int:
+    """Copy each billing user's card onto the shop once. Safe to run on every boot."""
+    shops_col = getattr(db, "shops", None)
+    if shops_col is None:
+        return 0
+    shops = await shops_col.find({}, {"_id": 0}).to_list(5000)
+    updated = 0
+    for shop in shops:
+        if not shop.get("id"):
+            continue
+        user = await _billing_user_for(shop["id"])
+        fields = shop_card_backfill(shop, user)
+        if not fields:
+            continue
+        await shops_col.update_one({"id": shop["id"]}, {"$set": fields})
+        updated += 1
+    if updated:
+        logger.info("[BILLING] copied the card onto %s shop(s).", updated)
+    return updated
+
+
 @app.on_event("startup")
 async def startup():
     security_self_check()
     await seed_data()
     await load_settings()
+    try:
+        await backfill_shop_cards()
+    except Exception:
+        logger.exception("[BILLING] card backfill failed")
     asyncio.create_task(_late_fee_loop())
     # Essentials rows live up to 7 days. Pro rows set expires_at two hours out and the
     # reader ignores them after that. Drop the old 2-day cached_at TTL if it is still there,

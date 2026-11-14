@@ -118,10 +118,13 @@ new integration to wire up, only account setup:
 3. **Switch to the live key.** Once step 2 looks right, replace `STRIPE_API_KEY` with the **live**
    secret key (`sk_live_...`) from the same Dashboard page. Real charges go live immediately — no
    redeploy, no other toggle.
-4. **Nothing else is required** — no webhook, no separate "enable charging" flag, no new env var.
-   A statement descriptor (what shows on the shop's card statement) and payout schedule are
-   account-level Stripe Dashboard settings, not required to start charging; set them whenever
-   convenient.
+4. **Register the Stripe webhook.** In test mode, add an endpoint for
+   `https://<api-host>/api/stripe/webhook` and set `STRIPE_WEBHOOK_SECRET` to that endpoint's
+   `whsec_` signing secret. Enable `setup_intent.succeeded`, `payment_method.detached`,
+   `payment_intent.succeeded`, `payment_intent.payment_failed`, `invoice.payment_failed`,
+   `invoice.paid`, and `invoice.payment_succeeded`. That is how a detached or declined card
+   stops the next booking. There is no new env var and no change to `BILLING_ENABLED`.
+   A statement descriptor and the payout schedule stay account-level Dashboard settings.
 
 ### Action items for you (Emergent) — everything else, in rough priority order
 1. **Turn on real Google Maps:** set `GOOGLE_MAPS_API_KEY` in Emergent's env settings (a Google

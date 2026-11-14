@@ -46,6 +46,7 @@ export default function SignupPage() {
   const [confirm, setConfirm] = useState(null);
   const [acceptedAddress, setAcceptedAddress] = useState(false);
   const [clientSecret, setClientSecret] = useState("");
+  const [setupIntentId, setSetupIntentId] = useState("");
   const [stripeNote, setStripeNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -65,8 +66,10 @@ export default function SignupPage() {
       if (Number.isFinite(min) && min > 0) setPasswordMin(min);
     }).catch(() => {});
     axios.post(`${API}/public/card-setup`).then(r => {
-      if (r.data.client_secret) setClientSecret(r.data.client_secret);
-      else setStripeNote(r.data.message || "");
+      if (r.data.client_secret) {
+        setClientSecret(r.data.client_secret);
+        setSetupIntentId(r.data.setup_intent_id || "");
+      } else setStripeNote(r.data.message || "");
     }).catch(err => setStripeNote(detailMessage(err)));
   }, []);
 
@@ -82,8 +85,7 @@ export default function SignupPage() {
     try { draft = JSON.parse(raw); } catch { return; }
     resumed.current = true;
     setBusy(true);
-    axios.post(`${API}/public/card-setup/complete`, { setup_intent_id: intent })
-      .then(r => axios.post(`${API}/public/shops`, { ...draft, payment_method_id: r.data.payment_method_id }))
+    axios.post(`${API}/public/shops`, { ...draft, setup_intent_id: intent })
       .then(({ data }) => {
         sessionStorage.removeItem(DRAFT_KEY);
         setPortalAuth({
@@ -175,12 +177,11 @@ export default function SignupPage() {
     try {
       const body = payload();
       await axios.post(`${API}/public/shops/check`, body);
-      let paymentMethodId = null;
       if (clientSecret && cardRef.current) {
         sessionStorage.setItem(DRAFT_KEY, JSON.stringify(body));
-        paymentMethodId = await cardRef.current();
+        await cardRef.current();
       }
-      await finish(payload(paymentMethodId ? { payment_method_id: paymentMethodId } : {}));
+      await finish(payload(setupIntentId ? { setup_intent_id: setupIntentId } : {}));
     } catch (err) {
       const detail = err.response?.data?.detail;
       if (detail?.code === "needs_confirmation") {
@@ -206,7 +207,7 @@ export default function SignupPage() {
     <SiteChrome>
       <div className="signup-wrap">
         <h1 className="display">Create your shop</h1>
-        <p className="lede">One page. You sign the agreement, save a card, and land on booking. No charge today. If you leave after the account exists, log in and open Settings to finish the card. This is not a one-time link.</p>
+        <p className="lede">One page. You sign the agreement, save a card, and land on booking. No charge today. If the card does not save, try again or call the office. The shop is not created until the card is saved.</p>
         <form className="form" onSubmit={submit}>
           <div>
             <label className="label" htmlFor="shop">Shop name</label>

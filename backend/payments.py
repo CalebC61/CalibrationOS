@@ -10,6 +10,14 @@ from billing import (
     late_fee_invoice_key,
 )
 from charging import cents, interpret_payment_intent
+from onboarding import card_is_expired
+
+
+class CardSetupError(ValueError):
+    """The SetupIntent cannot be saved as this shop's card."""
+
+
+SIGNUP_SETUP_PURPOSE = "shop_signup"
 
 
 def _data(obj):
@@ -46,12 +54,15 @@ def _card_only_params() -> dict:
     return {"allowed_payment_method_types": list(CARD_ONLY_PAYMENT_METHODS)}
 
 
-def create_setup_intent(client, *, customer_id: str, shop_user_id: str) -> dict:
+def create_setup_intent(client, *, customer_id: str, shop_user_id: str, shop_id: str | None = None) -> dict:
     """Card-only SetupIntent for Settings and invite registration."""
+    metadata = {"shop_user_id": shop_user_id, "purpose": "card_on_file"}
+    if shop_id:
+        metadata["shop_id"] = shop_id
     intent = client.v1.setup_intents.create({
         "customer": customer_id,
         "usage": "off_session",
-        "metadata": {"shop_user_id": shop_user_id},
+        "metadata": metadata,
         **_card_only_params(),
     })
     data = _data(intent)
@@ -103,6 +114,62 @@ def retrieve_setup_checkout(client, session_id: str) -> dict:
     return _data(session)
 
 
+def _id_of(value):
+    if isinstance(value, dict):
+        return value.get("id")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def verified_card(intent: dict, *, customer_id: str | None = None, shop_id: str | None = None, purpose: str | None = None) -> dict:
+    """Card fields from a SetupIntent this shop is allowed to save.
+
+    status must be succeeded, the payment method must be an expanded card, and
+    the intent must be the signup intent or this shop's customer. A raw payment
+    method id is not accepted here.
+    """
+    if not isinstance(intent, dict):
+        raise CardSetupError("That card setup could not be confirmed.")
+    if intent.get("status") != "succeeded":
+        raise CardSetupError("The card was not saved.")
+    method = intent.get("payment_method")
+    if not isinstance(method, dict) or method.get("type") != "card":
+        raise CardSetupError("Only a card can be saved.")
+    card = method.get("card") or {}
+    if not card.get("last4") or card.get("exp_month") in (None, "") or card.get("exp_year") in (None, ""):
+        raise CardSetupError("Stripe did not return a card.")
+    if card_is_expired(card.get("exp_month"), card.get("exp_year")):
+        raise CardSetupError("That card is expired. Use a different card.")
+    payment_method_id = method.get("id")
+    if not payment_method_id:
+        raise CardSetupError("Stripe did not return a card.")
+    meta = intent.get("metadata") or {}
+    intent_customer = _id_of(intent.get("customer"))
+    pm_customer = _id_of(method.get("customer"))
+    if purpose == SIGNUP_SETUP_PURPOSE:
+        if meta.get("purpose") != SIGNUP_SETUP_PURPOSE:
+            raise CardSetupError("That card setup is not for this signup.")
+        if intent_customer or pm_customer:
+            raise CardSetupError("That card setup was already used.")
+    else:
+        belongs = bool(customer_id and intent_customer == customer_id)
+        if shop_id and meta.get("shop_id") == shop_id and intent_customer and intent_customer == customer_id:
+            belongs = True
+        if not belongs:
+            raise CardSetupError("That card setup is not for this shop.")
+        if pm_customer and pm_customer != customer_id:
+            raise CardSetupError("That card is already saved on another account.")
+    return {
+        "stripe_payment_method_id": payment_method_id,
+        "card_brand": card.get("brand"),
+        "card_last4": card.get("last4"),
+        "card_exp_month": card.get("exp_month"),
+        "card_exp_year": card.get("exp_year"),
+        "card_status": "active",
+    }
+
+
 def save_payment_method(client, *, customer_id: str, payment_method_id: str) -> dict:
     """Attach the method and make it the customer's default for off-session charges."""
     client.v1.payment_methods.attach(payment_method_id, {"customer": customer_id})
@@ -117,7 +184,19 @@ def save_payment_method(client, *, customer_id: str, payment_method_id: str) -> 
         "card_last4": card.get("last4"),
         "card_exp_month": card.get("exp_month"),
         "card_exp_year": card.get("exp_year"),
+        "card_status": "active",
     }
+
+
+def detach_payment_method(client, payment_method_id: str) -> None:
+    """Detach a card that is no longer the default. Never call this on the only card."""
+    if payment_method_id:
+        client.v1.payment_methods.detach(payment_method_id)
+
+
+def delete_customer(client, customer_id: str) -> None:
+    if customer_id:
+        client.v1.customers.delete(customer_id)
 
 
 def _invoice_lines(job: dict, description: str) -> list:

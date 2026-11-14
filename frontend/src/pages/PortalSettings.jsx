@@ -12,6 +12,7 @@ export default function PortalSettings() {
   const [acceptance, setAcceptance] = useState(CHARGE_ACCEPTANCE_FALLBACK);
   const [accepting, setAccepting] = useState(false);
   const [agreement, setAgreement] = useState(null);
+  const [cardNote, setCardNote] = useState("");
 
   function load() { return portalApi.get("/portal/me").then(r => setMe(r.data)); }
   useEffect(() => {
@@ -37,6 +38,9 @@ export default function PortalSettings() {
     if (auth) setPortalAuth({ ...auth, has_payment_method: true });
     setClientSecret("");
     setMe(prev => prev ? { ...prev, shop_user: shopUser } : prev);
+    const brand = shopUser.card_brand ? String(shopUser.card_brand) : "Card";
+    const last4 = shopUser.card_last4 || "";
+    setCardNote(`${brand} ending in ${last4} is now the card on file. New charges use this card.`);
     if (!shopUser.charge_authorization_accepted_at) setNeedsAcceptance(true);
     else load();
   }
@@ -78,8 +82,8 @@ export default function PortalSettings() {
               </div>
               <span className="badge badge-complete">Active</span>
             </div>
-            <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>Charged when a job is completed, unless you asked to be invoiced.</div>
-            <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={startCard} data-testid="add-card-btn">Replace card</button>
+            <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>Charged when a job is completed, unless you asked to be invoiced. Jobs still waiting to be invoiced use this card too.</div>
+            <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={startCard} data-testid="update-card-btn">Update card</button>
           </>
         ) : (
           <div>
@@ -87,6 +91,7 @@ export default function PortalSettings() {
             <button className="btn btn-primary" onClick={startCard} data-testid="add-card-btn">Add card</button>
           </div>
         )}
+        {cardNote && <p role="status" data-testid="card-updated" style={{ marginTop: 12, color: "var(--green)" }}>{cardNote}</p>}
         {cardError && <div style={{ color: "var(--red)", marginTop: 12 }}>{cardError}</div>}
         {clientSecret && (
           <div style={{ marginTop: 16 }} data-testid="card-setup">

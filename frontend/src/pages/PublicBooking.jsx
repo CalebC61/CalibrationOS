@@ -141,7 +141,7 @@ export default function PublicBooking() {
   if (!shop) return <Center><div className="muted">Loading…</div></Center>;
   if (shop.booking_open === false) {
     return <Center><div className="surface" style={{ padding: 30, maxWidth: 480, textAlign: "center" }} data-testid="booking-closed">
-      <div className="h2" style={{ marginBottom: 8 }}>Booking isn't open yet</div>
+      <div className="h2" style={{ marginBottom: 8 }}>Booking is closed</div>
       <div className="muted">{shop.booking_message}</div>
     </div></Center>;
   }
