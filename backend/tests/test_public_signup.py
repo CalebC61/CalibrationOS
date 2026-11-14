@@ -490,6 +490,115 @@ def test_signup_card_setup_accepts_only_cards(monkeypatch):
     assert "automatic_payment_methods" not in created[0]
 
 
+BUSINESS_ADDRESS = "Downtown Phoenix Inc, 1 E Washington St, Phoenix, AZ 85004, USA"
+STREET_ADDRESS = "1 E Washington St, Phoenix, AZ 85004, USA"
+DOWNTOWN_COMPONENTS = [
+    {
+        "long_name": "Downtown Phoenix Inc",
+        "short_name": "Downtown Phoenix Inc",
+        "types": ["establishment", "point_of_interest"],
+    },
+    {"long_name": "1", "short_name": "1", "types": ["street_number"]},
+    {"long_name": "East Washington Street", "short_name": "E Washington St", "types": ["route"]},
+    {"long_name": "Phoenix", "short_name": "Phoenix", "types": ["locality", "political"]},
+    {"long_name": "Arizona", "short_name": "AZ", "types": ["administrative_area_level_1", "political"]},
+    {"long_name": "85004", "short_name": "85004", "types": ["postal_code"]},
+    {"long_name": "United States", "short_name": "US", "types": ["country", "political"]},
+]
+
+
+def test_a_business_place_passes_the_precheck_and_saves_the_street(monkeypatch):
+    reset_rate_limits()
+    db = _DB()
+    calls = []
+
+    async def send_email(to, subject, html, kind="transactional", meta=None, reply_to=None):
+        return {"delivered": True, "kind": kind}
+
+    def fetch(address):
+        calls.append(address)
+        if address == BUSINESS_ADDRESS:
+            return {
+                "status": "OK",
+                "results": [{
+                    "formatted_address": "Phoenix, AZ, USA",
+                    "partial_match": True,
+                    "geometry": {
+                        "location": {"lat": 33.4484, "lng": -112.0740},
+                        "location_type": "APPROXIMATE",
+                    },
+                }],
+            }
+        return {
+            "status": "OK",
+            "results": [{
+                "formatted_address": BUSINESS_ADDRESS,
+                "address_components": DOWNTOWN_COMPONENTS,
+                "partial_match": False,
+                "geometry": {
+                    "location": {"lat": 33.448093, "lng": -112.072849},
+                    "location_type": "ROOFTOP",
+                },
+            }],
+        }
+
+    monkeypatch.setattr(server, "db", db)
+    monkeypatch.setattr(server, "send_email", send_email)
+    monkeypatch.setattr(server, "get_stripe", lambda: None)
+    monkeypatch.setattr(server, "google_maps_enabled", lambda: True)
+    monkeypatch.setattr(server, "_google_geocode_request", fetch)
+    body = _body(
+        address=BUSINESS_ADDRESS,
+        place_id="ChIJdowntown",
+        email="downtown@jarvis.example",
+        shop_name="Downtown Glass",
+    )
+
+    async def run():
+        async with _client() as client:
+            checked = await client.post("/api/public/shops/check", json=body)
+            created = await client.post("/api/public/shops", json=body)
+            return checked, created
+
+    checked, created = asyncio.run(run())
+    assert checked.status_code == 200, checked.text
+    assert created.status_code == 200, created.text
+    assert calls[0] == BUSINESS_ADDRESS
+    assert STREET_ADDRESS in calls
+    shop = db.shops.docs[0]
+    assert shop["address"] == STREET_ADDRESS
+    assert shop["formatted_address"] == STREET_ADDRESS
+    assert shop["lat"] == 33.448093
+    assert shop["lng"] == -112.072849
+    assert shop["place_id"] == "ChIJdowntown"
+
+
+def test_a_plain_street_is_geocoded_once(monkeypatch):
+    calls = []
+
+    def fetch(address):
+        calls.append(address)
+        return {
+            "status": "OK",
+            "results": [{
+                "formatted_address": "1 W Washington St, Phoenix, AZ 85004, USA",
+                "partial_match": False,
+                "geometry": {
+                    "location": {"lat": 33.448135, "lng": -112.074435},
+                    "location_type": "ROOFTOP",
+                },
+            }],
+        }
+
+    monkeypatch.setattr(server, "db", type("DB", (), {})())
+    monkeypatch.setattr(server, "google_maps_enabled", lambda: True)
+    monkeypatch.setattr(server, "_google_geocode_request", fetch)
+
+    geo = asyncio.run(server.geocode_address("1 W Washington St, Phoenix, AZ 85004, USA"))
+    assert geo["formatted_address"] == "1 W Washington St, Phoenix, AZ 85004, USA"
+    assert calls == ["1 W Washington St, Phoenix, AZ 85004, USA"]
+
+
 def test_agreement_tells_the_shop_the_password_rule():
     async def run():
         async with _client() as client:

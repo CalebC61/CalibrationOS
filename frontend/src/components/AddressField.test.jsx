@@ -158,3 +158,59 @@ test("a picked suggestion sends the place id and formatted address", async () =>
     lng: -111.789,
   }));
 });
+
+test("an establishment suggestion submits the street, not the business name", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  function FakeAutocomplete() {
+    return document.createElement("div");
+  }
+  window.google = {
+    maps: {
+      importLibrary: jest.fn(async () => ({ PlaceAutocompleteElement: FakeAutocomplete })),
+    },
+  };
+  const { onChange, onPlace } = renderField();
+  await waitFor(() => expect(screen.getByTestId("address").getAttribute("data-address-mode")).toBe("places"));
+  const widget = screen.getByTestId("address");
+  const business = "Downtown Phoenix Inc, 1 E Washington St, Phoenix, AZ 85004, USA";
+  const street = "1 E Washington St, Phoenix, AZ 85004, USA";
+  const event = new Event("gmp-select");
+  event.placePrediction = {
+    text: { text: business },
+    mainText: { text: "Downtown Phoenix Inc" },
+    secondaryText: { text: "1 E Washington St, Phoenix, AZ, USA" },
+    toPlace() {
+      return {
+        fetchFields: async () => {},
+        formattedAddress: business,
+        displayName: { text: "Downtown Phoenix Inc" },
+        id: "ChIJdowntown",
+        location: { lat: () => 33.4480932, lng: () => -112.0728494 },
+        addressComponents: [
+          { longText: "Downtown Phoenix Inc", shortText: "Downtown Phoenix Inc", types: ["point_of_interest", "establishment"] },
+          { longText: "1", shortText: "1", types: ["street_number"] },
+          { longText: "East Washington Street", shortText: "E Washington St", types: ["route"] },
+          { longText: "Phoenix", shortText: "Phoenix", types: ["locality", "political"] },
+          { longText: "Arizona", shortText: "AZ", types: ["administrative_area_level_1", "political"] },
+          { longText: "United States", shortText: "US", types: ["country", "political"] },
+          { longText: "85004", shortText: "85004", types: ["postal_code"] },
+        ],
+      };
+    },
+  };
+  widget.value = business;
+  widget.dispatchEvent(new Event("input"));
+  widget.dispatchEvent(event);
+  await waitFor(() => expect(onPlace).toHaveBeenCalledWith({
+    address: street,
+    placeId: "ChIJdowntown",
+    lat: 33.4480932,
+    lng: -112.0728494,
+  }));
+
+  onChange.mockClear();
+  widget.value = business;
+  widget.dispatchEvent(new Event("input"));
+  expect(onChange).not.toHaveBeenCalled();
+  expect(widget.value).toBe(street);
+});

@@ -51,6 +51,71 @@ function coord(value) {
   return typeof value === "number" ? value : null;
 }
 
+const UNIT_LABEL = /^(?:#\s*\S+|(?:suite|ste|apt|apartment|unit|bldg|building|floor|fl|room|rm)\b.*|\d+[a-z]?)$/i;
+const PO_BOX = /^p\.?\s*o\.?\s*box\b/i;
+
+function componentText(component, short) {
+  if (!component) return "";
+  const value = short
+    ? (component.shortText || component.short_name || component.longText || component.long_name)
+    : (component.longText || component.long_name || component.shortText || component.short_name);
+  return String(value || "").trim();
+}
+
+function findComponent(components, type) {
+  return (components || []).find((component) => (component.types || []).includes(type)) || null;
+}
+
+function isUnitLabel(value) {
+  return UNIT_LABEL.test(String(value || "").trim());
+}
+
+/** Drop a leading business name. Keep a unit, a PO box, and a line that already starts with the street number. */
+export function streetLine(address) {
+  const parts = String(address || "").split(",").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return "";
+  const streetAt = parts.findIndex((part) => /^\d/.test(part));
+  if (streetAt <= 0) return parts.join(", ");
+  const kept = parts.slice(0, streetAt).filter((part) => /^\d/.test(part) || isUnitLabel(part) || PO_BOX.test(part));
+  return [...kept, ...parts.slice(streetAt)].join(", ");
+}
+
+/** Street, city, state, and ZIP. The establishment name on a Places result is not part of the address. */
+export function postalAddressFromPlace(place) {
+  const components = place?.addressComponents || place?.address_components || [];
+  const number = componentText(findComponent(components, "street_number"));
+  const route = componentText(findComponent(components, "route"), true);
+  let street = [number, route].filter(Boolean).join(" ").trim();
+  if (street) {
+    const unit = componentText(findComponent(components, "subpremise"));
+    if (unit && isUnitLabel(unit)) street = `${street} ${unit}`.trim();
+    const city = componentText(findComponent(components, "locality"))
+      || componentText(findComponent(components, "postal_town"))
+      || componentText(findComponent(components, "sublocality"));
+    const state = componentText(findComponent(components, "administrative_area_level_1"), true);
+    const zip = componentText(findComponent(components, "postal_code"));
+    const region = [state, zip].filter(Boolean).join(" ");
+    const cityLine = [city, region].filter(Boolean).join(", ");
+    let country = componentText(findComponent(components, "country"), true);
+    if (country === "US" || country === "USA") country = "USA";
+    return [street, cityLine, country].filter(Boolean).join(", ");
+  }
+  const formatted = place?.formattedAddress || place?.formatted_address || "";
+  const name = place?.displayName;
+  const label = (typeof name === "string" ? name : name?.text || "").trim();
+  if (label && formatted.toLowerCase().startsWith(label.toLowerCase())) {
+    const stripped = formatted.slice(label.length).replace(/^[\s,]+/, "");
+    if (stripped) return streetLine(stripped) || stripped;
+  }
+  return streetLine(formatted) || formatted;
+}
+
+function predictionLabel(prediction) {
+  const text = prediction?.text;
+  if (!text) return "";
+  return typeof text === "string" ? text : (text.text || "");
+}
+
 /** Phoenix Valley address. A picked suggestion is the confirmed address. Places failures stay a typed input. */
 export default function AddressField({ value, onChange, onPlace, onPlaces, className = "input", id, testId, placeholder, required }) {
   const hostRef = useRef(null);
@@ -116,10 +181,22 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, class
       element.setAttribute("data-address-mode", "places");
       if (valueRef.current) element.value = valueRef.current;
       let picked = "";
+      let echoed = new Set();
+      let restoring = false;
 
       element.addEventListener("input", () => {
         const text = element.value || "";
-        if (text === picked) return;
+        if (picked && text === picked) return;
+        if (picked && echoed.has(text)) {
+          if (!restoring && element.value !== picked) {
+            restoring = true;
+            element.value = picked;
+            restoring = false;
+          }
+          return;
+        }
+        picked = "";
+        echoed = new Set();
         onChangeRef.current?.(text);
       });
       element.addEventListener("gmp-error", () => fail());
@@ -128,18 +205,23 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, class
           const prediction = event.placePrediction || event.detail?.placePrediction;
           const place = prediction?.toPlace ? prediction.toPlace() : null;
           if (!place?.fetchFields) return;
-          await place.fetchFields({ fields: ["formattedAddress", "location", "id"] });
+          await place.fetchFields({
+            fields: ["formattedAddress", "addressComponents", "displayName", "location", "id"],
+          });
           const formatted = place.formattedAddress || "";
+          const street = postalAddressFromPlace(place) || formatted;
           const lat = coord(place.location?.lat);
           const lng = coord(place.location?.lng);
-          if (!formatted || lat == null || lng == null) return;
-          picked = formatted;
+          if (!street || lat == null || lng == null) return;
+          picked = street;
+          echoed = new Set([formatted, predictionLabel(prediction), element.value].filter(Boolean));
+          if (element.value !== street) element.value = street;
           if (!insideValley(lat, lng)) {
-            onChangeRef.current?.(formatted);
+            onChangeRef.current?.(street);
             return;
           }
           onPlaceRef.current?.({
-            address: formatted,
+            address: street,
             placeId: place.id || null,
             lat,
             lng,

@@ -9,6 +9,7 @@ Drive time uses the Routes API (`computeRoutes`) with `TRAFFIC_AWARE` and a depa
 time. The legacy Distance Matrix helpers stay so older responses can still be parsed.
 """
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
@@ -61,6 +62,119 @@ def distance_matrix_request_params(o_lat, o_lng, d_lat, d_lng, api_key: str) -> 
     }
 
 
+_UNIT_LABEL = re.compile(
+    r"^(?:#\s*\S+|(?:suite|ste|apt|apartment|unit|bldg|building|floor|fl|room|rm)\b.*|\d+[a-z]?)$",
+    re.IGNORECASE,
+)
+_PO_BOX = re.compile(r"^p\.?\s*o\.?\s*box\b", re.IGNORECASE)
+_PLACE_NAME_TYPES = {"establishment", "point_of_interest"}
+_POSTAL_TYPES = {"street_number", "route", "locality", "postal_town", "postal_code", "subpremise"}
+
+
+def _component_text(component: dict | None, short: bool = False) -> str:
+    if not component:
+        return ""
+    if short:
+        keys = ("short_name", "shortText", "long_name", "longText")
+    else:
+        keys = ("long_name", "longText", "short_name", "shortText")
+    value = next((component.get(key) for key in keys if component.get(key)), "")
+    return str(value or "").strip()
+
+
+def _find_component(components, type_name: str):
+    for component in components or []:
+        if type_name in (component.get("types") or []):
+            return component
+    return None
+
+
+def is_unit_label(value: str) -> bool:
+    return bool(_UNIT_LABEL.match((value or "").strip()))
+
+
+def street_line(address: str) -> str:
+    """The postal line. A leading business name is removed. A unit and a PO box stay.
+
+    "Downtown Phoenix, Inc., 1 E Washington St, Phoenix, AZ 85004, USA" becomes
+    "1 E Washington St, Phoenix, AZ 85004, USA". "Suite 200, 1 E Washington St, ..."
+    stays, because the first segment is a unit. A line that already starts with
+    the street number is unchanged.
+    """
+    parts = [part.strip() for part in str(address or "").split(",") if part.strip()]
+    if not parts:
+        return ""
+    street_at = next((index for index, part in enumerate(parts) if part[:1].isdigit()), None)
+    if street_at in (None, 0):
+        return ", ".join(parts)
+    kept = [
+        part for part in parts[:street_at]
+        if part[:1].isdigit() or is_unit_label(part) or _PO_BOX.match(part)
+    ]
+    return ", ".join(kept + parts[street_at:])
+
+
+def postal_address_from_components(components) -> str:
+    """Street, city, state, and ZIP. An establishment or point-of-interest name is not a line."""
+    number = _component_text(_find_component(components, "street_number"))
+    route = _component_text(_find_component(components, "route"), short=True)
+    street = " ".join(part for part in (number, route) if part).strip()
+    if not street:
+        return ""
+    unit = _component_text(_find_component(components, "subpremise"))
+    if unit and is_unit_label(unit):
+        street = f"{street} {unit}".strip()
+    city_component = (
+        _find_component(components, "locality")
+        or _find_component(components, "postal_town")
+        or _find_component(components, "sublocality")
+    )
+    city = _component_text(city_component)
+    state = _component_text(_find_component(components, "administrative_area_level_1"), short=True)
+    postal = _component_text(_find_component(components, "postal_code"))
+    region = " ".join(part for part in (state, postal) if part)
+    city_line = ", ".join(part for part in (city, region) if part)
+    country = _component_text(_find_component(components, "country"), short=True)
+    if country in ("US", "USA"):
+        country = "USA"
+    return ", ".join(part for part in (street, city_line, country) if part)
+
+
+def _has_place_name(components) -> bool:
+    for component in components or []:
+        types = set(component.get("types") or [])
+        if types & _PLACE_NAME_TYPES and not types & _POSTAL_TYPES:
+            return True
+    return False
+
+
+def postal_formatted_address(result: dict) -> str:
+    """The address to store. Google's formatted line sometimes starts with the business name."""
+    formatted = str((result or {}).get("formatted_address") or "").strip()
+    components = (result or {}).get("address_components") or []
+    stripped = street_line(formatted)
+    if _has_place_name(components):
+        return postal_address_from_components(components) or stripped or formatted
+    if stripped and stripped != formatted:
+        return stripped
+    return formatted
+
+
+def address_lookup_queries(address: str) -> list[str]:
+    """The typed line, then the street line when a leading business name was removed.
+
+    A plain street is one lookup. Callers try the second query only after the first
+    is not a usable pin.
+    """
+    cleaned = str(address or "").strip()
+    if not cleaned:
+        return []
+    street = street_line(cleaned)
+    if street and street.casefold() != cleaned.casefold():
+        return [cleaned, street]
+    return [cleaned]
+
+
 def parse_geocode_response(data: dict, original_address: str) -> dict:
     """Parse a Geocoding API response into the app's geocode shape.
 
@@ -76,7 +190,10 @@ def parse_geocode_response(data: dict, original_address: str) -> dict:
     return {
         "lat": round(lat, 6),
         "lng": round(lng, 6),
-        "formatted_address": results[0].get("formatted_address", original_address),
+        "formatted_address": (
+            postal_formatted_address(results[0])
+            or results[0].get("formatted_address", original_address)
+        ),
         "in_metro": in_metro(lat, lng),
         "partial_match": bool(results[0].get("partial_match")),
         "location_type": geometry.get("location_type"),

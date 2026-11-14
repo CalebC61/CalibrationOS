@@ -43,6 +43,66 @@ def test_geocode_parses_lat_lng_and_formatted_address():
     assert geo["formatted_address"] == "1234 E Williams Field Rd, Gilbert, AZ 85295, USA"
 
 
+DOWNTOWN_COMPONENTS = [
+    {
+        "long_name": "Downtown Phoenix Inc",
+        "short_name": "Downtown Phoenix Inc",
+        "types": ["establishment", "point_of_interest"],
+    },
+    {"long_name": "1", "short_name": "1", "types": ["street_number"]},
+    {"long_name": "East Washington Street", "short_name": "E Washington St", "types": ["route"]},
+    {"long_name": "Phoenix", "short_name": "Phoenix", "types": ["locality", "political"]},
+    {"long_name": "Arizona", "short_name": "AZ", "types": ["administrative_area_level_1", "political"]},
+    {"long_name": "85004", "short_name": "85004", "types": ["postal_code"]},
+    {"long_name": "United States", "short_name": "US", "types": ["country", "political"]},
+]
+DOWNTOWN_STREET = "1 E Washington St, Phoenix, AZ 85004, USA"
+
+
+def test_geocode_drops_an_establishment_name_from_the_formatted_address():
+    data = {"status": "OK", "results": [{
+        "formatted_address": "Downtown Phoenix Inc, 1 E Washington St, Phoenix, AZ 85004, USA",
+        "address_components": DOWNTOWN_COMPONENTS,
+        "geometry": {"location": {"lat": 33.448093, "lng": -112.072849}, "location_type": "ROOFTOP"},
+        "partial_match": False,
+    }]}
+    geo = parse_geocode_response(data, DOWNTOWN_STREET)
+    assert geo["formatted_address"] == DOWNTOWN_STREET
+    assert geo["lat"] == 33.448093
+    assert geo["lng"] == -112.072849
+    assert geo["partial_match"] is False
+    assert geo["location_type"] == "ROOFTOP"
+
+
+def test_geocode_drops_a_business_prefix_when_components_are_missing():
+    data = {"status": "OK", "results": [{
+        "formatted_address": "Downtown Phoenix, Inc., 1 E Washington St, Phoenix, AZ 85004, USA",
+        "geometry": {"location": {"lat": 33.448093, "lng": -112.072849}, "location_type": "ROOFTOP"},
+    }]}
+    geo = parse_geocode_response(data, "Downtown Phoenix, Inc., 1 E Washington St, Phoenix, AZ 85004, USA")
+    assert geo["formatted_address"] == DOWNTOWN_STREET
+
+
+def test_geocode_keeps_a_unit_and_a_plain_street():
+    suite = {"status": "OK", "results": [{
+        "formatted_address": "Suite 200, 1 E Washington St, Phoenix, AZ 85004, USA",
+        "geometry": {"location": {"lat": 33.448093, "lng": -112.072849}, "location_type": "ROOFTOP"},
+    }]}
+    assert parse_geocode_response(suite, "suite")["formatted_address"] == (
+        "Suite 200, 1 E Washington St, Phoenix, AZ 85004, USA"
+    )
+    west = {"status": "OK", "results": [{
+        "formatted_address": "1 W Washington St, Phoenix, AZ 85004, USA",
+        "geometry": {"location": {"lat": 33.448135, "lng": -112.074435}, "location_type": "ROOFTOP"},
+    }]}
+    assert parse_geocode_response(west, "west")["formatted_address"] == "1 W Washington St, Phoenix, AZ 85004, USA"
+    box = {"status": "OK", "results": [{
+        "formatted_address": "PO Box 12, Phoenix, AZ 85004, USA",
+        "geometry": {"location": {"lat": 33.45, "lng": -112.07}, "location_type": "GEOMETRIC_CENTER"},
+    }]}
+    assert parse_geocode_response(box, "box")["formatted_address"] == "PO Box 12, Phoenix, AZ 85004, USA"
+
+
 def test_geocode_in_metro_true_for_phoenix_area_address():
     geo = parse_geocode_response(GEOCODE_OK, "Gilbert, AZ")
     assert geo["in_metro"] is True

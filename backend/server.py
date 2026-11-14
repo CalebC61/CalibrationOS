@@ -117,7 +117,7 @@ from payments import (
 # Google Maps (real-if-configured, else mock — same pattern; see geocode_address()/get_drive_time())
 from google_maps import (
     GEOCODE_URL, DISTANCE_MATRIX_URL, ROUTES_COMPUTE_URL, ROUTES_FIELD_MASK, GoogleMapsError,
-    geocode_request_params, distance_matrix_request_params,
+    address_lookup_queries, geocode_request_params, distance_matrix_request_params,
     parse_geocode_response, parse_distance_matrix_response, parse_routes_response,
     routes_request_body, routes_request_headers, routes_http_failure,
     drive_time_cache_key, departure_bucket, coalesce,
@@ -417,8 +417,10 @@ async def geocode_address(address: str) -> dict:
     """Geocode an address with Google. Never invents a pin.
 
     A missing key, a Google error, a partial match, or the central-Phoenix
-    guess raises AddressNotFound. A real result outside the valley is returned
-    with in_metro false so the caller can refuse the save without storing it.
+    guess raises AddressNotFound. A line that starts with a business name is
+    looked up once more as the street. A real result outside the valley is
+    returned with in_metro false so the caller can refuse the save without
+    storing it.
     """
     if not (address or "").strip() or not google_maps_enabled():
         raise AddressNotFound(ADDRESS_NOT_FOUND)
@@ -434,15 +436,23 @@ async def geocode_address(address: str) -> dict:
             geo = _cached_geocode(cached, address)
             if pin_refusal(geo) != ADDRESS_NOT_FOUND:
                 return geo
-    try:
-        data = await asyncio.to_thread(_google_geocode_request, address)
-        parsed = interpret_live_geocode(address, lambda: data, parse_geocode_response)
-    except AddressNotFound:
+    parsed = None
+    last_not_found = None
+    for query in address_lookup_queries(address):
+        try:
+            data = await asyncio.to_thread(_google_geocode_request, query)
+        except (requests.RequestException, GoogleMapsError) as exc:
+            logger.error("[MAPS] geocode failed: %s", exc)
+            raise AddressNotFound(ADDRESS_NOT_FOUND) from exc
+        try:
+            parsed = interpret_live_geocode(query, lambda payload=data: payload, parse_geocode_response)
+            break
+        except AddressNotFound as exc:
+            last_not_found = exc
+            parsed = None
+    if parsed is None:
         logger.error("[MAPS] geocode refused for %s", address)
-        raise
-    except (requests.RequestException, GoogleMapsError) as exc:
-        logger.error("[MAPS] geocode failed: %s", exc)
-        raise AddressNotFound(ADDRESS_NOT_FOUND) from exc
+        raise last_not_found or AddressNotFound(ADDRESS_NOT_FOUND)
     if cache is not None and key and pin_refusal(parsed) is None:
         try:
             await cache.update_one(

@@ -15,6 +15,26 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — a Places business suggestion is a street address (2026-11-14)
+The first suggestion for "1 E Washington St, Phoenix" is the subpremise
+`Downtown Phoenix Inc, 1 E Washington St, Phoenix, AZ 85004, USA`. Places
+`formattedAddress` starts with that establishment name. `POST /api/public/shops/check`
+geocodes that string and answers "We couldn't find that address, please check it",
+so signup stays on `/signup`. The same building without the name geocodes to a
+rooftop, and Google's formatted line puts the business name back on the front.
+
+`AddressField` now asks for `addressComponents` and submits the street, city,
+state, and ZIP. A unit stays. The business name does not. If the widget then
+writes the suggestion label back into the field, the field is put back to the
+street, and `place_id` is left in place. The same field is used for signup and
+for a shop the owner adds by hand.
+
+The geocoder stores that street line instead of the business-prefixed formatted
+address, and keeps the rooftop lat/lng. A query that still arrives with the
+business name is looked up once more as the street. A plain street is still one
+lookup. A partial match, a guess, and an address outside the valley are still
+refused. Duplicate checks and the card retry are unchanged.
+
 ### Fixed — signup card form starts on Stripe API 2026-09-30 (2026-11-14)
 `stripe==16.0.0` pins API version `2026-09-30.endive`. That version returns
 400 `payment_method_types_no_longer_supported` when a SetupIntent, PaymentIntent,
