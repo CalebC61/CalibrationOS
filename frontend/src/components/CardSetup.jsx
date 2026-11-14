@@ -141,16 +141,14 @@ function SetupForm({ onSaved }) {
       setBusy(false);
       return;
     }
-    const paymentMethod = result.setupIntent?.payment_method;
-    if (!paymentMethod) {
-      setError("Stripe did not return a card.");
+    const intentId = result.setupIntent?.id;
+    if (!intentId || result.setupIntent?.status !== "succeeded") {
+      setError("The bank still needs to approve that card. Try again.");
       setBusy(false);
       return;
     }
     try {
-      const { data } = await portalApi.post("/portal/payment-method", {
-        payment_method_id: typeof paymentMethod === "string" ? paymentMethod : paymentMethod.id,
-      });
+      const { data } = await portalApi.post("/portal/payment-method", { setup_intent_id: intentId });
       onSaved(data.shop_user);
     } catch (err) {
       setError(err.response?.data?.detail || "Could not save the card.");

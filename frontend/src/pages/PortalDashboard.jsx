@@ -51,14 +51,10 @@ export default function PortalDashboard() {
         <div className="surface" style={{ padding: 14, marginBottom: 16, borderColor: "var(--yellow)" }} data-testid="no-card-banner">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <div>
-              <div style={{ fontWeight: 600 }}>{setup.grandfathered ? "Finish setup when you can" : "Finish setup to book"}</div>
-              <div className="muted" style={{ fontSize: 13 }}>
-                {setup.grandfathered
-                  ? "Your shop can keep booking. Sign the agreement and save a card so completed jobs can be charged or invoiced."
-                  : "Sign the agreement and save a card. Booking stays closed until both are done."}
-              </div>
+              <div style={{ fontWeight: 600 }}>{setup.suspended ? "Booking is paused" : "Booking is closed"}</div>
+              <div className="muted" style={{ fontSize: 13 }}>{setup.message}</div>
             </div>
-            <Link to="/portal/settings" className="btn btn-primary" data-testid="add-card-cta">Finish setup</Link>
+            <Link to="/portal/settings" className="btn btn-primary" data-testid="add-card-cta">Update card</Link>
           </div>
         </div>
       )}

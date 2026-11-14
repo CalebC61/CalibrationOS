@@ -87,7 +87,7 @@ test("a duplicate shop does not confirm the card again on retry", async () => {
   axios.post.mockImplementation(async (url, body) => {
     if (String(url).endsWith("/public/card-setup")) {
       calls.push("card-setup");
-      return { data: { client_secret: "seti_secret_test", stripe_unavailable: false } };
+      return { data: { client_secret: "seti_test_secret_abc", setup_intent_id: "seti_test", stripe_unavailable: false } };
     }
     if (String(url).endsWith("/public/shops/check")) {
       calls.push("check");
@@ -142,8 +142,9 @@ test("a duplicate shop does not confirm the card again on retry", async () => {
   const confirmIndex = calls.indexOf("confirm");
   expect(calls.slice(0, confirmIndex)).toContain("check");
   expect(calls.indexOf("shops")).toBeGreaterThan(confirmIndex);
-  expect(shopBodies[0].payment_method_id).toBe("pm_card");
-  expect(shopBodies[1].payment_method_id).toBe("pm_card");
+  expect(shopBodies[0].setup_intent_id).toBe("seti_test");
+  expect(shopBodies[1].setup_intent_id).toBe("seti_test");
+  expect(shopBodies[0].payment_method_id).toBeUndefined();
   expect(shopBodies[1].email).toBe("new@jarvis.example");
   expect(calls.filter(name => name === "confirm")).toEqual(["confirm"]);
 });

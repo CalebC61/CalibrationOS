@@ -55,9 +55,9 @@ export default function PortalBook() {
   if (setup.allowed === false) {
     return <PortalShell>
       <div className="surface" style={{ padding: 24, textAlign: "center", maxWidth: 500, margin: "40px auto" }} data-testid="booking-closed">
-        <div className="h2" style={{ marginBottom: 8 }}>{setup.suspended ? "Booking is paused" : "Finish setup to book"}</div>
+        <div className="h2" style={{ marginBottom: 8 }}>{setup.suspended ? "Booking is paused" : "Booking is closed"}</div>
         <div className="muted" style={{ marginBottom: 16 }}>{setup.message}</div>
-        {!setup.suspended && <button className="btn btn-primary" onClick={() => nav("/portal/settings")} data-testid="goto-add-card">Finish setup</button>}
+        {!setup.suspended && <button className="btn btn-primary" onClick={() => nav("/portal/settings")} data-testid="goto-add-card">Update card</button>}
       </div>
     </PortalShell>;
   }

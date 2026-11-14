@@ -15,6 +15,52 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — every shop needs a verified card before it can book (2026-11-14)
+The server no longer trusts a payment method id from the browser. Signup and
+the portal send a SetupIntent id. The API retrieves it and saves the card only
+when the status is `succeeded`, the method is a card, and the intent was created
+for this signup (`metadata.purpose` `shop_signup`) or for this shop's Stripe
+customer. A test id such as `pm_card_visa` does not unlock booking.
+`POST /api/portal/complete-setup-intent` and `GET /api/portal/stripe-setup-status`
+use the same check, and a Checkout session must belong to the logged-in shop's
+customer. A failed signup deletes the Stripe customer it just created.
+
+The card is stored on the shop. The booking gate and a charge both read that
+record. Until a shop has been backfilled, they use the earliest active shop
+user. Startup copies that user's card onto the shop once
+(`billing_card_backfilled`). Brand, last4, and expiry are saved with the card.
+
+Every shop, including ones created before card-on-file billing, must have a
+current card and accepted charge terms to book. A blank, removed, detached, or
+expired card blocks `POST /api/public/book` and `POST /api/portal/book`. An
+unresolved failed charge does too, until the card is replaced or a later charge
+succeeds. The shop sees a message that points at Settings. Owner job actions
+are unchanged. `DELETE /api/portal/payment-method` refuses, so a shop cannot
+remove its only card.
+
+Settings → Update card opens the card-only Payment Element
+(`allowed_payment_method_types: ["card"]`, Link and wallets off) for the shop's
+existing customer. After the SetupIntent is verified, that card becomes
+`invoice_settings.default_payment_method`, the shop record is updated, and the
+previous card is detached. Later charges, including jobs still waiting to be
+invoiced, use the new card. A disabled shop user is rejected. The agreement IP
+and the signup rate limit use the rightmost `X-Forwarded-For` entry, which is
+the one Render appends. Card changes are written to `card_changes` (brand and
+last4 only).
+
+`POST /api/stripe/webhook` still verifies `STRIPE_WEBHOOK_SECRET`. It now also
+handles `payment_method.detached` (clears the card when it is the one on file)
+and `setup_intent.succeeded` (saves the card for that customer).
+`payment_intent.payment_failed`, `payment_intent.requires_action`, and
+`invoice.payment_failed` set `unresolved_charge_failure`. A later
+`payment_intent.succeeded` or paid invoice clears it. No new env var.
+`BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+
+Signup retry still reuses a succeeded SetupIntent, and the duplicate and
+address pre-checks are unchanged. If card setup does not start, the page says
+to try again or call. It does not say the card can be added from Settings
+after the shop exists.
+
 ### Fixed — a Places business suggestion is a street address (2026-11-14)
 The first suggestion for "1 E Washington St, Phoenix" is the subpremise
 `Downtown Phoenix Inc, 1 E Washington St, Phoenix, AZ 85004, USA`. Places

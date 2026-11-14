@@ -81,7 +81,9 @@ def test_settings_setup_intent_allows_only_card():
     _, payload, _ = client.calls[0]
     assert payload["customer"] == "cus_shop"
     assert payload["usage"] == "off_session"
-    assert payload["metadata"] == {"shop_user_id": "user-1"}
+    assert payload["metadata"]["shop_user_id"] == "user-1"
+    assert payload["metadata"]["purpose"] == "card_on_file"
+    assert "shop_id" not in payload["metadata"]
     _assert_card_only(payload)
 
 

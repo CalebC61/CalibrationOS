@@ -16,6 +16,7 @@ os.environ.setdefault("DB_NAME", "ci")
 
 import server  # noqa: E402
 from business_time import zone_window  # noqa: E402
+from onboarding import READY_BILLING  # noqa: E402
 
 HOME = (33.3528, -111.7890)
 EAG = (33.4372, -111.8210)
@@ -111,7 +112,7 @@ def _db():
     })
     db.shops.docs.append({
         "id": "shop-1", "name": "Preferred", "booking_link_token": "tok", "status": "active",
-        "contact_phone": "480-555-0199",
+        "contact_phone": "480-555-0199", **READY_BILLING,
     })
     return db
 

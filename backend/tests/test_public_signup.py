@@ -611,6 +611,22 @@ def test_agreement_tells_the_shop_the_password_rule():
     assert body["password_rule"] == "At least 8 characters."
 
 
+def test_agreement_ip_uses_the_proxy_appended_forwarded_for(monkeypatch):
+    db, _emails = _install(monkeypatch)
+
+    async def run():
+        async with _client() as client:
+            return await client.post(
+                "/api/public/shops",
+                json=_body(email="ip@jarvis.example", shop_name="IP Glass"),
+                headers={"X-Forwarded-For": "1.2.3.4, 203.0.113.9"},
+            )
+
+    response = asyncio.run(run())
+    assert response.status_code == 200, response.text
+    assert db.shop_users.docs[0]["agreement_ip"] == "203.0.113.9"
+
+
 def test_blank_frontend_url_uses_the_public_site():
     assert resolve_frontend_url("", "") == "https://www.thecalibrationcrew.us"
     assert resolve_frontend_url("", "https://www.thecalibrationcrew.us") == "https://www.thecalibrationcrew.us"

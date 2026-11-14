@@ -12,6 +12,7 @@ os.environ.setdefault("DB_NAME", "ci")
 
 import server  # noqa: E402
 from business_time import business_date  # noqa: E402
+from onboarding import READY_BILLING  # noqa: E402
 
 
 def _match(doc, query):
@@ -89,7 +90,7 @@ def test_owner_adds_a_tech_and_one_tech_books_both_sides(monkeypatch):
         "slot_minutes": 45, "max_jobs": 14,
     })
     db.technicians.docs.append({"id": "west", "name": "West", "role": "contractor", "is_active": True})
-    db.shops.docs.append({"id": "shop-1", "booking_link_token": "tok", "status": "active"})
+    db.shops.docs.append({"id": "shop-1", "booking_link_token": "tok", "status": "active", **READY_BILLING})
     calls = {"sms": [], "geo": []}
 
     async def sms(*args, **kwargs):
@@ -175,6 +176,7 @@ def test_public_book_rejects_surprise_and_san_tan_at_the_same_time(monkeypatch):
     })
     db.shops.docs.append({
         "id": "shop-1", "name": "Preferred", "booking_link_token": "tok", "status": "active",
+        **READY_BILLING,
     })
     day = business_date() + timedelta(days=1)
     if day.weekday() == 6:

@@ -175,17 +175,20 @@ def test_a_suspended_shop_cannot_book_even_after_setup():
     assert booking_gate({"id": "new", "requires_billing_setup": True, "status": "active"}, prior)["allowed"] is True
 
 
-def test_existing_shops_keep_booking_and_still_see_a_setup_banner():
+def test_every_shop_needs_a_card_before_it_can_book():
     legacy = {"id": "old", "name": "Safelite"}
     gate = booking_gate(legacy, None)
-    assert gate["allowed"] is True
-    assert gate["grandfathered"] is True
+    assert gate["allowed"] is False
+    assert gate["grandfathered"] is False
     assert gate["banner"] is True
+    assert "Settings" in gate["message"]
     finished = booking_gate(legacy, {
         "agreement_version": AGREEMENT_VERSION,
         "terms_signed_at": "t",
         "terms_signature": "Ada",
         "stripe_payment_method_id": "pm_1",
+        "card_exp_month": 12,
+        "card_exp_year": 2099,
         "charge_authorization_accepted_at": "t",
     })
     assert finished["allowed"] is True
