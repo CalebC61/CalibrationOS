@@ -15,6 +15,27 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — signup card form starts on Stripe API 2026-09-30 (2026-11-14)
+`stripe==16.0.0` pins API version `2026-09-30.endive`. That version returns
+400 `payment_method_types_no_longer_supported` when a SetupIntent, PaymentIntent,
+or Checkout Session is created with `payment_method_types`. Signup was the only
+caller that sent it (`["card"]`), so `POST /api/public/card-setup` answered
+`stripe_unavailable` and the page never mounted the card form.
+
+Card setup now sends `allowed_payment_method_types: ["card"]` and does not send
+`payment_method_types` or `automatic_payment_methods`. The allow-list is the
+code-side replacement: a method that is not in it is not offered, even when the
+Dashboard has that method turned on. That covers the signup SetupIntent, the
+Settings and invite SetupIntent, and the Checkout setup fallback. Checkout also
+sets `wallet_options.link.display` to `never`. Link, Apple Pay, and Google Pay
+are wallets on top of `card`, so both Payment Elements still set those wallets
+to `never`. No Dashboard payment-method change is required.
+
+Job charges do not send `payment_method_types`. They confirm the card already
+saved on the customer, off-session. That path is unchanged. Signup retry still
+reuses a succeeded SetupIntent, and the duplicate and address pre-checks are
+unchanged.
+
 ### Fixed — signup retry no longer re-confirms a saved card (2026-11-13)
 The signup page created one SetupIntent and called `stripe.confirmSetup()` before
 `POST /api/public/shops`. A 409 (duplicate email, or `needs_confirmation` for a
@@ -33,7 +54,8 @@ and address-confirmation checks as create, including `needs_confirmation` and
 not add a new way to learn whether an email exists. The page calls it before
 `confirmSetup`.
 
-The signup SetupIntent is `payment_method_types: ["card"]`. The signup Payment
+The signup SetupIntent allows only `card` (see the 2026-11-14 fix above; this
+used to be `payment_method_types: ["card"]`). The signup Payment
 Element hides Link, Apple Pay, and Google Pay. With no
 `REACT_APP_GOOGLE_MAPS_API_KEY`, the address hint tells the shop to type the
 address and confirm the one the server finds. The password field shows the

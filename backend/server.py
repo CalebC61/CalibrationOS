@@ -4802,6 +4802,8 @@ async def charge_job(job_id: str, tech=Depends(require_owner)):
         raise HTTPException(400, "Stripe is not configured with a test key. A live key stays unused until BILLING_ENABLED is on.")
 
     try:
+        # Confirms the saved card. Do not pass payment_method_types: the pinned
+        # Stripe API version rejects that parameter.
         pi = await asyncio.to_thread(
             stripe_sdk.PaymentIntent.create,
             amount=cents(job["price"]), currency="usd",
