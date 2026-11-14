@@ -160,7 +160,7 @@ function SetupForm({ onSaved }) {
 
   return (
     <form onSubmit={submit}>
-      <PaymentElement />
+      <PaymentElement options={SIGNUP_CARD_ELEMENT_OPTIONS} />
       {error && <div style={{ color: "var(--red)", fontSize: 13, marginTop: 12 }}>{error}</div>}
       <button className="btn btn-primary" style={{ width: "100%", marginTop: 16 }} disabled={!stripe || busy} data-testid="save-card">
         {busy ? "Saving…" : "Save card"}

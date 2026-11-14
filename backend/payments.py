@@ -31,12 +31,28 @@ def create_customer(client, *, email: str, name: str, shop_id: str) -> str:
     return _data(customer).get("id") or customer.id
 
 
+# stripe-python 16 pins API version 2026-09-30.endive. That version rejects
+# payment_method_types on SetupIntent, PaymentIntent, and Checkout Session
+# creates (error payment_method_types_no_longer_supported). The replacement
+# allow-list is allowed_payment_method_types. A type that is not in the list
+# cannot be offered, including when the Dashboard has it turned on.
+# automatic_payment_methods follows the Dashboard instead, so card setup does
+# not send it. Link, Apple Pay, and Google Pay are wallets on top of card;
+# the Payment Element turns those off. Do not send payment_method_types.
+CARD_ONLY_PAYMENT_METHODS = ["card"]
+
+
+def _card_only_params() -> dict:
+    return {"allowed_payment_method_types": list(CARD_ONLY_PAYMENT_METHODS)}
+
+
 def create_setup_intent(client, *, customer_id: str, shop_user_id: str) -> dict:
+    """Card-only SetupIntent for Settings and invite registration."""
     intent = client.v1.setup_intents.create({
         "customer": customer_id,
         "usage": "off_session",
         "metadata": {"shop_user_id": shop_user_id},
-        "automatic_payment_methods": {"enabled": True},
+        **_card_only_params(),
     })
     data = _data(intent)
     return {"id": data.get("id") or intent.id, "client_secret": data.get("client_secret") or intent.client_secret}
@@ -45,14 +61,13 @@ def create_setup_intent(client, *, customer_id: str, shop_user_id: str) -> dict:
 def create_anonymous_setup_intent(client) -> dict:
     """Card-only SetupIntent before a shop exists. The card is attached on signup.
 
-    automatic_payment_methods would offer Link, BLIK, Kakao Pay, Pix, and bank
-    methods. Signup saves a card for off-session job charges, so the intent
-    lists card only. The signup Payment Element also hides Link and wallets.
+    Signup saves a card for off-session job charges. The signup Payment Element
+    also hides Link, Apple Pay, and Google Pay.
     """
     intent = client.v1.setup_intents.create({
         "usage": "off_session",
-        "payment_method_types": ["card"],
         "metadata": {"purpose": "shop_signup"},
+        **_card_only_params(),
     })
     data = _data(intent)
     return {"id": data.get("id") or intent.id, "client_secret": data.get("client_secret") or intent.client_secret}
@@ -70,6 +85,11 @@ def create_checkout_setup(client, *, customer_id: str, shop_user_id: str, succes
         "success_url": success_url,
         "cancel_url": cancel_url,
         "metadata": {"shop_user_id": shop_user_id},
+        # Checkout's allow-list filters the dynamic set. wallet_options is the
+        # code-side switch that hides the Link button. Apple Pay and Google Pay
+        # on hosted Checkout are still Dashboard wallet settings.
+        **_card_only_params(),
+        "wallet_options": {"link": {"display": "never"}},
     })
     data = _data(session)
     return data.get("url") or session.url
@@ -197,6 +217,9 @@ def create_late_fee_invoice(client, *, customer_id: str, job: dict) -> dict:
 
 def charge_job(client, *, job: dict, customer_id: str, payment_method_id: str, receipt_email: str | None) -> dict:
     attempt = int(job.get("charge_attempts") or 0)
+    # Confirms the card already saved on the customer. Do not pass
+    # payment_method_types: API 2026-09-30.endive rejects that parameter.
+    # An off-session confirm of a known payment method needs no allow-list.
     intent = client.v1.payment_intents.create({
         "amount": cents(amount_due(job)),
         "currency": "usd",

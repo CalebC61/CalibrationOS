@@ -485,7 +485,8 @@ def test_signup_card_setup_accepts_only_cards(monkeypatch):
     response = asyncio.run(run())
     assert response.status_code == 200, response.text
     assert response.json()["client_secret"] == "seti_test_secret"
-    assert created[0]["payment_method_types"] == ["card"]
+    assert created[0]["allowed_payment_method_types"] == ["card"]
+    assert "payment_method_types" not in created[0]
     assert "automatic_payment_methods" not in created[0]
 
 

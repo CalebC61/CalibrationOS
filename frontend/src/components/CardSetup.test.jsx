@@ -16,7 +16,15 @@ jest.mock("@stripe/react-stripe-js", () => ({
   useStripe: () => null,
 }));
 
-import { resolveSignupPaymentMethod, stripeErrorMessage } from "./CardSetup";
+import { resolveSignupPaymentMethod, SIGNUP_CARD_ELEMENT_OPTIONS, stripeErrorMessage } from "./CardSetup";
+
+test("the card form hides Link and wallet buttons", () => {
+  expect(SIGNUP_CARD_ELEMENT_OPTIONS.wallets).toEqual({
+    applePay: "never",
+    googlePay: "never",
+    link: "never",
+  });
+});
 
 test("maps setup_intent_unexpected_state and other Stripe errors to friendly copy", () => {
   expect(stripeErrorMessage({
