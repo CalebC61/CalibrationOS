@@ -51,7 +51,9 @@ function PricingTab() {
   return (
     <div className="surface" style={{ padding: 20, maxWidth: 560 }} data-testid="pricing-tab">
       <div className="h3" style={{ marginBottom: 12 }}>Standard Pricing</div>
-      <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>Per-shop custom rates override these defaults.</div>
+      <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
+        Standard booking prices, and the wholesale amount on a standard Xero draft. Real Fast, Preferred, and a shop’s own rates are set apart from these.
+      </div>
       {pricing.map(p => (
         <div key={p.calibration_type} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
           <div style={{ flex: 1 }}>{p.label}</div>
@@ -64,6 +66,75 @@ function PricingTab() {
       ))}
       <button className="btn btn-primary" onClick={save} disabled={saving}
         style={{ marginTop: 16 }} data-testid="save-pricing">{saving ? "Saving…" : "Save Pricing"}</button>
+      <WholesaleCards />
+    </div>
+  );
+}
+
+const RATE_KEYS = [
+  ["static", "Static"],
+  ["dynamic", "Dynamic"],
+  ["dual", "Dual"],
+  ["triple", "Triple / Subaru"],
+  ["tesla", "Tesla"],
+];
+
+function WholesaleCards() {
+  const [cards, setCards] = useState({ realfast: {}, preferred: {} });
+  const [tripFee, setTripFee] = useState(30);
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    const { data } = await api.get("/reference/wholesale-rates");
+    setCards({ realfast: data.realfast || {}, preferred: data.preferred || {} });
+    setTripFee(data.trip_fee);
+  }
+  useEffect(() => { load(); }, []);
+
+  function setRate(card, key, value) {
+    setCards(current => ({ ...current, [card]: { ...current[card], [key]: value } }));
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const body = { realfast: {}, preferred: {} };
+      for (const card of ["realfast", "preferred"]) {
+        for (const [key] of RATE_KEYS) body[card][key] = Number(cards[card][key]);
+      }
+      await api.put("/settings/wholesale-rates", body);
+      await load();
+      alert("Wholesale rates saved.");
+    } catch (e) {
+      alert(e.response?.data?.detail || "Save failed");
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div style={{ marginTop: 28 }} data-testid="wholesale-rates">
+      <div className="h3" style={{ marginBottom: 8 }}>Real Fast and Preferred</div>
+      <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
+        Xero drafts use these amounts for those shops. Standard drafts use the prices above.
+        A ${Number(tripFee).toFixed(0)} trip fee is its own line when the job is out of area or a trip charge.
+      </div>
+      {["realfast", "preferred"].map(card => (
+        <div key={card} style={{ marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>{card === "realfast" ? "Real Fast" : "Preferred"}</div>
+          {RATE_KEYS.map(([key, label]) => (
+            <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ flex: 1 }}>{label}</div>
+              <div style={{ width: 140 }}>
+                <input className="input" type="number" step="0.01" value={cards[card][key] ?? ""}
+                  onChange={e => setRate(card, key, e.target.value)}
+                  data-testid={`wholesale-${card}-${key}`} />
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+      <button className="btn btn-primary" onClick={save} disabled={saving} data-testid="save-wholesale">
+        {saving ? "Saving…" : "Save Real Fast and Preferred"}
+      </button>
     </div>
   );
 }
@@ -401,7 +472,7 @@ function IntegrationsTab() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const x = params.get("xero");
-    if (x === "connected") setBanner({ ok: true, msg: "Xero connected. Completed jobs will now create real draft invoices." });
+    if (x === "connected") setBanner({ ok: true, msg: "Xero connected. A completed job will file a draft for review." });
     else if (x === "error") setBanner({ ok: false, msg: "Xero connection failed. Please try connecting again." });
     if (x) window.history.replaceState({}, "", window.location.pathname);
     load();
@@ -419,7 +490,7 @@ function IntegrationsTab() {
   }
 
   async function disconnectXero() {
-    if (!window.confirm("Disconnect Xero? New invoices will fall back to mock mode until reconnected.")) return;
+    if (!window.confirm("Disconnect Xero? Completed jobs will be marked needs attention until Xero is connected again.")) return;
     setBusy(true);
     try { await api.post("/auth/xero/disconnect"); await load(); }
     catch (e) { setBanner({ ok: false, msg: "Disconnect failed." }); }

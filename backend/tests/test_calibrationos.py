@@ -237,12 +237,18 @@ def test_full_job_lifecycle_with_invoice(owner_token):
     r = requests.post(f"{API}/jobs/{job_id}/complete",
                       json={"result": "pass", "notes": "All good", "document_name": "report.pdf"},
                       headers=auth(owner_token), timeout=30)
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
     d = r.json()
     assert d["job"]["status"] == "complete"
-    assert d["job"]["invoice_id"].startswith("XERO-")
-    assert d["invoice"]["line_items"][0]["unit_amount"] == 175.00
-    # Invoice listed
+    assert d["job"]["invoice_id"]
+    assert d["xero"]["status"] in ("draft", "needs_attention")
+    if d["xero"]["status"] == "draft":
+        assert d["xero"]["invoice_number"]
+        assert d["job"]["xero_draft_status"] == "draft"
+    else:
+        assert d["xero"]["reason"]
+        assert d["job"]["xero_draft_status"] == "needs_attention"
+    # The card/proof invoice is still listed. A Xero draft, when filed, is listed too.
     r = requests.get(f"{API}/invoices", headers=auth(owner_token), timeout=30)
     assert r.status_code == 200
     assert any(inv["invoice_id"] == d["job"]["invoice_id"] for inv in r.json())

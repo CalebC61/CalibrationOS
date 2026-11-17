@@ -22,6 +22,14 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-17): completing a job files one Xero draft.** The card charge is
+  unchanged (`BILLING_ENABLED`, `SHOP_EMAILS_ENABLED`). The draft is ACCREC, status
+  DRAFT, due the job date, no tax. It does not create a Xero contact and it does not
+  send the invoice. A miss is marked needs attention on the job. The owner can set a
+  shop's Xero contact id and edit Real Fast / Preferred wholesale rates. No new env
+  vars. Connect requests `accounting.attachments` and `accounting.settings.read` from
+  the `XERO_SCOPES` constant in `backend/server.py`. The owner connects Xero again
+  so the saved token includes them.
 - **Session (2026-11-17): pre-launch guards.** The shop day map shows the whole
   route. Other shops' stops are a rough pin and a time window, without names or
   the job id. Sign-in, password reset, public geocode, and the contact form

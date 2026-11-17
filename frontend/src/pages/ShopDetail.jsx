@@ -27,6 +27,8 @@ export default function ShopDetail() {
         pricing_tier: edit.pricing_tier || "standard",
         status: edit.status,
         notes: edit.notes || null,
+        xero_contact_id: (edit.xero_contact_id || "").trim() || null,
+        wholesale_schedule: edit.wholesale_schedule || "auto",
       });
       setShop(data); setEdit(data);
       alert("Saved");
@@ -96,6 +98,23 @@ export default function ShopDetail() {
             A new address updates this shop’s map pin. Nothing is sent to the shop.
           </div>
           <Field label="Contact email"><input className="input" value={edit.contact_email || ""} onChange={e => setEdit({...edit, contact_email: e.target.value})} /></Field>
+          <Field label="Xero contact ID">
+            <input className="input" value={edit.xero_contact_id || ""} data-testid="shop-xero-contact"
+              onChange={e => setEdit({...edit, xero_contact_id: e.target.value})} />
+          </Field>
+          <div className="muted" style={{ fontSize: 13, marginTop: -8, marginBottom: 14 }}>
+            Paste the contact’s ID from Xero. If this is blank, completion matches the shop by name and saves the ID. A contact is never created.
+          </div>
+          <Field label="Wholesale card">
+            <select className="input" value={edit.wholesale_schedule || "auto"} data-testid="shop-wholesale-schedule"
+              onChange={e => setEdit({...edit, wholesale_schedule: e.target.value})}>
+              <option value="auto">Match the shop name</option>
+              <option value="standard">Standard</option>
+              <option value="realfast">Real Fast</option>
+              <option value="preferred">Preferred</option>
+              <option value="custom">This shop’s custom rates</option>
+            </select>
+          </Field>
           <button className="btn btn-primary" disabled={saving} onClick={save} data-testid="save-shop">{saving ? "Saving…" : "Save Changes"}</button>
         </div>
       </div>

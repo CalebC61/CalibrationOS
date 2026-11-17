@@ -8,6 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReadPreference, ReturnDocument
 import os
 import asyncio
+import html
 import logging
 import uuid
 import hashlib
@@ -87,8 +88,12 @@ PUBLIC_SITE_URL = _env('PUBLIC_SITE_URL', 'https://www.thecalibrationcrew.us').r
 if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
 
-# Xero (real-if-configured, else mock — mirrors the Stripe/Resend pattern)
-from xero_invoice import xero_invoice_body, line_two_description, due_date_string
+# Xero drafts filed when a job is completed. The card charge path is separate.
+from xero_invoice import merge_special_rates, parse_pop
+from xero_draft import (
+    HttpXeroGateway, draft_is_finished, file_calibration_draft, public_xero, state_from_job,
+)
+SPECIAL_WHOLESALE = merge_special_rates(None)
 # Card charging (real-if-Stripe-configured — see /charge-queue/{job_id}/charge)
 from charging import cents, chargeable_reason, interpret_payment_intent, decline_message
 from onboarding import (
@@ -174,7 +179,12 @@ XERO_CLIENT_SECRET = os.environ.get('XERO_CLIENT_SECRET', '')
 XERO_REDIRECT_URI = os.environ.get('XERO_REDIRECT_URI', '')
 XERO_SALES_ACCOUNT_CODE = _env('XERO_SALES_ACCOUNT_CODE', '200')
 XERO_POST_CONNECT_REDIRECT = _env('XERO_POST_CONNECT_REDIRECT', '/settings')
-XERO_SCOPES = "openid profile email accounting.transactions accounting.contacts offline_access"
+# Sent on the Xero connect URL. This is not an env var. A token already saved
+# keeps the scopes from the last connect until the owner connects again.
+XERO_SCOPES = (
+    "openid profile email accounting.transactions accounting.contacts "
+    "accounting.attachments accounting.settings.read offline_access"
+)
 XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
 XERO_CONNECTIONS_URL = "https://api.xero.com/connections"
@@ -769,26 +779,28 @@ async def mock_send_sms(to: str, body: str, kind: str = "generic", job_id: Optio
     return doc
 
 async def mock_xero_create_invoice(job: dict, shop: dict, vehicle: dict, pricing_label: str) -> dict:
-    """Mock Xero invoice creation. Returns a fake invoice ID and stores the full payload."""
+    """Legacy mock writer. Completing a job does not call this.
+
+    A finished job files a real Xero draft, or is marked needs attention.
+    It does not invent a successful invoice when Xero is not connected.
+    """
     invoice_id = f"XERO-{secrets.token_hex(6).upper()}"
-    line2 = line_two_description(vehicle)
     payload = {
         "invoice_id": invoice_id,
         "provider": "mock",
         "type": "ACCREC",
         "status": "DRAFT",
-        "contact_name": shop["name"],
-        "due_date": due_date_string(now_utc()),
+        "contact_name": shop.get("name"),
         "line_items": [
-            {"description": pricing_label, "quantity": 1, "unit_amount": float(job["price"]), "account_code": XERO_SALES_ACCOUNT_CODE},
-            {"description": line2, "quantity": 1, "unit_amount": 0.00, "account_code": XERO_SALES_ACCOUNT_CODE},
+            {"description": pricing_label, "quantity": 1, "unit_amount": float(job.get("price") or 0),
+             "account_code": XERO_SALES_ACCOUNT_CODE},
         ],
-        "total": float(job["price"]),
+        "total": float(job.get("price") or 0),
         "created_at": iso(now_utc()),
         "job_id": job["id"],
     }
     await db.mock_xero_invoices.insert_one(payload.copy())
-    logger.info(f"[MOCK XERO] Created draft invoice {invoice_id} for {shop['name']} — ${job['price']}")
+    logger.info("[MOCK XERO] stored %s (not used for job completion)", invoice_id)
     return payload
 
 # ---------- Xero real integration (used when xero_enabled() and the owner is connected) ----------
@@ -825,6 +837,7 @@ def _xero_get_contact_id(access_token, tenant_id, name) -> Optional[str]:
     return contacts[0]["ContactID"] if contacts else None
 
 def _xero_create_contact(access_token, tenant_id, shop) -> str:
+    """Not used. Completing a job never creates a Xero contact."""
     body = {"Contacts": [{
         "Name": shop["name"],
         "EmailAddress": shop.get("contact_email") or "",
@@ -896,57 +909,239 @@ async def _xero_access_token(owner: dict) -> str:
 def xero_owner_connected(owner: Optional[dict]) -> bool:
     return bool(owner and owner.get("xero_tenant_id") and (owner.get("xero_access_token") or owner.get("xero_refresh_token")))
 
-async def create_invoice_for_job(job, shop, vehicle, pricing_label, pdf_bytes=None, pdf_name=None) -> dict:
-    """Create an ACCREC draft invoice — real Xero when configured + connected, otherwise the mock.
+def _xero_public_from_job(job: dict) -> dict:
+    return {
+        "status": job.get("xero_draft_status"),
+        "invoice_id": job.get("xero_invoice_id"),
+        "invoice_number": job.get("xero_invoice_number"),
+        "url": job.get("xero_invoice_url"),
+        "reason": job.get("xero_attention_reason"),
+    }
 
-    Always returns a dict with at least: invoice_id, provider, status, total, line_items, job_id.
-    On any Xero error it falls back to the mock so job completion never fails on an invoicing hiccup.
+
+async def _latest_scan(job_id: str):
+    """Newest uploaded PDF that actually has bytes. Empty placeholder rows are ignored."""
+    docs = await db.documents.find({"job_id": job_id}).sort("uploaded_at", -1).to_list(20)
+    for doc in docs:
+        if not doc.get("data_b64"):
+            continue
+        name = doc.get("file_name") or ""
+        ctype = (doc.get("content_type") or "").lower()
+        if not (name.lower().endswith(".pdf") or "pdf" in ctype):
+            continue
+        try:
+            binary = base64.b64decode(doc["data_b64"])
+        except Exception:
+            continue
+        meta = {k: v for k, v in doc.items() if k not in ("data_b64", "_id")}
+        return binary, name, meta
+    return None, None, None
+
+
+async def _acquire_xero_lock(job_id: str) -> bool:
+    now = now_utc()
+    stale = iso(now - timedelta(minutes=3))
+    res = await db.jobs.update_one(
+        {"id": job_id, "$or": [
+            {"xero_draft_lock": {"$exists": False}},
+            {"xero_draft_lock": None},
+            {"xero_draft_lock_at": {"$lt": stale}},
+        ]},
+        {"$set": {"xero_draft_lock": "open", "xero_draft_lock_at": iso(now)}},
+    )
+    return res.modified_count == 1
+
+
+async def _release_xero_lock(job_id: str) -> None:
+    await db.jobs.update_one(
+        {"id": job_id},
+        {"$unset": {"xero_draft_lock": "", "xero_draft_lock_at": ""}},
+    )
+
+
+async def _save_xero_result(job: dict, shop: dict, result: dict) -> None:
+    state = dict(result.get("state") or {})
+    state.pop("contact_id_to_save", None)
+    fields = {
+        "xero_invoice_id": result.get("invoice_id") or state.get("invoice_id"),
+        "xero_invoice_number": result.get("invoice_number") or state.get("invoice_number"),
+        "xero_invoice_url": result.get("url") or state.get("url"),
+        "xero_draft_status": result.get("status") or state.get("status"),
+        "xero_attention_reason": result.get("reason"),
+        "xero_draft_state": state,
+        "updated_at": iso(now_utc()),
+    }
+    if result.get("learned_vin") and not (job.get("vehicle_vin") or job.get("vin")):
+        fields["vehicle_vin"] = result["learned_vin"]
+    await db.jobs.update_one({"id": job["id"]}, {"$set": fields})
+    contact_id = result.get("contact_id_to_save")
+    shop_id = (shop or {}).get("id")
+    if contact_id and shop_id:
+        await db.shops.update_one(
+            {"id": shop_id, "$or": [
+                {"xero_contact_id": {"$exists": False}},
+                {"xero_contact_id": None},
+                {"xero_contact_id": ""},
+            ]},
+            {"$set": {"xero_contact_id": contact_id, "updated_at": iso(now_utc())}},
+        )
+    invoice_id = fields["xero_invoice_id"]
+    if not invoice_id:
+        return
+    created_at = state.get("created_at") or iso(now_utc())
+    row = {
+        "invoice_id": fields["xero_invoice_number"] or invoice_id,
+        "xero_invoice_id": invoice_id,
+        "provider": "xero",
+        "type": "ACCREC",
+        "status": "DRAFT" if fields["xero_draft_status"] == "draft" else "NEEDS_ATTENTION",
+        "contact_name": (shop or {}).get("name"),
+        "total": float(result.get("total") or state.get("total") or 0),
+        "invoice_url": fields["xero_invoice_url"],
+        "job_id": job["id"],
+        "attention_reason": result.get("reason"),
+    }
+    await db.xero_invoices.update_one(
+        {"job_id": job["id"]},
+        {"$set": row, "$setOnInsert": {"created_at": created_at}},
+        upsert=True,
+    )
+
+
+async def _notify_maddy(job: dict, shop: dict, result: dict) -> None:
+    """Tell Maddy the draft number and link. Owner mail, not shop mail."""
+    state = result.get("state") or {}
+    if result.get("status") != "draft" or not result.get("invoice_number") or state.get("maddy_notified"):
+        return
+    number = result["invoice_number"]
+    url = result.get("url") or ""
+    shop_name = " ".join(str((shop or {}).get("name") or "shop").split())
+    body = (
+        f"<p>Draft {html.escape(number)} for {html.escape(shop_name)} is ready to review.</p>"
+        "<p>It is still a draft. CalibrationOS did not send it.</p>"
+    )
+    if url:
+        body += f'<p><a href="{html.escape(url, quote=True)}">Open the draft in Xero</a></p>'
+    sent = await _send_booking_message({
+        "to": _env("ADMIN_EMAIL", "admin@thecalibrationcrew.us"),
+        "subject": f"Xero draft {number} — {shop_name}",
+        "html": body,
+        "kind": "xero_draft",
+        "reply_to": owner_notify_email(),
+        "meta": {"job_id": job.get("id"), "invoice_number": number, "url": url},
+    }, "owner")
+    if not sent or sent.get("error"):
+        return
+    state = dict(state)
+    state["maddy_notified"] = True
+    result["state"] = state
+    await db.jobs.update_one({"id": job["id"]}, {"$set": {"xero_draft_state": state}})
+
+
+def _attention(state: dict, reason: str) -> dict:
+    state = dict(state)
+    state["status"] = "needs_attention"
+    state["reason"] = reason
+    return {
+        "status": "needs_attention",
+        "reason": reason,
+        "invoice_id": state.get("invoice_id"),
+        "invoice_number": state.get("invoice_number"),
+        "url": state.get("url"),
+        "total": state.get("total"),
+        "state": state,
+    }
+
+
+async def create_invoice_for_job(job_id: str) -> dict:
+    """File one ACCREC draft for this job, or mark the job needs attention.
+
+    Does not create a Xero contact, authorise an invoice, or email it from Xero.
+    A second call reuses the invoice id already stored on the job.
+    Card charging is not this function.
     """
-    if xero_enabled():
+    job = await db.jobs.find_one({"id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    state = state_from_job(job)
+    shop = await db.shops.find_one({"id": job.get("shop_id")}) or {
+        "id": job.get("shop_id"), "name": job.get("shop_name") or "",
+    }
+    if draft_is_finished(state):
+        result = {
+            "status": "draft",
+            "invoice_id": state.get("invoice_id"),
+            "invoice_number": state.get("invoice_number"),
+            "url": state.get("url"),
+            "reason": None,
+            "state": state,
+        }
+        await _notify_maddy(job, shop, result)
+        return public_xero(result)
+    if not await _acquire_xero_lock(job_id):
+        fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0}) or {}
+        if draft_is_finished(state_from_job(fresh)):
+            return _xero_public_from_job(fresh)
+        return {
+            "status": fresh.get("xero_draft_status") or "needs_attention",
+            "invoice_id": fresh.get("xero_invoice_id"),
+            "invoice_number": fresh.get("xero_invoice_number"),
+            "url": fresh.get("xero_invoice_url"),
+            "reason": fresh.get("xero_attention_reason") or "The Xero draft is already being filed.",
+        }
+    try:
+        job = await db.jobs.find_one({"id": job_id})
+        shop = await db.shops.find_one({"id": job.get("shop_id")}) or shop
+        vehicle = await db.vehicles.find_one({"id": job["vehicle_id"]}) if job.get("vehicle_id") else None
+        scan_pdf, scan_name, _doc = await _latest_scan(job_id)
+        state = state_from_job(job)
+        if draft_is_finished(state):
+            result = {
+                "status": "draft", "invoice_id": state.get("invoice_id"),
+                "invoice_number": state.get("invoice_number"), "url": state.get("url"),
+                "reason": None, "state": state,
+            }
+            await _notify_maddy(job, shop, result)
+            return public_xero(result)
         owner = await _xero_owner()
-        if xero_owner_connected(owner):
-            try:
-                access = await _xero_access_token(owner)
-                tenant = owner["xero_tenant_id"]
-                contact_id = await asyncio.to_thread(_xero_get_contact_id, access, tenant, shop["name"])
-                if not contact_id:
-                    contact_id = await asyncio.to_thread(_xero_create_contact, access, tenant, shop)
-                body = xero_invoice_body(contact_id, job["price"], pricing_label, vehicle,
-                                         XERO_SALES_ACCOUNT_CODE, now_utc())
-                inv = await asyncio.to_thread(_xero_post_invoice, access, tenant, body)
-                invoice_id = inv.get("InvoiceID")
-                attachment_added = False
-                if pdf_bytes and invoice_id:
-                    try:
-                        await asyncio.to_thread(_xero_attach_pdf, access, tenant, invoice_id,
-                                                pdf_name or "calibration.pdf", pdf_bytes)
-                        attachment_added = True
-                    except Exception as e:
-                        logger.error(f"[XERO] attachment failed for {invoice_id}: {e}")
-                due = inv.get("DueDateString") or inv.get("DueDate") or ""
-                result = {
-                    "invoice_id": invoice_id,
-                    "provider": "xero",
-                    "type": "ACCREC",
-                    "status": inv.get("Status", "DRAFT"),
-                    "contact_name": shop["name"],
-                    "due_date": (due[:10] if due else due_date_string(now_utc())),
-                    "line_items": [
-                        {"description": pricing_label, "quantity": 1, "unit_amount": float(job["price"]), "account_code": XERO_SALES_ACCOUNT_CODE},
-                        {"description": line_two_description(vehicle), "quantity": 1, "unit_amount": 0.00, "account_code": XERO_SALES_ACCOUNT_CODE},
-                    ],
-                    "total": float(inv.get("Total", job["price"])),
-                    "attachment_added": attachment_added,
-                    "invoice_number": inv.get("InvoiceNumber"),
-                    "created_at": iso(now_utc()),
-                    "job_id": job["id"],
-                }
-                await db.xero_invoices.insert_one(result.copy())
-                logger.info(f"[XERO] Created {inv.get('Status', 'DRAFT')} invoice {invoice_id} for {shop['name']} (attachment={attachment_added})")
-                return result
-            except Exception as e:
-                logger.error(f"[XERO] real invoice failed, falling back to mock: {e}")
-    return await mock_xero_create_invoice(job, shop, vehicle, pricing_label)
+        if not xero_enabled() or not xero_owner_connected(owner):
+            result = _attention(state, "Xero is not connected.")
+            await _save_xero_result(job, shop, result)
+            logger.info("[XERO] job %s needs attention: Xero is not connected.", job_id)
+            return public_xero(result)
+        try:
+            access = await _xero_access_token(owner)
+        except Exception:
+            logger.exception("[XERO] token refresh failed for job %s", job_id)
+            result = _attention(state, "Xero is not connected.")
+            await _save_xero_result(job, shop, result)
+            return public_xero(result)
+        standard = {key: float(value["price"]) for key, value in STANDARD_PRICING.items()}
+        special = {key: dict(card) for key, card in SPECIAL_WHOLESALE.items()}
+        gateway = HttpXeroGateway(access, owner["xero_tenant_id"], XERO_API_BASE)
+        result = await asyncio.to_thread(
+            file_calibration_draft,
+            job=job,
+            shop=shop,
+            vehicle=vehicle,
+            calibration_type=job.get("calibration_type"),
+            pop=job.get("pop_approved"),
+            scan_pdf=scan_pdf,
+            scan_name=scan_name,
+            standard_prices=standard,
+            special_rates=special,
+            gateway=gateway,
+            state=state,
+        )
+        await _save_xero_result(job, shop, result)
+        await _notify_maddy(job, shop, result)
+        if result.get("status") == "draft":
+            logger.info("[XERO] draft %s for job %s", result.get("invoice_number"), job_id)
+        else:
+            logger.warning("[XERO] job %s needs attention: %s", job_id, result.get("reason"))
+        return public_xero(result)
+    finally:
+        await _release_xero_lock(job_id)
 
 # ---------- Constants ----------
 STANDARD_PRICING = {
@@ -970,7 +1165,8 @@ CALEB_HOME = {"lat": 33.3528, "lng": -111.7890, "address": "Gilbert, AZ"}
 
 # ---------- Settings persistence (pricing + zones can be edited at runtime) ----------
 async def load_settings():
-    """Load pricing and zones from DB into the in-memory dicts. Idempotent."""
+    """Load pricing, zones, and wholesale cards from DB. Idempotent."""
+    global SPECIAL_WHOLESALE
     pricing_doc = await db.app_settings.find_one({"_id": "pricing"})
     if pricing_doc and "data" in pricing_doc:
         for k, v in pricing_doc["data"].items():
@@ -985,6 +1181,8 @@ async def load_settings():
                 for field in ("start", "end", "max_jobs", "slot_minutes", "buffer_minutes"):
                     if field in v and v[field] is not None:
                         ZONES[k][field] = v[field]
+    wholesale_doc = await db.app_settings.find_one({"_id": "wholesale_rates"})
+    SPECIAL_WHOLESALE = merge_special_rates((wholesale_doc or {}).get("data") if wholesale_doc else None)
 
 async def save_pricing():
     await db.app_settings.update_one(
@@ -1032,6 +1230,8 @@ class ShopIn(BaseModel):
     confirmed_address: Optional[str] = None
     acknowledge_duplicate: bool = False
     place_id: Optional[str] = None
+    xero_contact_id: Optional[str] = None
+    wholesale_schedule: Optional[Literal["auto", "standard", "realfast", "preferred", "custom"]] = None
 
 class ShopUpdate(ShopIn):
     status: Optional[Literal["active", "paused", "inactive", "suspended"]] = None
@@ -1082,6 +1282,8 @@ class JobComplete(BaseModel):
     result: Literal["pass", "fail"]
     notes: Optional[str] = None
     document_name: Optional[str] = "calibration_report.pdf"
+    calibration_type: Optional[Literal["static", "dynamic", "dual", "triple", "tesla"]] = None
+    pop: Optional[str] = None
 
 class DispatchIn(BaseModel):
     contractor_id: str
@@ -1475,6 +1677,10 @@ async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner
         if not email:
             raise HTTPException(400, "Enter a valid email.")
         update["contact_email"] = email
+    if "xero_contact_id" in update:
+        update["xero_contact_id"] = (update.get("xero_contact_id") or "").strip() or None
+    if update.get("wholesale_schedule") == "auto":
+        update["wholesale_schedule"] = None
     if "address" in update and (update["address"] or "").strip() != (shop.get("address") or "").strip():
         try:
             geo = await geocode_for_regeocode(update["address"])
@@ -2959,6 +3165,8 @@ async def charge_trip_fee_only(job_id: str, body: TripFeeIn, tech=Depends(requir
         "updated_at": now,
     }})
     fresh = await _settle_completed_job(job_id)
+    await create_invoice_for_job(job_id)
+    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     return {"job": fresh}
 
 
@@ -2992,39 +3200,58 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
     if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
         raise HTTPException(403, "Not your job")
 
-    shop = await db.shops.find_one({"id": job["shop_id"]})
-    vehicle = await db.vehicles.find_one({"id": job["vehicle_id"]})
+    if body.pop is not None:
+        try:
+            parse_pop(body.pop)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     already_complete = job.get("status") == "complete"
-    file_name = f"{job['customer_last_name']}_{shop['name'].upper().replace(' ', '')}_{job['vehicle_make']}_{job['vehicle_model']}_{job['vehicle_year']}.pdf"
-    doc = None
+    updates = {"updated_at": iso(now_utc())}
+    if body.calibration_type and not job.get("xero_invoice_id"):
+        updates["calibration_type"] = body.calibration_type
+        updates["calibration_label"] = STANDARD_PRICING[body.calibration_type]["label"]
+    if body.pop is not None and not job.get("xero_invoice_id"):
+        updates["pop_approved"] = str(body.pop)
     if not already_complete:
-        doc = {
-            "id": gen_id(), "job_id": job_id, "file_name": file_name,
-            "storage_path": f"calibration-docs/Recals/Recal - Caleb/{datetime.fromisoformat(job['scheduled_start']).strftime('%Y/%B')}/{file_name}",
-            "file_type": "pdf", "uploaded_at": iso(now_utc()), "uploaded_by": tech["id"],
-        }
-        await db.documents.insert_one(doc.copy())
-        await db.jobs.update_one({"id": job_id}, {"$set": {
+        # The uploaded PDF is the post-scan file. Do not insert a second row with no bytes.
+        updates.update({
             "status": "complete",
             "actual_completion": job.get("actual_completion") or iso(now_utc()),
             "result": body.result,
             "notes": completion_notes(job.get("notes"), body.notes),
             "payment_mode": job.get("payment_mode") or CHARGE_MODE,
-            "updated_at": iso(now_utc()),
-        }})
+        })
+    if len(updates) > 1 or not already_complete:
+        await db.jobs.update_one({"id": job_id}, {"$set": updates})
+    if not already_complete and job.get("notification_phone"):
         msg = (f"ADAS calibration complete on your {job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}. "
                f"Your invoice is the proof of purchase. — The Calibration Crew")
-        if job.get("notification_phone"):
-            await mock_send_sms(job["notification_phone"], msg, kind="completed", job_id=job_id)
+        await mock_send_sms(job["notification_phone"], msg, kind="completed", job_id=job_id)
 
     fresh = await _settle_completed_job(job_id)
+    xero = await create_invoice_for_job(job_id)
+    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    _binary, _name, doc = await _latest_scan(job_id)
     invoice = {
         "invoice_id": fresh.get("invoice_id"),
         "provider": fresh.get("invoice_provider"),
         "status": fresh.get("invoice_status"),
     }
-    return {"job": fresh, "invoice": invoice, "document": doc}
+    return {"job": fresh, "invoice": invoice, "document": doc, "xero": xero}
+
+
+@api.post("/jobs/{job_id}/retry-xero-draft")
+async def retry_xero_draft(job_id: str, tech=Depends(require_owner)):
+    """File the Xero draft again. Never creates a second invoice for this job."""
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") != "complete":
+        raise HTTPException(400, "Complete the job before retrying the Xero draft.")
+    xero = await create_invoice_for_job(job_id)
+    fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    return {"job": fresh, "xero": xero}
 
 # ---------- Dashboard summary ----------
 @api.get("/dashboard/summary")
@@ -3763,6 +3990,49 @@ async def update_pricing(body: PricingUpdate, tech=Depends(require_owner)):
             STANDARD_PRICING[k]["price"] = float(v)
     await save_pricing()
     return [{"calibration_type": k, **v} for k, v in STANDARD_PRICING.items()]
+
+def _wholesale_payload() -> dict:
+    from billing import TRIP_FEE_DOLLARS
+    keys = ("static", "dynamic", "dual", "triple", "tesla")
+    return {
+        "standard": {key: STANDARD_PRICING[key]["price"] for key in keys},
+        "realfast": dict(SPECIAL_WHOLESALE["realfast"]),
+        "preferred": dict(SPECIAL_WHOLESALE["preferred"]),
+        "trip_fee": TRIP_FEE_DOLLARS,
+    }
+
+class WholesaleCard(BaseModel):
+    static: float
+    dynamic: float
+    dual: float
+    triple: float
+    tesla: float
+
+class WholesaleUpdate(BaseModel):
+    realfast: WholesaleCard
+    preferred: WholesaleCard
+
+@api.get("/reference/wholesale-rates")
+async def get_wholesale_rates(tech=Depends(require_owner)):
+    """Standard booking rates, plus the Real Fast and Preferred wholesale cards."""
+    return _wholesale_payload()
+
+@api.put("/settings/wholesale-rates")
+async def update_wholesale_rates(body: WholesaleUpdate, tech=Depends(require_owner)):
+    """Owner edits the Real Fast and Preferred cards. Standard stays on the pricing screen."""
+    global SPECIAL_WHOLESALE
+    data = {"realfast": body.realfast.model_dump(), "preferred": body.preferred.model_dump()}
+    for card in data.values():
+        for value in card.values():
+            if float(value) < 0:
+                raise HTTPException(400, "Rates cannot be negative.")
+    SPECIAL_WHOLESALE = merge_special_rates(data)
+    await db.app_settings.update_one(
+        {"_id": "wholesale_rates"},
+        {"$set": {"data": SPECIAL_WHOLESALE, "updated_at": iso(now_utc())}},
+        upsert=True,
+    )
+    return _wholesale_payload()
 
 @api.put("/settings/zones/{zone_key}")
 async def update_zone(zone_key: str, body: ZoneUpdate, tech=Depends(require_owner)):
