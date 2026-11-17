@@ -37,6 +37,82 @@ def test_pdf_vin_is_used_when_the_file_contains_one():
     assert vin_from_pdf(b"%PDF no vin here") is None
 
 
+def _glyph_pdf(font_path: str) -> bytes:
+    """A post-scan style page whose text is font glyph ids, not literal characters."""
+    import io
+
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.pdfgen import canvas
+
+    pdfmetrics.registerFont(TTFont("GlyphVin", font_path))
+    buffer = io.BytesIO()
+    page = canvas.Canvas(buffer, pagesize=(460, 220))
+    page.setFont("GlyphVin", 11)
+    page.drawString(36, 160, "Part 5FNYF5H57LB019570 listed in the procedure")
+    page.drawString(36, 120, "VIN")
+    page.drawString(36, 98, "1HGCM82633A004352")
+    page.save()
+    return buffer.getvalue()
+
+
+def test_glyph_encoded_pdf_uses_the_vin_next_to_the_label():
+    """Real scan PDFs store text per glyph. The old stream reader misses them."""
+    import os
+
+    from xero_invoice import _vin_from_compressed_streams
+
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    ]
+    font_path = next((path for path in candidates if os.path.exists(path)), None)
+    assert font_path, "a TrueType font is required to build the glyph-encoded PDF"
+    pdf = _glyph_pdf(font_path)
+    assert b"1HGCM82633A004352" not in pdf
+    assert _vin_from_compressed_streams(pdf) is None
+    assert vin_from_pdf(pdf) == "1HGCM82633A004352"
+
+
+def test_changing_the_calibration_type_prices_the_shop_wholesale_rate():
+    from xero_invoice import price_updates_for_calibration_change
+
+    standard = {"name": "Star Windshield"}
+    changed = price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 125},
+        standard, "tesla", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert changed == {"price": 225.0, "calibration_price": 225.0}
+
+    preferred = price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 155, "outside_service_area": True, "calibration_price": 125},
+        {"name": "Preferred Auto Glass"}, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert preferred["calibration_price"] == 75
+    assert preferred["price"] == 105
+
+    custom = price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 99},
+        {"name": "Local Glass", "pricing_tier": "custom", "custom_rate_dual": 150},
+        "dual", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert custom["price"] == 150
+
+    assert price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 99},
+        standard, "static", STANDARD, DEFAULT_SPECIAL_RATES,
+    ) == {}
+    assert price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 30, "calibration_not_performed": True},
+        standard, "dual", STANDARD, DEFAULT_SPECIAL_RATES,
+    ) == {}
+    assert price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 125, "xero_invoice_id": "INV-1"},
+        standard, "dual", STANDARD, DEFAULT_SPECIAL_RATES,
+    ) == {}
+
+
 def test_job_date_is_the_phoenix_day_and_due_the_same_day():
     # 06:30 UTC is still the previous evening in Phoenix (UTC-7).
     job = {"scheduled_start": "2026-06-17T06:30:00+00:00"}

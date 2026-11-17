@@ -89,9 +89,10 @@ if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
 
 # Xero drafts filed when a job is completed. The card charge path is separate.
-from xero_invoice import merge_special_rates, parse_pop
+from xero_invoice import merge_special_rates, parse_pop, price_updates_for_calibration_change
 from xero_draft import (
-    HttpXeroGateway, draft_is_finished, file_calibration_draft, public_xero, state_from_job,
+    HttpXeroGateway, draft_is_finished, file_calibration_draft, public_xero, spec_document_name,
+    state_from_job,
 )
 SPECIAL_WHOLESALE = merge_special_rates(None)
 # Card charging (real-if-Stripe-configured — see /charge-queue/{job_id}/charge)
@@ -3214,6 +3215,16 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
     if body.calibration_type and not job.get("xero_invoice_id"):
         updates["calibration_type"] = body.calibration_type
         updates["calibration_label"] = STANDARD_PRICING[body.calibration_type]["label"]
+        shop = await db.shops.find_one({"id": job.get("shop_id")}) if job.get("shop_id") else None
+        if not shop:
+            shop = {"name": job.get("shop_name") or ""}
+        standard = {key: float(value["price"]) for key, value in STANDARD_PRICING.items()}
+        try:
+            updates.update(price_updates_for_calibration_change(
+                job, shop, body.calibration_type, standard, SPECIAL_WHOLESALE,
+            ))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
     if body.pop is not None and not job.get("xero_invoice_id"):
         updates["pop_approved"] = str(body.pop)
     if not already_complete:
@@ -3343,12 +3354,14 @@ async def upload_document(job_id: str, file: UploadFile = File(...), tech=Depend
     contents = await file.read()
     if len(contents) > 10 * 1024 * 1024:  # 10 MB limit
         raise HTTPException(400, "File too large (max 10 MB)")
-    shop = await db.shops.find_one({"id": job["shop_id"]})
+    shop = await db.shops.find_one({"id": job.get("shop_id")}) if job.get("shop_id") else None
     file_name = file.filename or "calibration_report"
-    # Spec naming: Customer_SHOP_Make_Model_Year.ext
-    ext = (file_name.rsplit(".", 1)[-1] if "." in file_name else "pdf").lower()
-    spec_name = (f"{job['customer_last_name']}_{shop['name'].upper().replace(' ', '')}_"
-                 f"{job['vehicle_make']}_{job['vehicle_model']}_{job['vehicle_year']}.{ext}")
+    # Spec naming: Customer_SHOP_Make_Model_Year.ext. A missing last name stays a safe filename.
+    spec_name = spec_document_name(job, shop, file_name)
+    try:
+        month_folder = datetime.fromisoformat(str(job.get("scheduled_start"))).strftime("%Y/%B")
+    except (TypeError, ValueError):
+        month_folder = "undated"
     doc = {
         "id": gen_id(),
         "job_id": job_id,
@@ -3359,7 +3372,7 @@ async def upload_document(job_id: str, file: UploadFile = File(...), tech=Depend
         "data_b64": base64.b64encode(contents).decode(),
         "uploaded_at": iso(now_utc()),
         "uploaded_by": tech["id"],
-        "storage_path": f"calibration-docs/Recals/Recal - {tech['name']}/{datetime.fromisoformat(job['scheduled_start']).strftime('%Y/%B')}/{spec_name}",
+        "storage_path": f"calibration-docs/Recals/Recal - {(tech or {}).get('name') or 'owner'}/{month_folder}/{spec_name}",
     }
     await db.documents.insert_one(doc.copy())
     # Return without the big data field
