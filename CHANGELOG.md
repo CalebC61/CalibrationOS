@@ -15,6 +15,19 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — Xero connect uses granular invoice scopes (2026-11-17)
+The Xero app was created after 2 March 2026, so the authorize URL's broad
+`accounting.transactions` scope comes back as `invalid_scope`. `XERO_SCOPES`
+in `backend/server.py` now requests `accounting.invoices` instead. Invoice
+create, update, PDF download, and the status poll all use the Invoices
+endpoint, including reading `Status` when it is `PAID`. No code calls the
+Payments, Overpayments, or Prepayments endpoints, so `accounting.payments` is
+not requested. Reports and journals scopes are not requested. The rest of the
+string is unchanged: `openid profile email accounting.contacts
+accounting.attachments accounting.settings.read offline_access`. This is still
+a code constant, not an env var. A token saved under the old scope stays on
+the old grant until the owner connects Xero again.
+
 ### Added — completing a job files the Xero draft Maddy builds by hand (2026-11-17)
 Completing a job still settles the card the same way. `BILLING_ENABLED` and
 `SHOP_EMAILS_ENABLED` are unchanged. After that, `create_invoice_for_job` files

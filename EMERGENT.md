@@ -22,6 +22,10 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-17): Xero connect uses granular scopes.** `XERO_SCOPES`
+  requests `accounting.invoices` instead of `accounting.transactions`. It does
+  not request `accounting.payments`, reports, or journals. The owner connects
+  Xero again so the saved token matches.
 - **Session (2026-11-17): completing a job files one Xero draft.** The card charge is
   unchanged (`BILLING_ENABLED`, `SHOP_EMAILS_ENABLED`). The draft is ACCREC, status
   DRAFT, due the job date, no tax. It does not create a Xero contact and it does not
