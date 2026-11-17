@@ -29,3 +29,5 @@ stripe==16.0.0
 resend==2.50.0
 google-genai==2.33.0
 httpx==0.28.1
+pypdf==6.4.0
+reportlab==4.4.5

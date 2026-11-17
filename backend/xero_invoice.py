@@ -8,6 +8,7 @@ job is flagged. Nothing here talks to Xero, and nothing here creates a contact.
 import re
 import zlib
 from datetime import datetime
+from io import BytesIO
 
 from billing import TRIP_FEE_DOLLARS
 from business_time import business_date
@@ -240,8 +241,40 @@ def _vins_in_text(text: str) -> list[str]:
     return found
 
 
-def vin_from_pdf(data: bytes | None) -> str | None:
-    """A VIN printed in the post-scan PDF, when the file actually contains one."""
+def _normalize_ws(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").upper().strip()
+
+
+def _vin_after_label(text: str) -> str | None:
+    """A valid VIN in the text just after a VIN label. Spaces in that window are ignored."""
+    for label in re.finditer(r"\bVIN\b", text):
+        window = re.sub(r"\s+", "", text[label.end():label.end() + 48])
+        found = _vins_in_text(window)
+        if found:
+            return found[0]
+    return None
+
+
+def _best_vin(text: str) -> str | None:
+    spaced = _normalize_ws(text)
+    if not spaced:
+        return None
+    labeled = _vin_after_label(spaced)
+    if labeled:
+        return labeled
+    found = _vins_in_text(spaced)
+    if found:
+        return found[0]
+    compact = re.sub(r"\s+", "", spaced)
+    found = _vins_in_text(compact)
+    return found[0] if found else None
+
+
+def _vin_from_compressed_streams(data: bytes) -> str | None:
+    """Older reader: literal characters in the file or in a zlib stream.
+
+    Post-scan PDFs that encode text per glyph do not contain the VIN here.
+    """
     if not data:
         return None
     chunks = [data.decode("latin-1", errors="ignore")]
@@ -260,6 +293,60 @@ def vin_from_pdf(data: bytes | None) -> str | None:
         if found:
             return found[0]
     return None
+
+
+def _vin_from_pypdf(data: bytes) -> str | None:
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(BytesIO(data), strict=False)
+        parts = []
+        for page in reader.pages:
+            try:
+                parts.append(page.extract_text() or "")
+            except Exception:
+                continue
+    except Exception:
+        return None
+    return _best_vin("\n".join(parts))
+
+
+def vin_from_pdf(data: bytes | None) -> str | None:
+    """A VIN printed in the post-scan PDF, when the file actually contains one.
+
+    Text is read with pypdf so glyph-encoded scans work. A file pypdf cannot
+    read falls back to the older compressed-stream search.
+    """
+    if not data:
+        return None
+    found = _vin_from_pypdf(data)
+    if found:
+        return found
+    return _vin_from_compressed_streams(data)
+
+
+def price_updates_for_calibration_change(job, shop, calibration_type, standard_prices, special_rates) -> dict:
+    """Price fields when Complete changes the calibration type.
+
+    The new price is that shop's wholesale rate, so the local invoice and the
+    card charge match the Xero line. A trip-fee-only job stays at $30. An
+    outside-area job keeps the $30 on top of the new rate. A job that already
+    has a Xero invoice is left alone.
+    """
+    job = job or {}
+    if not calibration_type or job.get("xero_invoice_id"):
+        return {}
+    if calibration_type == job.get("calibration_type"):
+        return {}
+    if job.get("calibration_not_performed"):
+        return {}
+    amount = wholesale_amount(shop, calibration_type, standard_prices, special_rates)
+    if job.get("outside_service_area"):
+        return {
+            "calibration_price": amount,
+            "price": money(amount + TRIP_FEE_DOLLARS),
+            "trip_fee": float(TRIP_FEE_DOLLARS),
+        }
+    return {"price": amount, "calibration_price": amount}
 
 
 def _as_datetime(value) -> datetime | None:

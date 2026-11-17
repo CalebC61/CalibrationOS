@@ -95,16 +95,15 @@ export default function Dashboard() {
     }
   }
   async function setStatus(jobId, status) {
-    if (status === "complete") {
-      const ok = window.confirm("Mark this job complete? The card is charged only when billing is on. A Xero draft is filed from the signed PDF. Completing again will not create a second invoice.");
-      if (!ok) return;
-      try {
-        await api.post(`/jobs/${jobId}/complete`, { result: "pass", notes: null });
-      } catch (err) {
-        alert(err.response?.data?.detail || "Could not complete the job.");
-      }
-    } else {
-      await api.post(`/jobs/${jobId}/status`, { status });
+    await api.post(`/jobs/${jobId}/status`, { status });
+    load();
+  }
+  async function completeJob(jobId, body) {
+    try {
+      await api.post(`/jobs/${jobId}/complete`, body);
+    } catch (err) {
+      alert(err.response?.data?.detail || "Could not complete the job.");
+      return;
     }
     load();
   }
@@ -257,7 +256,7 @@ export default function Dashboard() {
           <ZonePanel key={tech.id}
             title={tech.name || "Technician"}
             subtitle={routingTechs.length <= 1 ? "Whole valley" : (tech.home_address || "Home base")}
-            zone={tech.id} jobs={techJobs} onStatus={setStatus}
+            zone={tech.id} jobs={techJobs} onStatus={setStatus} onComplete={completeJob}
             onPayment={setPaymentMode} onCharge={chargeNow}
             onOutside={setOutside} onTripFee={chargeTripFee} onRetryXero={retryXero}
             accent={tech.color || "#FF5F1F"}
@@ -339,7 +338,7 @@ function Metric({ label, value, highlight }) {
   );
 }
 
-function ZonePanel({ title, subtitle, zone, jobs, onStatus, onPayment, onCharge, onOutside, onTripFee, onRetryXero, accent, newJobIds, offerByJob,
+function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, accent, newJobIds, offerByJob,
                     onDispatch, onRespond, onReschedule, onEdit, onDecide, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
@@ -355,7 +354,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, onPayment, onCharge,
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {jobs.map((j, idx) => (
-          <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
+          <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus} onComplete={onComplete}
             onPayment={onPayment} onCharge={onCharge}
             onOutside={onOutside} onTripFee={onTripFee} onRetryXero={onRetryXero}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
@@ -414,9 +413,10 @@ function TripFeeControls({ job, onOutside, onTripFee }) {
   );
 }
 
-function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDecide,
+function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDecide,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
+  const [completeOpen, setCompleteOpen] = useState(false);
   const isLocked = job.status === "complete" || job.status === "cancelled" || job.status === "declined" || job.status === "requested";
   return (
     <div
@@ -531,8 +531,10 @@ function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripF
           </>
         )}
         {flow && (
-          <button className="btn btn-primary" onClick={() => onStatus(job.id, flow.next)}
-            data-testid={`job-action-${job.id}`}>{flow.label}</button>
+          <button className="btn btn-primary" onClick={() => {
+            if (flow.next === "complete") setCompleteOpen(true);
+            else onStatus(job.id, flow.next);
+          }} data-testid={`job-action-${job.id}`}>{flow.label}</button>
         )}
         {job.status === "booked" && (
           <>
@@ -553,6 +555,138 @@ function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripF
           </>
         )}
       </div>
+      {completeOpen && flow?.next === "complete" && (
+        <CompleteFields job={job} onSubmit={onComplete} />
+      )}
+    </div>
+  );
+}
+
+const CAL_TYPES = [
+  ["static", "Static"],
+  ["dynamic", "Dynamic"],
+  ["dual", "Dual"],
+  ["triple", "Triple / Subaru"],
+  ["tesla", "Tesla"],
+];
+
+function isPdfDoc(doc) {
+  if (!doc) return false;
+  const name = (doc.file_name || "").toLowerCase();
+  const type = (doc.content_type || "").toLowerCase();
+  return name.endsWith(".pdf") || type.includes("pdf");
+}
+
+function canCompleteDraft(doc, calType, popChoice, popAmount) {
+  const amount = Number(String(popAmount || "").replace(/[$,]/g, ""));
+  const popReady = popChoice === "none" || (popChoice === "amount" && amount > 0);
+  return Boolean(isPdfDoc(doc) && calType && popReady);
+}
+
+function CompleteFields({ job, onSubmit }) {
+  const [calType, setCalType] = useState(job.calibration_type || "");
+  const [popChoice, setPopChoice] = useState("");
+  const [popAmount, setPopAmount] = useState("");
+  const [uploadedDoc, setUploadedDoc] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const ready = canCompleteDraft(uploadedDoc, calType, popChoice, popAmount);
+
+  useEffect(() => {
+    let cancel = false;
+    api.get(`/jobs/${job.id}/documents`).then(({ data }) => {
+      if (cancel) return;
+      const pdf = [...(data || [])].reverse().find(isPdfDoc);
+      if (pdf) setUploadedDoc(pdf);
+    }).catch(() => {});
+    return () => { cancel = true; };
+  }, [job.id]);
+
+  async function upload(file) {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const { data } = await api.post(`/jobs/${job.id}/upload-document`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setUploadedDoc(data);
+    } catch (err) {
+      alert(err.response?.data?.detail || "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function submit() {
+    if (!ready || submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(job.id, {
+        result: "pass",
+        notes: null,
+        calibration_type: calType,
+        pop: popChoice === "none" ? "none" : String(popAmount).trim(),
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }} data-testid={`complete-form-${job.id}`}>
+      <label className="label" htmlFor={`dash-cal-${job.id}`}>Calibration type *</label>
+      <select id={`dash-cal-${job.id}`} className="input" value={calType} onChange={e => setCalType(e.target.value)}
+        data-testid={`dash-cal-type-${job.id}`}>
+        <option value="">Choose</option>
+        {CAL_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+      <div style={{ marginTop: 14 }}>
+        <div className="label" id={`dash-pop-label-${job.id}`}>POP approved by insurance *</div>
+        <div style={{ display: "flex", gap: 8 }} role="group" aria-labelledby={`dash-pop-label-${job.id}`}>
+          <button type="button" className={"btn " + (popChoice === "none" ? "btn-primary" : "btn-ghost")}
+            style={{ flex: 1 }} onClick={() => setPopChoice("none")} data-testid={`dash-pop-none-${job.id}`}>None</button>
+          <button type="button" className={"btn " + (popChoice === "amount" ? "btn-primary" : "btn-ghost")}
+            style={{ flex: 1 }} onClick={() => setPopChoice("amount")} data-testid={`dash-pop-amount-${job.id}`}>Dollar amount</button>
+        </div>
+        {popChoice === "amount" && (
+          <input id={`dash-pop-${job.id}`} className="input" style={{ marginTop: 8 }} inputMode="decimal"
+            aria-label="POP dollar amount" value={popAmount} placeholder="450.00"
+            onChange={e => setPopAmount(e.target.value)} data-testid={`dash-pop-value-${job.id}`} />
+        )}
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <div className="label">Signed post-scan PDF *</div>
+        {!uploadedDoc ? (
+          <label className="btn btn-ghost" style={{ width: "100%", padding: 12, cursor: "pointer", justifyContent: "center" }}>
+            {uploading ? "Uploading…" : "Upload PDF"}
+            <input type="file" accept="application/pdf,.pdf" style={{ display: "none" }} disabled={uploading}
+              onChange={(e) => { if (e.target.files[0]) upload(e.target.files[0]); }}
+              data-testid={`doc-upload-${job.id}`} />
+          </label>
+        ) : (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }} data-testid="doc-uploaded">
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{uploadedDoc.file_name}</div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                {uploadedDoc.size_bytes ? `${(uploadedDoc.size_bytes / 1024).toFixed(1)} KB` : "PDF"}
+              </div>
+            </div>
+            <button type="button" className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }}
+              onClick={() => setUploadedDoc(null)} data-testid={`doc-remove-${job.id}`}>Replace</button>
+          </div>
+        )}
+      </div>
+      {!ready && (
+        <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>
+          Add the signed post-scan PDF, the calibration type, and POP (or None) before completing.
+        </div>
+      )}
+      <button type="button" className="btn btn-primary" style={{ marginTop: 12, opacity: ready && !submitting ? 1 : 0.55 }}
+        disabled={!ready || submitting} onClick={submit} data-testid={`dash-complete-${job.id}`}>
+        {submitting ? "Submitting…" : "Complete job"}
+      </button>
     </div>
   );
 }

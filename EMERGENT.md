@@ -22,6 +22,13 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-17): Complete can file the Xero draft.** Post-scan VINs are
+  read with pypdf (the old stream reader is the fallback). Dispatch Complete
+  asks for calibration type, POP, and a signed PDF before it completes the job.
+  A trip-fee-only draft does not require that PDF. Changing the calibration
+  type at Complete updates the job price to the shop's wholesale rate. An
+  upload with no customer last name gets a safe filename. New dependency:
+  `pypdf` (and `reportlab`, used by the VIN test).
 - **Session (2026-11-17): the Xero callback redirects.** After the tokens are
   saved, the browser is sent to `XERO_POST_CONNECT_REDIRECT` with `?xero=connected`
   or `?xero=error`. The missing `RedirectResponse` import was a 500.

@@ -64,11 +64,32 @@ def draft_is_finished(state: dict | None) -> bool:
     state = state or {}
     if state.get("status") != "draft" or not state.get("invoice_id"):
         return False
-    if not state.get("wholesale_applied") or not state.get("scan_attached"):
+    if not state.get("wholesale_applied"):
+        return False
+    # A trip-fee-only draft can be filed with no post-scan. scan_not_required records that.
+    if not state.get("scan_attached") and not state.get("scan_not_required"):
         return False
     if state.get("pop_amount") and not state.get("pop_attached"):
         return False
     return True
+
+
+def spec_document_name(job, shop, original_name) -> str:
+    """Customer_SHOP_Make_Model_Year.ext. A missing last name becomes CUSTOMER."""
+    job = job or {}
+    shop = shop or {}
+    original = str(original_name or "calibration_report")
+    ext = original.rsplit(".", 1)[-1].lower() if "." in original else "pdf"
+    if not ext.isalnum():
+        ext = "pdf"
+    last = str(job.get("customer_last_name") or "").strip() or "CUSTOMER"
+    shop_name = str(shop.get("name") or "SHOP").strip() or "SHOP"
+    make = str(job.get("vehicle_make") or "Vehicle").strip() or "Vehicle"
+    model = str(job.get("vehicle_model") or "Model").strip() or "Model"
+    year = job.get("vehicle_year")
+    year_text = str(year).strip() if year is not None and str(year).strip() else "0000"
+    name = f"{last}_{shop_name.upper().replace(' ', '')}_{make}_{model}_{year_text}.{ext}"
+    return name.replace("/", "-").replace("\\", "-")
 
 
 def _pack(state: dict) -> dict:
@@ -136,11 +157,13 @@ def _prepare(job, shop, vehicle, calibration_type, pop, scan_pdf, standard_price
         return None
     if calibration_type not in ITEM_NAMES:
         return "Pick a calibration type, then retry the Xero draft."
+    skipped = calibration_skipped(job)
     try:
         pop_amount = parse_pop(pop if pop is not None else (job or {}).get("pop_approved"))
     except ValueError as exc:
         return str(exc)
-    if not scan_pdf:
+    # A couldn't-calibrate job is trip-fee-only. The post-scan is optional there.
+    if not scan_pdf and not skipped:
         return "Upload the signed post-scan PDF, then retry the Xero draft."
 
     contact_id, save_id, problem = _resolve_contact(shop, gateway)
@@ -178,7 +201,6 @@ def _prepare(job, shop, vehicle, calibration_type, pop, scan_pdf, standard_price
     make = job_text(job, vehicle, "vehicle_make", "make")
     model = job_text(job, vehicle, "vehicle_model", "model")
 
-    skipped = calibration_skipped(job)
     wanted = trip_fee_wanted(job)
     # POP is the insurance amount on the calibration line. A trip-only job has no such line.
     use_pop = pop_amount if (pop_amount and not skipped) else None
@@ -339,16 +361,19 @@ def _file(*, job, shop, vehicle, calibration_type, pop, scan_pdf, scan_name,
         )
         state["pop_attached"] = True
 
-    if not state.get("scan_attached"):
-        if not scan_pdf:
+    if not state.get("scan_attached") and not state.get("scan_not_required"):
+        if scan_pdf:
+            gateway.attach(
+                state["invoice_id"],
+                _safe_pdf_name(scan_name, "post-scan.pdf"),
+                scan_pdf,
+                include_online=True,
+            )
+            state["scan_attached"] = True
+        elif state.get("calibration_skipped") or calibration_skipped(job):
+            state["scan_not_required"] = True
+        else:
             return _fail(state, "Upload the signed post-scan PDF, then retry the Xero draft.")
-        gateway.attach(
-            state["invoice_id"],
-            _safe_pdf_name(scan_name, "post-scan.pdf"),
-            scan_pdf,
-            include_online=True,
-        )
-        state["scan_attached"] = True
 
     if state.get("pop_amount") and not state.get("wholesale_applied"):
         updated = gateway.update_invoice(invoice_update_body(

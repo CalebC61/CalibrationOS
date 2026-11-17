@@ -315,6 +315,57 @@ def test_out_of_area_adds_a_trip_fee_line_and_a_miss_does_not_sell_the_calibrati
     assert missed_lines[1]["Description"] == DESCRIPTOR
 
 
+def test_trip_fee_only_draft_does_not_require_a_post_scan():
+    shop = {"name": "Burton Glass", "xero_contact_id": "CID-B"}
+    job = _job(calibration_not_performed=True, trip_fee_kind="bad_install")
+    missing = FakeXero()
+    filed = _file(shop, gateway=missing, job=job, scan=None)
+    assert filed["status"] == "draft"
+    assert filed["reason"] is None
+    assert filed["ok"] is True
+    assert missing.attachments == []
+    assert missing.created[0]["LineItems"][0]["Description"] == "TRIP FEE"
+    assert missing.created[0]["LineItems"][0]["UnitAmount"] == 30
+    again = _file(shop, gateway=missing, job=job, scan=None, state=filed["state"])
+    assert again["status"] == "draft"
+    assert len(missing.created) == 1
+
+    attached = FakeXero()
+    with_scan = _file(shop, gateway=attached, job=job, scan=SCAN)
+    assert with_scan["status"] == "draft"
+    assert [item["filename"] for item in attached.attachments] == ["Forsley_post_scan.pdf"]
+    assert attached.attachments[0]["content"] == SCAN
+
+
+def test_a_calibration_still_requires_the_post_scan():
+    shop = {"name": "Star Windshield", "xero_contact_id": "CID-STAR"}
+    gateway = FakeXero()
+    result = _file(shop, gateway=gateway, scan=None)
+    assert result["status"] == "needs_attention"
+    assert "post-scan" in result["reason"].lower()
+    assert gateway.created == []
+
+
+def test_upload_name_falls_back_when_the_last_name_is_missing():
+    from xero_draft import spec_document_name
+
+    assert spec_document_name(
+        {"customer_last_name": "TESTDoc", "vehicle_make": "Toyota", "vehicle_model": "Camry", "vehicle_year": 2022},
+        {"name": "Star Windshield"},
+        "calibration_report.png",
+    ) == "TESTDoc_STARWINDSHIELD_Toyota_Camry_2022.png"
+    assert spec_document_name(
+        {"vehicle_make": "Honda", "vehicle_model": "Civic", "vehicle_year": 2020},
+        {"name": "Star Windshield"},
+        "scan.pdf",
+    ) == "CUSTOMER_STARWINDSHIELD_Honda_Civic_2020.pdf"
+    assert spec_document_name(
+        {"customer_last_name": None, "vehicle_make": "Ford", "vehicle_model": "F150", "vehicle_year": 2021},
+        None,
+        "report.PDF",
+    ) == "CUSTOMER_SHOP_Ford_F150_2021.pdf"
+
+
 def test_pdf_vin_replaces_the_job_vin_on_the_description_line():
     pdf = b"%PDF-1.1\nstream\nVIN 1HGCM82633A004352 end\nendstream"
     shop = {"name": "Apex Auto Glass", "xero_contact_id": "CID-A"}

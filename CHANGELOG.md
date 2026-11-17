@@ -15,6 +15,32 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — Complete files a usable Xero draft (2026-11-17)
+The signed post-scan on a real scan tool is a font-encoded PDF. `vin_from_pdf`
+now reads that text with pypdf, collapses whitespace, and keeps the 17-character
+VIN next to the VIN label. The old compressed-stream reader remains the fallback
+when pypdf cannot read the file. `pypdf` is in `backend/requirements.txt`.
+The test PDF is built with reportlab and a TrueType font so the old reader
+finds nothing.
+
+Dispatch's Complete button no longer posts `{result: pass}` by itself. It opens
+the same required fields as the field app: calibration type, POP (None or a
+dollar amount), and a signed post-scan PDF already on the job or uploaded then.
+The job is not completed until those are present.
+
+A couldn't-calibrate job (trip fee only) still attaches a post-scan when one
+was uploaded, and it files the draft when there is no PDF. A normal calibration
+still requires the PDF.
+
+When Complete changes the calibration type, the job price becomes that shop's
+wholesale rate for the new type (Real Fast, Preferred, custom, or standard).
+An outside-area job keeps the extra $30. A trip-fee-only job stays at $30.
+The local invoice and the card charge then match the Xero line.
+
+`POST /api/jobs/{id}/upload-document` names the file
+`CUSTOMER_SHOP_Make_Model_Year.ext` when the job has no customer last name,
+instead of raising.
+
 ### Fixed — Xero connect lands on Settings after the callback (2026-11-17)
 `GET /api/auth/xero/callback` saved the tokens and then raised
 `NameError: RedirectResponse is not defined`, so the browser saw a 500.
