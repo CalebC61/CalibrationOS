@@ -20,6 +20,7 @@ ITEMS = [
     {"Code": "Static Calibration", "Name": "Static Calibration", "Description": "Static calibration per the OEM procedure"},
     {"Code": "Dynamic Calibration", "Name": "Dynamic Calibration", "Description": "Dynamic calibration per the OEM procedure"},
     {"Code": "Dual Calibration", "Name": "Dual Calibration", "Description": "Dual calibration per the OEM procedure"},
+    {"Code": "8", "Name": "Subaru MC Calibration", "Description": "Subaru EyeSight calibration"},
     {"Code": "Triple/Subaru Calibration", "Name": "Triple/Subaru Calibration", "Description": "Triple or Subaru calibration"},
     {"Code": "Tesla Calibration", "Name": "Tesla Calibration", "Description": "Tesla calibration per the OEM procedure"},
 ]
@@ -216,6 +217,54 @@ def test_preferred_and_real_fast_use_their_wholesale_cards():
         filed = _file({"name": "Real Fast Auto Glass"}, pop="none", calibration_type=cal, gateway=realfast)
         assert filed["status"] == "draft"
         assert realfast.created[-1]["LineItems"][0]["UnitAmount"] == amount
+
+
+def test_triple_uses_subaru_mc_calibration_and_the_old_name_is_only_a_fallback():
+    shop = {"name": "Star Windshield", "xero_contact_id": "CID-STAR"}
+    gateway = FakeXero()
+    filed = _file(shop, pop="none", calibration_type="triple", gateway=gateway)
+    assert filed["status"] == "draft"
+    line = gateway.created[0]["LineItems"][0]
+    assert line["ItemCode"] == "8"
+    assert line["Description"] == "Subaru EyeSight calibration"
+    assert line["UnitAmount"] == 185
+
+    legacy_items = [item for item in ITEMS if item.get("Code") != "8"]
+    legacy = FakeXero(items=legacy_items)
+    filed = _file(shop, pop="none", calibration_type="triple", gateway=legacy)
+    assert filed["status"] == "draft"
+    assert legacy.created[0]["LineItems"][0]["ItemCode"] == "Triple/Subaru Calibration"
+    assert legacy.created[0]["LineItems"][0]["UnitAmount"] == 185
+
+    missing_items = [
+        item for item in ITEMS
+        if item.get("Code") not in ("8", "Triple/Subaru Calibration")
+    ]
+    missing = FakeXero(items=missing_items)
+    result = _file(shop, pop="none", calibration_type="triple", gateway=missing)
+    assert result["status"] == "needs_attention"
+    assert result["invoice_id"] is None
+    assert "Subaru MC Calibration" in result["reason"]
+    assert "Triple/Subaru Calibration" in result["reason"]
+    assert missing.created == []
+
+    preferred = FakeXero()
+    filed = _file(
+        {"name": "Preferred Auto Glass", "xero_contact_id": "CID-P"},
+        pop="none", calibration_type="triple", gateway=preferred,
+    )
+    assert filed["status"] == "draft"
+    assert preferred.created[0]["LineItems"][0]["ItemCode"] == "8"
+    assert preferred.created[0]["LineItems"][0]["UnitAmount"] == 165
+
+    realfast = FakeXero()
+    filed = _file(
+        {"name": "Real Fast Auto Glass", "xero_contact_id": "CID-R"},
+        pop="none", calibration_type="triple", gateway=realfast,
+    )
+    assert filed["status"] == "draft"
+    assert realfast.created[0]["LineItems"][0]["ItemCode"] == "8"
+    assert realfast.created[0]["LineItems"][0]["UnitAmount"] == 175
 
 
 def test_unknown_contact_is_flagged_and_nothing_is_created():

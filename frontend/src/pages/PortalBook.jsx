@@ -103,6 +103,7 @@ export default function PortalBook() {
     if (opt) setCalType(opt.default);
   }
   function priceFor(t) {
+    if (shop?.prices && shop.prices[t] != null) return Number(shop.prices[t]);
     if (shop.pricing_tier === "custom" && shop[`custom_rate_${t}`] != null) return Number(shop[`custom_rate_${t}`]);
     return ({static: 125, dynamic: 125, dual: 175, triple: 185, tesla: 225})[t];
   }

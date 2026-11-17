@@ -22,6 +22,13 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-17): triple drafts and wholesale prices.** Triple files
+  the Xero item Subaru MC Calibration (code 8), with Triple/Subaru Calibration
+  as the fallback name. Booking and Complete price the job at the shop's
+  wholesale rate, including when the calibration type does not change. The
+  $30 trip fee stays separate. A Xero miss still marks the completed job
+  needs attention. The public booking date step imports `phoenixTodayStr`.
+  No new env vars.
 - **Session (2026-11-17): Complete can file the Xero draft.** Post-scan VINs are
   read with pypdf (the old stream reader is the fallback). Dispatch Complete
   asks for calibration type, POP, and a signed PDF before it completes the job.
