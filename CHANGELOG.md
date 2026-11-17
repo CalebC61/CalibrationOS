@@ -28,6 +28,8 @@ charge. The $30 trip fee stays a separate amount on top. A Xero failure still
 leaves the completed job as needs attention, with Retry.
 
 The public booking link and the portal booking screen show that same rate.
+The public date step imports `phoenixTodayStr`. It was calling that helper
+without an import, so the date field threw before a date could be picked.
 
 ### Fixed — Complete files a usable Xero draft (2026-11-17)
 The signed post-scan on a real scan tool is a font-encoded PDF. `vin_from_pdf`
