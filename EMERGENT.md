@@ -27,9 +27,17 @@ See `CHANGELOG.md` for the full log. Current state:
   DRAFT, due the job date, no tax. It does not create a Xero contact and it does not
   send the invoice. A miss is marked needs attention on the job. The owner can set a
   shop's Xero contact id and edit Real Fast / Preferred wholesale rates. No new env
-  vars. The Xero app still needs its existing scopes; attachments and settings reads
-  (`accounting.attachments`, `accounting.settings.read`) have to be on the app or the
-  draft is flagged. Do not change those from this repo.
+  vars. Connect requests `accounting.attachments` and `accounting.settings.read` from
+  the `XERO_SCOPES` constant in `backend/server.py`. The owner connects Xero again
+  so the saved token includes them.
+- **Session (2026-11-17): pre-launch guards.** The shop day map shows the whole
+  route. Other shops' stops are a rough pin and a time window, without names or
+  the job id. Sign-in, password reset, public geocode, and the contact form
+  are rate limited. A cached geocode drops a leading business name before the
+  street is saved. Portal report downloads send the login token. The card form
+  opens expanded. A failed portal booking shows an inline error. No env, Stripe,
+  Render, or Vercel setting changes. Public booking, scorecard, job completion,
+  Xero, and SMS are unchanged.
 - **Session (2026-11-12): cancelled jobs leave the owner and technician day list.**
   `GET /api/jobs` now omits `cancelled` and `declined`. The jobs stay in Mongo.
   `include_cancelled=true` is an opt-in for a future history view; the dashboard,

@@ -24,6 +24,7 @@ const STRIPE_COPY = {
 const OPAQUE_STRIPE = /processing error occurred/i;
 
 export const SIGNUP_CARD_ELEMENT_OPTIONS = {
+  layout: { type: "tabs", defaultCollapsed: false },
   wallets: { applePay: "never", googlePay: "never", link: "never" },
 };
 

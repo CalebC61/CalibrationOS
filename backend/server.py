@@ -98,7 +98,11 @@ SPECIAL_WHOLESALE = merge_special_rates(None)
 from charging import cents, chargeable_reason, interpret_payment_intent, decline_message
 from onboarding import (
     AGREEMENT_PARAGRAPHS, AGREEMENT_SECTIONS, AGREEMENT_VERSION, CARD_SETUP_ATTEMPT_LIMIT,
-    CHARGE_ACCEPTANCE_TEXT, PASSWORD_MIN_LENGTH, PASSWORD_RULE, SIGNUP_ATTEMPT_LIMIT,
+    CHARGE_ACCEPTANCE_TEXT, CONTACT_ATTEMPT_LIMIT, CONTACT_LIMIT_MESSAGE, CONTACT_WINDOW_SECONDS,
+    FORGOT_ATTEMPT_LIMIT, FORGOT_LIMIT_MESSAGE, FORGOT_WINDOW_SECONDS,
+    GEOCODE_ATTEMPT_LIMIT, GEOCODE_LIMIT_MESSAGE, GEOCODE_WINDOW_SECONDS,
+    LOGIN_ATTEMPT_LIMIT, LOGIN_LIMIT_MESSAGE, LOGIN_WINDOW_SECONDS,
+    PASSWORD_MIN_LENGTH, PASSWORD_RULE, SIGNUP_ATTEMPT_LIMIT,
     SIGNUP_WINDOW_SECONDS, agreement_text,
     address_needs_confirmation, addresses_match, address_problem, app_link, billing_view,
     booking_gate, canonical_email, duplicate_fields, invite_email_html, invite_register_url,
@@ -127,6 +131,7 @@ from google_maps import (
     GEOCODE_URL, DISTANCE_MATRIX_URL, ROUTES_COMPUTE_URL, ROUTES_FIELD_MASK, GoogleMapsError,
     address_lookup_queries, geocode_request_params, distance_matrix_request_params,
     parse_geocode_response, parse_distance_matrix_response, parse_routes_response,
+    street_line,
     routes_request_body, routes_request_headers, routes_http_failure,
     drive_time_cache_key, departure_bucket, coalesce,
     METRO_LAT_MIN, METRO_LAT_MAX, METRO_LNG_MIN, METRO_LNG_MAX,
@@ -174,7 +179,12 @@ XERO_CLIENT_SECRET = os.environ.get('XERO_CLIENT_SECRET', '')
 XERO_REDIRECT_URI = os.environ.get('XERO_REDIRECT_URI', '')
 XERO_SALES_ACCOUNT_CODE = _env('XERO_SALES_ACCOUNT_CODE', '200')
 XERO_POST_CONNECT_REDIRECT = _env('XERO_POST_CONNECT_REDIRECT', '/settings')
-XERO_SCOPES = "openid profile email accounting.transactions accounting.contacts offline_access"
+# Sent on the Xero connect URL. This is not an env var. A token already saved
+# keeps the scopes from the last connect until the owner connects again.
+XERO_SCOPES = (
+    "openid profile email accounting.transactions accounting.contacts "
+    "accounting.attachments accounting.settings.read offline_access"
+)
 XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL = "https://identity.xero.com/connect/token"
 XERO_CONNECTIONS_URL = "https://api.xero.com/connections"
@@ -413,9 +423,15 @@ def _google_routes_request(o_lat, o_lng, d_lat, d_lng, departure_iso: str | None
     return resp.json()
 
 def _cached_geocode(cached: dict, address: str) -> dict:
+    """A stored pin. The street line is applied again so an older cache row
+    that still starts with a business name is not written onto a shop or a job.
+    A unit such as Suite 200 stays on the line.
+    """
+    raw = (cached.get("formatted_address") or address or "").strip()
+    formatted = street_line(raw) or raw
     return {
         "lat": cached["lat"], "lng": cached["lng"],
-        "formatted_address": cached.get("formatted_address") or address,
+        "formatted_address": formatted,
         "in_metro": cached.get("in_metro", True),
         "partial_match": bool(cached.get("partial_match")),
         "location_type": cached.get("location_type"),
@@ -1447,7 +1463,11 @@ class AcceptChargeIn(BaseModel):
 
 # ---------- Auth routes ----------
 @api.post("/auth/login", response_model=TokenOut)
-async def login(data: LoginIn):
+async def login(data: LoginIn, request: Request):
+    _attempt_limited(
+        request, "staff-login", LOGIN_ATTEMPT_LIMIT, LOGIN_WINDOW_SECONDS,
+        LOGIN_LIMIT_MESSAGE, identity=data.email,
+    )
     tech = await db.technicians.find_one({"email": data.email.lower()})
     if not tech or not verify_password(data.password, tech.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -1471,7 +1491,10 @@ async def get_pricing():
 
 # ---------- Geocoding (mock) ----------
 @api.post("/geocode")
-async def geocode(payload: dict):
+async def geocode(payload: dict, request: Request):
+    _attempt_limited(
+        request, "geocode", GEOCODE_ATTEMPT_LIMIT, GEOCODE_WINDOW_SECONDS, GEOCODE_LIMIT_MESSAGE,
+    )
     addr = payload.get("address", "")
     try:
         geo = await geocode_address(addr)
@@ -4532,7 +4555,11 @@ async def portal_stripe_setup_status(session_id: str, su=Depends(get_current_sho
     }
 
 @api.post("/portal/auth/login")
-async def portal_login(body: ShopUserLoginIn):
+async def portal_login(body: ShopUserLoginIn, request: Request):
+    _attempt_limited(
+        request, "portal-login", LOGIN_ATTEMPT_LIMIT, LOGIN_WINDOW_SECONDS,
+        LOGIN_LIMIT_MESSAGE, identity=body.email,
+    )
     su = await db.shop_users.find_one({"email": body.email.lower()})
     if not su or not verify_password(body.password, su.get("password_hash", "")):
         raise HTTPException(401, "Invalid email or password")
@@ -4553,8 +4580,12 @@ async def portal_me(su=Depends(get_current_shop_user)):
 
 
 @api.post("/portal/auth/forgot-password")
-async def portal_forgot_password(body: ForgotPasswordIn):
+async def portal_forgot_password(body: ForgotPasswordIn, request: Request):
     """Always the same reply. A one-time link is emailed when the account exists."""
+    _attempt_limited(
+        request, "forgot-password", FORGOT_ATTEMPT_LIMIT, FORGOT_WINDOW_SECONDS,
+        FORGOT_LIMIT_MESSAGE, identity=body.email,
+    )
     su = await db.shop_users.find_one({"email": body.email.lower()})
     if su:
         token = secrets.token_urlsafe(24)
@@ -4610,6 +4641,19 @@ async def public_agreement():
 @api.get("/public/site")
 async def public_site():
     return {"owner_phone": OWNER_PHONE, "owner_email": owner_notify_email(), "site_url": FRONTEND_URL}
+
+
+def _attempt_limited(
+    request: Request, kind: str, limit: int, window_seconds: int, message: str,
+    identity: Optional[str] = None,
+) -> None:
+    """The signup limiter, counted per network and, when it matters, per email."""
+    ip = _client_ip(request) or "unknown"
+    if rate_limit_exceeded(f"{kind}:ip:{ip}", limit=limit, window_seconds=window_seconds):
+        raise HTTPException(status_code=429, detail=message)
+    ident = (identity or "").strip().lower()
+    if ident and rate_limit_exceeded(f"{kind}:id:{ident}", limit=limit, window_seconds=window_seconds):
+        raise HTTPException(status_code=429, detail=message)
 
 
 def _signup_limited(request: Request, kind: str, limit: int) -> None:
@@ -4893,7 +4937,11 @@ async def public_create_shop(body: PublicShopIn, request: Request):
 
 
 @api.post("/public/contact")
-async def public_contact(body: ContactIn):
+async def public_contact(body: ContactIn, request: Request):
+    _attempt_limited(
+        request, "public-contact", CONTACT_ATTEMPT_LIMIT, CONTACT_WINDOW_SECONDS,
+        CONTACT_LIMIT_MESSAGE, identity=body.email,
+    )
     if not (body.name or "").strip() or not (body.message or "").strip():
         raise HTTPException(400, "Name and message are required.")
     if not canonical_email(body.email):
@@ -5191,53 +5239,59 @@ async def portal_document_download(job_id: str, doc_id: str, su=Depends(get_curr
     return Response(content=binary, media_type=doc.get("content_type", "application/octet-stream"),
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"})
 
+def _block_coord(value):
+    """About a block. Three decimal degrees is roughly 100 meters."""
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _route_sort_key(job: dict):
+    sequence = job.get("sequence_order")
+    return (sequence is None, sequence if sequence is not None else 0, job.get("scheduled_start") or "")
+
+
+def _other_stop(job: dict, route_order: int) -> dict:
+    """A stop on the owner's route that belongs to another shop.
+
+    The pin can be drawn. Nothing that names the shop, the customer, the
+    vehicle, or the exact address is included, and the job id is left off.
+    """
+    return {
+        "route_order": route_order,
+        "arrival_start": job.get("scheduled_start"),
+        "arrival_end": job.get("scheduled_end"),
+        "job_lat": _block_coord(job.get("job_lat")),
+        "job_lng": _block_coord(job.get("job_lng")),
+    }
+
+
 @api.get("/portal/day-map")
 async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_shop_user)):
-    """OWN jobs in full, plus other shops' jobs as anonymized blocks with drive time from this shop.
+    """Every stop on the owner's route for one America/Phoenix civil date.
 
-    `date_str` is an America/Phoenix civil date. Omitted, it is today's Phoenix date.
+    Omitted, `date_str` is today's Phoenix date. This shop's jobs are returned
+    in full. Another shop's stop is a time window, a route position, and a
+    coordinate rounded to about a block.
     """
     if date_str:
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
     else:
         d = business_date()
     day_start, day_end = business_day_bounds(d)
-    all_jobs = await db.jobs.find({
+    jobs = await db.jobs.find({
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
         "status": {"$nin": ["cancelled", "declined"]},
-    }, {"_id": 0}).sort("scheduled_start", 1).to_list(500)
-    # This shop's coordinates as drive-window origin
-    shop = await db.shops.find_one({"id": su["shop_id"]})
-    origin_lat = shop.get("lat") if shop else 33.4484
-    origin_lng = shop.get("lng") if shop else -112.0740
-    own, other_jobs = [], []
-    for j in all_jobs:
-        if j["shop_id"] == su["shop_id"]:
-            own.append(j)
+    }, {"_id": 0}).to_list(500)
+    jobs.sort(key=_route_sort_key)
+    own, others = [], []
+    for route_order, job in enumerate(jobs, start=1):
+        if job.get("shop_id") == su["shop_id"]:
+            job["route_order"] = route_order
+            own.append(job)
         else:
-            other_jobs.append(j)
-
-    async def _anon(j):
-        # Real lookups hit drive_time_cache (rounded coords and departure bucket). Run them together
-        # so a cold cache does not wait on one Routes call per other-shop job.
-        dm = await get_drive_time(
-            origin_lat, origin_lng, j["job_lat"], j["job_lng"],
-            depart_at=datetime.fromisoformat(str(j["scheduled_start"]).replace("Z", "+00:00")),
-            mode=ESSENTIALS,
-        )
-        return {
-            "id": j["id"],
-            "scheduled_start": j["scheduled_start"],
-            "scheduled_end": j["scheduled_end"],
-            "zone": j["zone"],
-            "sequence_order": j.get("sequence_order"),
-            "job_lat": j["job_lat"], "job_lng": j["job_lng"],
-            "drive_minutes_from_you": dm["duration_minutes"],
-            "status": j["status"],
-            # NO shop_name, vehicle, customer, calibration, price, address
-        }
-
-    others = list(await asyncio.gather(*(_anon(j) for j in other_jobs)))
+            others.append(_other_stop(job, route_order))
     return {"own": annotate_at_risk(own), "others": others, "date": d.isoformat()}
 
 @api.post("/portal/book")

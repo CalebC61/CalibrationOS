@@ -40,6 +40,7 @@ export default function PortalBook() {
   const [setup, setSetup] = useState(null);
   const [invoiceInstead, setInvoiceInstead] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
+  const [bookError, setBookError] = useState("");
 
   useEffect(() => {
     portalApi.get("/portal/me").then(r => {
@@ -107,6 +108,7 @@ export default function PortalBook() {
   }
   async function submit() {
     setSubmitting(true);
+    setBookError("");
     try {
       const { data } = await portalApi.post("/portal/book", {
         booking_token: shop.booking_link_token, job_address: address,
@@ -119,8 +121,10 @@ export default function PortalBook() {
         notification_phone: notifyPhone, invoice_instead: invoiceInstead,
       });
       setConfirmation(data);
-    } catch (e) { alert(e.response?.data?.detail || "Booking failed"); }
-    finally { setSubmitting(false); }
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      setBookError(typeof detail === "string" && detail ? detail : "Booking failed");
+    } finally { setSubmitting(false); }
   }
 
   if (confirmation) {
@@ -251,6 +255,11 @@ export default function PortalBook() {
               <textarea className="input" rows={3} value={veh.notes}
                 onChange={e => setVeh({...veh, notes: e.target.value})} data-testid="b-notes" />
             </F>
+            {bookError && (
+              <div role="alert" data-testid="portal-book-error" style={{ color: "var(--red)", fontSize: 14, marginTop: 4 }}>
+                {bookError}
+              </div>
+            )}
             <Nav onBack={() => setStep(1)} onNext={submit}
               nextLabel={submitting ? "Booking…" : (chosen?.requires_approval ? "Request this time" : "Confirm Booking")}
               nextDisabled={submitting || !veh.customer_last_name || !veh.year || !veh.make || !veh.model} />
