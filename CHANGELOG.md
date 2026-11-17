@@ -15,6 +15,37 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Added — completing a job files the Xero draft Maddy builds by hand (2026-11-17)
+Completing a job still settles the card the same way. `BILLING_ENABLED` and
+`SHOP_EMAILS_ENABLED` are unchanged. After that, `create_invoice_for_job` files
+one Xero ACCREC draft for the job, or marks the job `needs attention` and still
+leaves the job complete.
+
+The draft is due the same day as the job, with no tax, a blank reference, and the
+branding theme named Calibration Template. Line 1 is the Xero item for the
+calibration type (Static, Dynamic, Dual, Triple/Subaru, Tesla) at the shop's
+wholesale rate, account 4100, tax exempt. Line 2 is only
+`FIRST LAST - YEAR MAKE MODEL - VIN`. A $30 trip fee is its own priced line when
+the job is out of area. A trip-fee-only job (could not calibrate) does not also
+sell the calibration. When POP is a dollar amount, the draft is saved at that
+amount, the invoice PDF is fetched, both PDFs are attached with IncludeOnline,
+and line 1 is then updated to the wholesale rate. The draft is never authorised
+and never sent from Xero.
+
+The shop's Xero contact id can be set by the owner. If it is blank, the app
+matches an existing contact by the exact name (the known shop list, or the shop's
+own name) and saves the id. It does not create a contact. No confident match
+means no invoice, and the job is flagged. Wholesale cards for Real Fast and
+Preferred are editable under Settings → Pricing. Standard wholesale follows the
+standard prices. A retry uses the invoice id already stored on the job.
+
+The field screen requires the signed post-scan PDF, the calibration type, and
+POP (or None) before Complete. The uploaded PDF is the document that downloads.
+Completion no longer inserts a second document row with no bytes. The field
+screen and the day board say either `Draft INV-#### created` or the attention
+reason. Maddy is emailed at `ADMIN_EMAIL` through the owner-mail path with the
+number and link.
+
 ### Fixed — every shop needs a verified card before it can book (2026-11-14)
 The server no longer trusts a payment method id from the browser. Signup and
 the portal send a SetupIntent id. The API retrieves it and saves the card only

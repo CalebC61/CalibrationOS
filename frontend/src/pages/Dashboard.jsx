@@ -77,6 +77,14 @@ export default function Dashboard() {
       alert(err.response?.data?.detail || "Could not charge the trip fee.");
     }
   }
+  async function retryXero(jobId) {
+    try {
+      await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Could not retry the Xero draft.");
+    }
+  }
   async function chargeNow(jobId) {
     try {
       await api.post(`/jobs/${jobId}/charge-card`);
@@ -88,7 +96,7 @@ export default function Dashboard() {
   }
   async function setStatus(jobId, status) {
     if (status === "complete") {
-      const ok = window.confirm("Mark this job complete? Charge-on-completion jobs are charged once. Invoice jobs are billed and not charged until you say so. A second click will not create another invoice.");
+      const ok = window.confirm("Mark this job complete? The card is charged only when billing is on. A Xero draft is filed from the signed PDF. Completing again will not create a second invoice.");
       if (!ok) return;
       try {
         await api.post(`/jobs/${jobId}/complete`, { result: "pass", notes: null });
@@ -251,7 +259,7 @@ export default function Dashboard() {
             subtitle={routingTechs.length <= 1 ? "Whole valley" : (tech.home_address || "Home base")}
             zone={tech.id} jobs={techJobs} onStatus={setStatus}
             onPayment={setPaymentMode} onCharge={chargeNow}
-            onOutside={setOutside} onTripFee={chargeTripFee}
+            onOutside={setOutside} onTripFee={chargeTripFee} onRetryXero={retryXero}
             accent={tech.color || "#FF5F1F"}
             newJobIds={newJobIds} offerByJob={offerByJob}
             onDispatch={setDispatchTarget} onRespond={manualRespond}
@@ -331,7 +339,7 @@ function Metric({ label, value, highlight }) {
   );
 }
 
-function ZonePanel({ title, subtitle, zone, jobs, onStatus, onPayment, onCharge, onOutside, onTripFee, accent, newJobIds, offerByJob,
+function ZonePanel({ title, subtitle, zone, jobs, onStatus, onPayment, onCharge, onOutside, onTripFee, onRetryXero, accent, newJobIds, offerByJob,
                     onDispatch, onRespond, onReschedule, onEdit, onDecide, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
@@ -349,7 +357,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, onPayment, onCharge,
         {jobs.map((j, idx) => (
           <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
             onPayment={onPayment} onCharge={onCharge}
-            onOutside={onOutside} onTripFee={onTripFee}
+            onOutside={onOutside} onTripFee={onTripFee} onRetryXero={onRetryXero}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
             onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule} onEdit={onEdit}
             onDecide={onDecide}
@@ -406,7 +414,7 @@ function TripFeeControls({ job, onOutside, onTripFee }) {
   );
 }
 
-function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripFee, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDecide,
+function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDecide,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
   const isLocked = job.status === "complete" || job.status === "cancelled" || job.status === "declined" || job.status === "requested";
@@ -479,6 +487,11 @@ function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripF
           <div className="font-mono" style={{ fontSize: 13, marginTop: 4 }}>${job.price.toFixed(2)}</div>
         </div>
       </div>
+      {job.status === "complete" && job.xero_draft_status === "needs_attention" && job.xero_attention_reason && (
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }} data-testid={`xero-reason-${job.id}`}>
+          {job.xero_attention_reason}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
         {onEdit && (
           <button className="btn btn-ghost" onClick={() => onEdit(job)}
@@ -500,6 +513,22 @@ function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripF
         )}
         {job.status === "complete" && job.payment_status !== "paid" && !job.charged_at && (
           <button className="btn btn-primary" onClick={() => onCharge(job.id)}>Charge card now</button>
+        )}
+        {job.status === "complete" && job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id) && (
+          <span className="badge badge-draft" data-testid={`xero-draft-${job.id}`}>
+            {job.xero_invoice_url ? (
+              <a href={job.xero_invoice_url} target="_blank" rel="noreferrer" style={{ color: "inherit" }}>
+                Xero draft {job.xero_invoice_number || job.xero_invoice_id}
+              </a>
+            ) : `Xero draft ${job.xero_invoice_number || job.xero_invoice_id}`}
+          </span>
+        )}
+        {job.status === "complete" && job.xero_draft_status === "needs_attention" && (
+          <>
+            <span className="badge badge-draft" data-testid={`xero-attention-${job.id}`}>Xero needs attention</span>
+            <button className="btn btn-ghost" type="button" onClick={() => onRetryXero(job.id)}
+              data-testid={`xero-retry-${job.id}`}>Retry Xero draft</button>
+          </>
         )}
         {flow && (
           <button className="btn btn-primary" onClick={() => onStatus(job.id, flow.next)}

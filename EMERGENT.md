@@ -22,6 +22,14 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-17): completing a job files one Xero draft.** The card charge is
+  unchanged (`BILLING_ENABLED`, `SHOP_EMAILS_ENABLED`). The draft is ACCREC, status
+  DRAFT, due the job date, no tax. It does not create a Xero contact and it does not
+  send the invoice. A miss is marked needs attention on the job. The owner can set a
+  shop's Xero contact id and edit Real Fast / Preferred wholesale rates. No new env
+  vars. The Xero app still needs its existing scopes; attachments and settings reads
+  (`accounting.attachments`, `accounting.settings.read`) have to be on the app or the
+  draft is flagged. Do not change those from this repo.
 - **Session (2026-11-12): cancelled jobs leave the owner and technician day list.**
   `GET /api/jobs` now omits `cancelled` and `declined`. The jobs stay in Mongo.
   `include_cancelled=true` is an opt-in for a future history view; the dashboard,

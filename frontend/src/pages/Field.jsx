@@ -1,7 +1,22 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr, isOnDayBoard, jobStatusLabel } from "../lib/api";
 import JobEditModal from "../components/JobEditModal";
+
+const CAL_TYPES = [
+  ["static", "Static"],
+  ["dynamic", "Dynamic"],
+  ["dual", "Dual"],
+  ["triple", "Triple / Subaru"],
+  ["tesla", "Tesla"],
+];
+
+function isPdfDoc(doc) {
+  if (!doc) return false;
+  const name = (doc.file_name || "").toLowerCase();
+  const type = (doc.content_type || "").toLowerCase();
+  return name.endsWith(".pdf") || type.includes("pdf");
+}
 
 /** Mobile-optimized PWA technician field view. Works on phone or desktop. */
 export default function Field() {
@@ -35,6 +50,28 @@ export default function Field() {
   const [uploadedDoc, setUploadedDoc] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [tripReason, setTripReason] = useState("bad_install");
+  const [calType, setCalType] = useState("");
+  const [popChoice, setPopChoice] = useState("");
+  const [popAmount, setPopAmount] = useState("");
+  const [retrying, setRetrying] = useState(false);
+  const jobsRef = useRef(jobs);
+  jobsRef.current = jobs;
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const current = jobsRef.current.find(item => item.id === active);
+    setCalType(current?.calibration_type || "");
+    setPopChoice("");
+    setPopAmount("");
+    setUploadedDoc(null);
+    let cancel = false;
+    api.get(`/jobs/${active}/documents`).then(({ data }) => {
+      if (cancel) return;
+      const pdf = [...(data || [])].reverse().find(isPdfDoc);
+      if (pdf) setUploadedDoc(pdf);
+    }).catch(() => {});
+    return () => { cancel = true; };
+  }, [active]);
 
   async function respondOffer(offerId, accept) {
     await api.post(`/contractor-offers/${offerId}/respond`, { accept });
@@ -62,10 +99,26 @@ export default function Field() {
   async function complete(jobId) {
     setCompleting(true);
     try {
-      await api.post(`/jobs/${jobId}/complete`, { result, notes: notes || null });
-      setActive(null); setResult("pass"); setNotes(""); setDocName(""); setUploadedDoc(null);
-      load();
+      await api.post(`/jobs/${jobId}/complete`, {
+        result,
+        notes: notes || null,
+        calibration_type: calType,
+        pop: popChoice === "none" ? "none" : String(popAmount).trim(),
+      });
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.detail || "Could not complete the job.");
     } finally { setCompleting(false); }
+  }
+
+  async function retryXero(jobId) {
+    setRetrying(true);
+    try {
+      await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.detail || "Could not retry the Xero draft.");
+    } finally { setRetrying(false); }
   }
 
   if (active) {
@@ -128,34 +181,42 @@ export default function Field() {
                 <textarea className="input" rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
               </div>
               <div style={{ marginTop: 14 }}>
-                <div className="label">Calibration documentation (PDF or photo)</div>
-                {!uploadedDoc ? (
-                  <label className="btn btn-ghost" style={{ width: "100%", padding: 14, cursor: "pointer", justifyContent: "center" }}>
-                    {uploading ? "Uploading…" : "📷 Take photo / 📄 Upload PDF"}
-                    <input type="file" accept="image/*,application/pdf" capture="environment"
-                      style={{ display: "none" }} disabled={uploading}
-                      onChange={(e) => { if (e.target.files[0]) uploadDoc(j.id, e.target.files[0]); }}
-                      data-testid="doc-upload" />
-                  </label>
-                ) : (
-                  <div className="elevated" style={{ padding: 12 }} data-testid="doc-uploaded">
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>✓ {uploadedDoc.file_name}</div>
-                        <div className="muted" style={{ fontSize: 12 }}>{(uploadedDoc.size_bytes / 1024).toFixed(1)} KB · {uploadedDoc.content_type}</div>
-                      </div>
-                      <button className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }}
-                        onClick={() => setUploadedDoc(null)} data-testid="doc-remove">Replace</button>
-                    </div>
-                  </div>
+                <div className="label">Calibration type *</div>
+                <select className="input" value={calType} onChange={e => setCalType(e.target.value)} data-testid="field-cal-type">
+                  <option value="">Choose</option>
+                  {CAL_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <div className="label">POP approved by insurance *</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" className={"btn " + (popChoice === "none" ? "btn-primary" : "btn-ghost")}
+                    style={{ flex: 1 }} onClick={() => setPopChoice("none")} data-testid="field-pop-none">None</button>
+                  <button type="button" className={"btn " + (popChoice === "amount" ? "btn-primary" : "btn-ghost")}
+                    style={{ flex: 1 }} onClick={() => setPopChoice("amount")} data-testid="field-pop-amount">Dollar amount</button>
+                </div>
+                {popChoice === "amount" && (
+                  <input className="input" style={{ marginTop: 8 }} inputMode="decimal" value={popAmount}
+                    placeholder="450.00" onChange={e => setPopAmount(e.target.value)} data-testid="field-pop-value" />
                 )}
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <div className="label">Signed post-scan PDF *</div>
+                <ScanPicker uploadedDoc={uploadedDoc} uploading={uploading}
+                  onFile={file => uploadDoc(j.id, file)} onReplace={() => setUploadedDoc(null)} />
                 <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                  Will be renamed and attached to the invoice automatically.
+                  This PDF is attached to the Xero draft when that draft is filed.
                 </div>
               </div>
+              {!canFileDraft(uploadedDoc, calType, popChoice, popAmount) && (
+                <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>
+                  Add the signed post-scan PDF, the calibration type, and POP (or None) before completing.
+                </div>
+              )}
               <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
-                disabled={completing} onClick={() => complete(j.id)} data-testid="action-complete">
-                {completing ? "Submitting…" : "Submit Completion"}
+                disabled={completing || !canFileDraft(uploadedDoc, calType, popChoice, popAmount)}
+                onClick={() => complete(j.id)} data-testid="action-complete">
+                {completing ? "Submitting…" : "Complete job"}
               </button>
             </div>
           )}
@@ -194,11 +255,9 @@ export default function Field() {
             </div>
           )}
           {j.status === "complete" && (
-            <div className="elevated" style={{ marginTop: 16, padding: 14, textAlign: "center" }} data-testid="job-complete-confirmation">
-              <div style={{ fontSize: 36, color: "var(--green)" }}>✓</div>
-              <div className="h3" style={{ marginTop: 4 }}>Job Complete</div>
-              <div className="muted" style={{ fontSize: 13 }}>Invoice {j.invoice_id} created — Maddy notified.</div>
-            </div>
+            <XeroOutcome job={j} uploadedDoc={uploadedDoc} uploading={uploading} retrying={retrying}
+              onFile={file => uploadDoc(j.id, file)} onReplace={() => setUploadedDoc(null)}
+              onRetry={() => retryXero(j.id)} />
           )}
         </div>
         <JobEditModal open={editing} job={j} onClose={() => setEditing(false)} onDone={load} />
@@ -261,6 +320,75 @@ export default function Field() {
         </div>
       </div>
     </Phone>
+  );
+}
+
+function canFileDraft(doc, calType, popChoice, popAmount) {
+  const amount = Number(String(popAmount || "").replace(/[$,]/g, ""));
+  const popReady = popChoice === "none" || (popChoice === "amount" && amount > 0);
+  return Boolean(isPdfDoc(doc) && calType && popReady);
+}
+
+function ScanPicker({ uploadedDoc, uploading, onFile, onReplace }) {
+  if (!uploadedDoc) {
+    return (
+      <label className="btn btn-ghost" style={{ width: "100%", padding: 14, cursor: "pointer", justifyContent: "center" }}>
+        {uploading ? "Uploading…" : "Upload PDF"}
+        <input type="file" accept="application/pdf" style={{ display: "none" }} disabled={uploading}
+          onChange={(e) => { if (e.target.files[0]) onFile(e.target.files[0]); }}
+          data-testid="doc-upload" />
+      </label>
+    );
+  }
+  const size = uploadedDoc.size_bytes ? `${(uploadedDoc.size_bytes / 1024).toFixed(1)} KB` : "PDF";
+  return (
+    <div className="elevated" style={{ padding: 12 }} data-testid="doc-uploaded">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{uploadedDoc.file_name}</div>
+          <div className="muted" style={{ fontSize: 12 }}>{size}</div>
+        </div>
+        {onReplace && (
+          <button className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }}
+            onClick={onReplace} data-testid="doc-remove">Replace</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace, onRetry }) {
+  const draft = job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id);
+  const number = job.xero_invoice_number || job.xero_invoice_id;
+  return (
+    <div style={{ marginTop: 16, padding: 14 }} data-testid="job-complete-confirmation">
+      <div className="h3">Job complete</div>
+      {draft ? (
+        <div style={{ marginTop: 8, fontSize: 14 }} data-testid="xero-draft-status">
+          Draft {number} created. It is waiting in Xero for review.
+          {job.xero_invoice_url && (
+            <div style={{ marginTop: 8 }}>
+              <a href={job.xero_invoice_url} target="_blank" rel="noreferrer" style={{ color: "var(--accent-ink)" }}>
+                Open the draft
+              </a>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ marginTop: 8, fontSize: 14 }} data-testid="xero-draft-status">
+          <div>The Xero draft needs attention.</div>
+          <div className="muted" style={{ marginTop: 6 }}>{job.xero_attention_reason || "It was not filed."}</div>
+          <div style={{ marginTop: 12 }}>
+            <ScanPicker uploadedDoc={isPdfDoc(uploadedDoc) ? uploadedDoc : null} uploading={uploading}
+              onFile={onFile} onReplace={onReplace} />
+          </div>
+          <button className="btn btn-primary" type="button" style={{ width: "100%", marginTop: 12 }}
+            disabled={retrying} onClick={onRetry} data-testid="retry-xero-draft">
+            {retrying ? "Retrying…" : "Retry Xero draft"}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

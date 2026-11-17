@@ -105,6 +105,17 @@
 user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first. Module 9 — build out the Partner Growth Engine (Power Connector 5+50+100 CRM + 3-D introductions) from its inert scaffold into a real, flagged-on v1; reels explicitly deferred (no video-generation capability available). Module 8 — a natural-language AI assistant built into the admin page that can DO anything on the admin surface by plain-English prompting, with reads answering instantly and every real action gated behind an owner confirmation; scoped to in-process Gemini (google-genai) rather than the original Cloud Run/ADK/Postgres concept."
 
 backend:
+  - task: "Xero draft on job complete matches the hand-built invoice"
+    implemented: true
+    working: true
+    file: "backend/xero_invoice.py, backend/xero_draft.py, backend/server.py, backend/tests/test_xero_draft.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Completion calls create_invoice_for_job. One ACCREC DRAFT per job, due the Phoenix job date, NoTax, account 4100, Calibration Template, item line plus description-only vehicle line. POP amount saves first, PDF is fetched, both files attach with IncludeOnline, then line 1 becomes the wholesale rate. No contact is created. Unknown contact flags the job and creates nothing. Retry reuses the invoice id. Preferred and Real Fast rates come from editable cards. BILLING_ENABLED and SHOP_EMAILS_ENABLED are unchanged. Empty document rows are no longer inserted on complete."
   - task: "Hide cancelled jobs from the owner and technician day list"
     implemented: true
     working: true

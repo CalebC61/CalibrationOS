@@ -13,7 +13,7 @@ export default function Invoices() {
     <Shell>
       <h1 className="h1" style={{ marginBottom: 8 }}>Invoices</h1>
       <div className="muted" style={{ marginBottom: 20, fontSize: 14 }}>
-        Each completed job gets one invoice, emailed to the shop as proof of purchase. Stripe invoices sync to Xero when that connection is on. A $25 late fee is added once to an unpaid invoice-mode job after 7 days.
+        Each completed job gets one invoice, emailed to the shop as proof of purchase when shop mail is on. Completing a job also files one Xero draft for review. That draft stays a draft until someone sends it in Xero. A $25 late fee is added once to an unpaid invoice-mode job after 7 days.
       </div>
       {fees.length > 0 && (
         <div className="surface" style={{ padding: 16, marginBottom: 16 }} data-testid="late-fees">
@@ -34,7 +34,11 @@ export default function Invoices() {
           <tbody>
             {invs.map(i => (
               <tr key={i.invoice_id} style={{ borderTop: "1px solid var(--border)" }} data-testid={`invoice-${i.invoice_id}`}>
-                <Td className="font-mono">{i.invoice_id}</Td>
+                <Td className="font-mono">
+                  {i.invoice_url ? (
+                    <a href={i.invoice_url} target="_blank" rel="noreferrer" style={{ color: "var(--accent-ink)" }}>{i.invoice_id}</a>
+                  ) : i.invoice_id}
+                </Td>
                 <Td>{i.contact_name}</Td>
                 <Td><span className="badge badge-draft">{i.status}</span></Td>
                 <Td className="font-mono">${i.total.toFixed(2)}</Td>
