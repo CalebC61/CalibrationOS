@@ -181,8 +181,11 @@ XERO_SALES_ACCOUNT_CODE = _env('XERO_SALES_ACCOUNT_CODE', '200')
 XERO_POST_CONNECT_REDIRECT = _env('XERO_POST_CONNECT_REDIRECT', '/settings')
 # Sent on the Xero connect URL. This is not an env var. A token already saved
 # keeps the scopes from the last connect until the owner connects again.
+# Apps created after 2 March 2026 reject the broad accounting.transactions
+# scope. Invoices (including status and the invoice PDF) use accounting.invoices.
+# Nothing in this app calls the Payments, Overpayments, or Prepayments endpoints.
 XERO_SCOPES = (
-    "openid profile email accounting.transactions accounting.contacts "
+    "openid profile email accounting.invoices accounting.contacts "
     "accounting.attachments accounting.settings.read offline_access"
 )
 XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize"
