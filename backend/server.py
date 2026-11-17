@@ -1,6 +1,6 @@
 """CalibrationOS Backend — Phase 1 MVP (Path B: revenue path with mocked integrations)."""
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware

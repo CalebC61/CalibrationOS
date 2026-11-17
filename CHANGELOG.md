@@ -15,6 +15,15 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — Xero connect lands on Settings after the callback (2026-11-17)
+`GET /api/auth/xero/callback` saved the tokens and then raised
+`NameError: RedirectResponse is not defined`, so the browser saw a 500.
+The redirect is a 302 to `XERO_POST_CONNECT_REDIRECT` with `?xero=connected`
+or `?xero=error`. On Render that setting is
+`https://www.thecalibrationcrew.us/settings`, so the owner returns to
+Settings on that site. A query string already on the setting is dropped
+before `xero` is added.
+
 ### Fixed — Xero connect uses granular invoice scopes (2026-11-17)
 The Xero app was created after 2 March 2026, so the authorize URL's broad
 `accounting.transactions` scope comes back as `invalid_scope`. `XERO_SCOPES`
