@@ -22,6 +22,9 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-17): the Xero callback redirects.** After the tokens are
+  saved, the browser is sent to `XERO_POST_CONNECT_REDIRECT` with `?xero=connected`
+  or `?xero=error`. The missing `RedirectResponse` import was a 500.
 - **Session (2026-11-17): Xero connect uses granular scopes.** `XERO_SCOPES`
   requests `accounting.invoices` instead of `accounting.transactions`. It does
   not request `accounting.payments`, reports, or journals. The owner connects
