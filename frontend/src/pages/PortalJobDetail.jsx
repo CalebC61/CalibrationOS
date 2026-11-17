@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { jobStatusLabel } from "../lib/api";
-import { portalApi, API } from "../lib/portalApi";
+import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 
 const fmt = (iso) => new Date(iso).toLocaleString();
@@ -10,6 +10,7 @@ export default function PortalJobDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
+  const [docError, setDocError] = useState("");
 
   useEffect(() => {
     portalApi.get(`/portal/jobs/${id}`).then(r => setData(r.data))
@@ -20,6 +21,28 @@ export default function PortalJobDetail() {
   if (!data) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
 
   const j = data.job;
+
+  async function downloadReport(doc) {
+    setDocError("");
+    try {
+      const response = await portalApi.get(
+        `/portal/jobs/${j.id}/documents/${doc.id}/download`,
+        { responseType: "blob" },
+      );
+      const blob = response.data instanceof Blob ? response.data : new Blob([response.data]);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = doc.file_name || "report";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDocError("That file didn't download. Try again.");
+    }
+  }
+
   return (
     <PortalShell>
       <Link to="/portal/jobs" className="muted" style={{ fontSize: 14 }}>← Back to jobs</Link>
@@ -56,17 +79,20 @@ export default function PortalJobDetail() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {docError && (
+            <div role="alert" data-testid="portal-doc-error" style={{ color: "var(--red)", fontSize: 14 }}>{docError}</div>
+          )}
           {data.documents.map(d => (
-            <a key={d.id} className="surface" style={{ padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}
-              href={`${API}/portal/jobs/${j.id}/documents/${d.id}/download`}
-              target="_blank" rel="noreferrer"
+            <button key={d.id} type="button" className="surface"
+              style={{ padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", textAlign: "left", cursor: "pointer", color: "inherit", font: "inherit" }}
+              onClick={() => downloadReport(d)}
               data-testid={`portal-doc-${d.id}`}>
               <div>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{d.file_name}</div>
                 <div className="muted" style={{ fontSize: 12 }}>{(d.size_bytes / 1024).toFixed(1)} KB · {d.content_type}</div>
               </div>
               <span style={{ color: "var(--accent-ink)" }}>Download ↓</span>
-            </a>
+            </button>
           ))}
         </div>
       )}

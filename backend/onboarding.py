@@ -20,6 +20,20 @@ CLEAN_LOCATION_TYPES = {"ROOFTOP", "RANGE_INTERPOLATED"}
 SIGNUP_ATTEMPT_LIMIT = 8
 SIGNUP_WINDOW_SECONDS = 60 * 60
 CARD_SETUP_ATTEMPT_LIMIT = 20
+# Sign-in and password reset. Shorter than signup so a guessed password locks quickly.
+LOGIN_ATTEMPT_LIMIT = 8
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_LIMIT_MESSAGE = "Too many sign-in attempts. Wait 15 minutes and try again."
+FORGOT_ATTEMPT_LIMIT = 5
+FORGOT_WINDOW_SECONDS = 60 * 60
+FORGOT_LIMIT_MESSAGE = "Too many reset requests. Wait an hour and try again."
+# Public lookups that would otherwise call Google or email the office without a login.
+GEOCODE_ATTEMPT_LIMIT = 30
+GEOCODE_WINDOW_SECONDS = 60 * 60
+GEOCODE_LIMIT_MESSAGE = "Too many address lookups. Wait an hour and try again."
+CONTACT_ATTEMPT_LIMIT = 5
+CONTACT_WINDOW_SECONDS = 60 * 60
+CONTACT_LIMIT_MESSAGE = "Too many messages from this network. Wait an hour and try again, or call the office."
 PASSWORD_MIN_LENGTH = 8
 PASSWORD_RULE = "At least 8 characters."
 
