@@ -21,6 +21,7 @@ export default function PortalShell({ children }) {
                 { to: "/portal", label: "Dashboard", end: true },
                 { to: "/portal/jobs", label: "My Jobs" },
                 { to: "/portal/book", label: "Book" },
+                { to: "/portal/scorecard", label: "Scorecard" },
                 { to: "/portal/settings", label: "Settings" },
               ].map(l => (
                 <NavLink key={l.to} to={l.to} end={l.end}

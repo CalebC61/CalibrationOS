@@ -522,6 +522,7 @@ def invite_email_html(shop_name: str, register_url: str) -> str:
         <h1 style="font-size:22px;margin:0 0 12px;">{shop_name}, your shop account is ready to set up.</h1>
         <p style="line-height:1.55;">Caleb set up {shop_name} on CalibrationOS. This link is for the shop contact. It expires in 14 days.</p>
         <p style="line-height:1.55;">You will choose a password, sign a short agreement, and save a card. After each calibration is finished, that card is charged, unless you asked us beforehand to invoice the job. An invoiced job has 7 days before a $25 late fee. Every job still gets an invoice as your proof of purchase.</p>
+        <p style="line-height:1.55;">After setup, book from the shop portal. Log in with this email. There is no public booking link.</p>
         <p style="text-align:center;margin:28px 0;">
           <a href="{register_url}" style="background:#FF5F1F;color:#0a0a0a;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:700;display:inline-block;">Set up your shop</a>
         </p>
@@ -531,16 +532,16 @@ def invite_email_html(shop_name: str, register_url: str) -> str:
     """
 
 
-def welcome_email_html(shop_name: str, booking_url: str) -> str:
+def welcome_email_html(shop_name: str, portal_url: str) -> str:
     return f"""
     <div style="font-family:Arial,sans-serif;background:#2A2E37;color:#f5f5f5;padding:32px;">
       <div style="max-width:560px;margin:0 auto;background:#343843;border-radius:12px;padding:28px;">
         <h1 style="font-size:22px;margin:0 0 12px;">You're set, {shop_name}.</h1>
-        <p style="line-height:1.55;">Your agreement is signed and your card is saved. Book a calibration with the link below. After each job is completed we charge that card, unless you asked to be invoiced. An invoiced job has 7 days, then a $25 late fee. You get an invoice for every job.</p>
+        <p style="line-height:1.55;">Your agreement is signed and your card is saved. Log in to your shop portal to book a calibration. After each job is completed we charge that card, unless you asked to be invoiced. An invoiced job has 7 days, then a $25 late fee. You get an invoice for every job.</p>
         <p style="text-align:center;margin:28px 0;">
-          <a href="{booking_url}" style="background:#FF5F1F;color:#0a0a0a;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:700;display:inline-block;">Book a job</a>
+          <a href="{portal_url}" style="background:#FF5F1F;color:#0a0a0a;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:700;display:inline-block;">Log in to book</a>
         </p>
-        <p style="color:#B4B8C2;font-size:13px;word-break:break-all;">{booking_url}</p>
+        <p style="color:#B4B8C2;font-size:13px;word-break:break-all;">{portal_url}</p>
       </div>
     </div>
     """

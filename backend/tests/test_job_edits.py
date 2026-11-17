@@ -1,4 +1,4 @@
-"""PATCH job edits for the owner and for a shop booking token.
+"""PATCH job edits for the owner and for a logged-in shop.
 
 No live Mongo. The routes run against an in-memory store:
     cd backend && pytest tests/test_job_edits.py -v
@@ -86,6 +86,7 @@ class _DB:
     def __init__(self):
         self.technicians = _Store()
         self.shops = _Store()
+        self.shop_users = _Store()
         self.jobs = _Store()
         self.vehicles = _Store()
 
@@ -153,6 +154,12 @@ def world(monkeypatch):
         id="shop-2", name="Other Shop", booking_link_token="tok-b",
         contact_email="other@glass.example",
     ))
+    db.shop_users.docs.append({
+        "id": "su-1", "shop_id": "shop-1", "full_name": "Dana", "email": "dana@glass.example", "is_active": True,
+    })
+    db.shop_users.docs.append({
+        "id": "su-2", "shop_id": "shop-2", "full_name": "Other", "email": "other@glass.example", "is_active": True,
+    })
     db.jobs.docs.append(_job(technician_id="tech-2"))
     db.jobs.docs.append(_job(id="job-other", shop_id="shop-2"))
     db.jobs.docs.append(_job(id="job-past", scheduled_start=PAST, scheduled_end=PAST))
@@ -182,7 +189,9 @@ def world(monkeypatch):
     monkeypatch.setattr(server, "geocode_for_regeocode", geo)
     yield {"db": db, "calls": calls, "owner": server.make_token("tech-1", "owner"),
            "contractor": server.make_token("tech-2", "contractor"),
-           "technician": server.make_token("tech-3", "technician")}
+           "technician": server.make_token("tech-3", "technician"),
+           "shop": server.make_portal_token("su-1"),
+           "other_shop": server.make_portal_token("su-2")}
     monkeypatch.setattr(server, "db", original)
 
 
@@ -366,19 +375,21 @@ def test_technician_and_assigned_contractor_cannot_patch_a_job(world):
     asyncio.run(run())
 
 
-def test_shop_token_edits_only_its_own_jobs(world):
+def test_shop_edits_only_its_own_jobs(world):
     async def run():
         async with _client() as client:
             ok = await client.patch(
-                "/api/public/bookings/tok-a/job-1",
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
                 json={"job_address": "500 W Jefferson, Phoenix, AZ", "customer_first_name": "Rio"},
             )
             foreign = await client.patch(
-                "/api/public/bookings/tok-a/job-other",
+                "/api/portal/jobs/job-other",
+                headers=_auth(world["shop"]),
                 json={"notes": "should not land"},
             )
             missing = await client.patch(
-                "/api/public/bookings/not-a-token/job-1",
+                "/api/portal/jobs/job-1",
                 json={"notes": "nope"},
             )
         assert ok.status_code == 200, ok.text
@@ -390,7 +401,7 @@ def test_shop_token_edits_only_its_own_jobs(world):
         assert body["edit_history"][-1]["who"]["id"] == "shop-1"
         assert "job_address" in body["edit_history"][-1]["fields"]
         assert foreign.status_code == 404
-        assert missing.status_code == 404
+        assert missing.status_code == 401
         other = await world["db"].jobs.find_one({"id": "job-other"})
         assert other["notes"] == "Gate"
         assert world["calls"]["sms"] == []
@@ -402,8 +413,12 @@ def test_shop_token_edits_only_its_own_jobs(world):
 def test_shop_token_cannot_change_price_or_zone(world):
     async def run():
         async with _client() as client:
-            priced = await client.patch("/api/public/bookings/tok-a/job-1", json={"price": 1})
-            zoned = await client.patch("/api/public/bookings/tok-a/job-1", json={"zone": "east"})
+            priced = await client.patch(
+                "/api/portal/jobs/job-1", headers=_auth(world["shop"]), json={"price": 1},
+            )
+            zoned = await client.patch(
+                "/api/portal/jobs/job-1", headers=_auth(world["shop"]), json={"zone": "east"},
+            )
         assert priced.status_code == 400
         assert zoned.status_code == 400
         stored = await world["db"].jobs.find_one({"id": "job-1"})
@@ -414,23 +429,28 @@ def test_shop_token_cannot_change_price_or_zone(world):
     asyncio.run(run())
 
 
-def test_shop_lists_only_its_upcoming_jobs_and_cancel_skips_messages(world):
+def test_shop_lists_only_its_own_jobs_and_cancel_skips_messages(world):
     async def run():
         async with _client() as client:
-            listed = await client.get("/api/public/bookings/tok-a")
+            listed = await client.get("/api/portal/jobs", headers=_auth(world["shop"]))
             assert listed.status_code == 200, listed.text
             ids = [job["id"] for job in listed.json()]
-            assert ids == ["job-1"]
-            cancelled = await client.post("/api/public/bookings/tok-a/job-1/cancel")
+            assert "job-1" in ids
+            assert "job-other" not in ids
+            cancelled = await client.post("/api/portal/jobs/job-1/cancel", headers=_auth(world["shop"]))
             assert cancelled.status_code == 200, cancelled.text
             body = cancelled.json()
             assert body["status"] == "cancelled"
             assert "status" in body["edit_history"][-1]["fields"]
             assert body["edit_history"][-1]["who"]["name"] == "Glass Co"
-            again = await client.get("/api/public/bookings/tok-a")
-            assert again.json() == []
-            foreign = await client.post("/api/public/bookings/tok-a/job-other/cancel")
+            again = await client.get("/api/portal/jobs", headers=_auth(world["shop"]))
+            again_ids = [job["id"] for job in again.json()]
+            assert "job-1" in again_ids
+            assert "job-other" not in again_ids
+            foreign = await client.post("/api/portal/jobs/job-other/cancel", headers=_auth(world["shop"]))
             assert foreign.status_code == 404
+            other_shop = await client.get("/api/portal/jobs", headers=_auth(world["other_shop"]))
+            assert [job["id"] for job in other_shop.json()] == ["job-other"]
         assert world["calls"]["sms"] == []
         assert world["calls"]["email"] == []
         other = await world["db"].jobs.find_one({"id": "job-other"})

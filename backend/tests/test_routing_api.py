@@ -81,6 +81,10 @@ class _DB:
         self.new_booking_alerts = _Store()
 
 
+def _office():
+    return {"Authorization": f"Bearer {server.make_token('caleb', 'owner')}"}
+
+
 def test_owner_adds_a_tech_and_one_tech_books_both_sides(monkeypatch):
     db = _DB()
     db.technicians.docs.append({
@@ -144,10 +148,10 @@ def test_owner_adds_a_tech_and_one_tech_books_both_sides(monkeypatch):
                 json={"is_active": False},
             )
             assert off.status_code == 200, off.text
-            goodyear = await client.post("/api/public/availability", json={
+            goodyear = await client.post("/api/shops/shop-1/availability", headers=_office(), json={
                 "booking_token": "tok", "job_address": "Goodyear, AZ", "date": day.isoformat(),
             })
-            mesa = await client.post("/api/public/availability", json={
+            mesa = await client.post("/api/shops/shop-1/availability", headers=_office(), json={
                 "booking_token": "tok", "job_address": "Mesa, AZ", "date": day.isoformat(),
             })
         assert goodyear.status_code == 200, goodyear.text
@@ -239,13 +243,13 @@ def test_public_book_rejects_surprise_and_san_tan_at_the_same_time(monkeypatch):
     async def run():
         transport = httpx.ASGITransport(app=server.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            same_time = await client.post("/api/public/book", json={
+            same_time = await client.post("/api/shops/shop-1/book", headers=_office(), json={
                 **payload, "scheduled_start": eight.isoformat(),
             })
-            too_soon = await client.post("/api/public/book", json={
+            too_soon = await client.post("/api/shops/shop-1/book", headers=_office(), json={
                 **payload, "scheduled_start": (eight + timedelta(hours=2)).isoformat(),
             })
-            fits = await client.post("/api/public/book", json={
+            fits = await client.post("/api/shops/shop-1/book", headers=_office(), json={
                 **payload, "scheduled_start": (eight + timedelta(hours=3, minutes=30)).isoformat(),
             })
         assert same_time.status_code == 400

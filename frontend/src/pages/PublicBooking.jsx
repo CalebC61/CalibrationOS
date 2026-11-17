@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, formatTime, formatDate, getStoredAuth, jobStatusLabel } from "../lib/api";
-import Brand from "../components/Brand";
-import JobEditModal from "../components/JobEditModal";
+import { api, formatTime, formatDate } from "../lib/api";
+import Shell from "../components/Shell";
 
 const ADAS_OPTIONS = [
   { v: "forward_camera", l: "Forward-Facing Camera (most common)", default: "static" },
@@ -25,8 +24,8 @@ const CAL_LABELS = {
   tesla: "Tesla ADAS Calibration",
 };
 
-export default function PublicBooking() {
-  const { token } = useParams();
+export default function OwnerBook() {
+  const { id } = useParams();
   const [shop, setShop] = useState(null);
   const [error, setError] = useState(null);
   const [step, setStep] = useState(1);
@@ -41,7 +40,6 @@ export default function PublicBooking() {
   const [addressError, setAddressError] = useState("");
   const [chosenSlot, setChosenSlot] = useState(null);
   const [customTime, setCustomTime] = useState("");
-  const isOwner = getStoredAuth()?.role === "owner";
   const [vehicle, setVehicle] = useState({
     customer_first_name: "", customer_last_name: "", year: new Date().getFullYear(), make: "", model: "",
     trim: "", vin: "", adas_system: "forward_camera", notes: "",
@@ -51,24 +49,12 @@ export default function PublicBooking() {
   const [submitting, setSubmitting] = useState(false);
   const [invoiceInstead, setInvoiceInstead] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
-  const [bookings, setBookings] = useState([]);
-  const [editingBooking, setEditingBooking] = useState(null);
-
-  const loadBookings = useCallback(async () => {
-    try {
-      const { data } = await api.get(`/public/bookings/${token}`);
-      setBookings(data);
-    } catch {
-      setBookings([]);
-    }
-  }, [token]);
 
   useEffect(() => {
-    api.get(`/public/shop/${token}`)
-      .then(r => { setShop(r.data); setAddress(r.data.address); setNotifyPhone(r.data.contact_phone || ""); })
-      .catch(e => setError(e.response?.data?.detail || "Booking link not active"));
-    loadBookings();
-  }, [token, loadBookings]);
+    api.get(`/shops/${id}`)
+      .then(r => { setShop(r.data); setAddress(r.data.address || ""); setNotifyPhone(r.data.contact_phone || ""); })
+      .catch(e => setError(e.response?.data?.detail || "Shop not found"));
+  }, [id]);
   async function geocodeAddr() {
     if (!address) return;
     setAddressError("");
@@ -85,8 +71,8 @@ export default function PublicBooking() {
   async function loadSlots(d) {
     setSlotsLoading(true); setSlots([]); setSlotsMsg(""); setSlotsError(false);
     try {
-      const { data } = await api.post("/public/availability", {
-        booking_token: token, job_address: address, date: d,
+      const { data } = await api.post(`/shops/${id}/availability`, {
+        job_address: address, date: d,
       });
       setSlots(data.slots || []);
       if ((data.slots || []).length === 0) setSlotsMsg(data.message || "No availability for this date.");
@@ -114,8 +100,8 @@ export default function PublicBooking() {
   async function submitBooking() {
     setSubmitting(true);
     try {
-      const { data } = await api.post("/public/book", {
-        booking_token: token, job_address: address, scheduled_start: chosenSlot.start,
+      const { data } = await api.post(`/shops/${id}/book`, {
+        job_address: address, scheduled_start: chosenSlot.start,
         customer_last_name: vehicle.customer_last_name,
         customer_first_name: vehicle.customer_first_name.trim() || null,
         notes: vehicle.notes.trim() || null,
@@ -126,29 +112,28 @@ export default function PublicBooking() {
         invoice_instead: invoiceInstead,
       });
       setConfirmation(data);
-      loadBookings();
     } catch (e) {
       alert(e.response?.data?.detail || "Booking failed");
     } finally { setSubmitting(false); }
   }
 
   if (error) {
-    return <Center><div className="surface" style={{ padding: 30, maxWidth: 460, textAlign: "center" }}>
-      <div className="h2" style={{ marginBottom: 10 }}>Link Not Active</div>
+    return <Shell><div className="surface" style={{ padding: 30, maxWidth: 460, textAlign: "center" }}>
+      <div className="h2" style={{ marginBottom: 10 }}>Can't open this shop</div>
       <div className="muted">{error}</div>
-    </div></Center>;
+    </div></Shell>;
   }
-  if (!shop) return <Center><div className="muted">Loading…</div></Center>;
+  if (!shop) return <Shell><div className="muted">Loading…</div></Shell>;
   if (shop.booking_open === false) {
-    return <Center><div className="surface" style={{ padding: 30, maxWidth: 480, textAlign: "center" }} data-testid="booking-closed">
+    return <Shell><div className="surface" style={{ padding: 30, maxWidth: 480, textAlign: "center" }} data-testid="booking-closed">
       <div className="h2" style={{ marginBottom: 8 }}>Booking is closed</div>
       <div className="muted">{shop.booking_message}</div>
-    </div></Center>;
+    </div></Shell>;
   }
 
   if (confirmation) {
     const pending = confirmation.requires_approval || confirmation.status === "requested";
-    return <Center>
+    return <Shell>
       <div className="surface" style={{ padding: 30, maxWidth: 540, textAlign: "center" }} data-testid="booking-confirmed">
         {!pending && <div style={{ fontSize: 48, color: "var(--green)", marginBottom: 8 }}>✓</div>}
         <div className="h2" style={{ marginBottom: 6 }}>{pending ? "Pending owner approval" : "Booking Confirmed"}</div>
@@ -167,41 +152,21 @@ export default function PublicBooking() {
           <div className="muted" style={{ fontSize: 13, marginTop: 16 }}>Confirmation email sent.</div>
         )}
       </div>
-    </Center>;
+    </Shell>;
   }
 
   return (
-    <div style={{ minHeight: "100vh", padding: "32px 16px", background: "var(--bg-primary)" }}>
-      <div style={{ maxWidth: 640, margin: "0 auto" }}>
-        <div style={{ textAlign: "center", marginBottom: 4 }}>
-          <Brand size={26} />
-        </div>
-        <div className="muted" style={{ textAlign: "center", marginBottom: 24, fontSize: 14 }}>
+    <Shell>
+      <div style={{ maxWidth: 640 }}>
+        <div className="muted" style={{ marginBottom: 16, fontSize: 14 }}>
           Booking for <b style={{ color: "var(--text-primary)" }}>{shop.name}</b>
         </div>
-
-        <ShopBookings
-          bookings={bookings}
-          onEdit={setEditingBooking}
-          onCancel={async (id) => {
-            if (!window.confirm("Cancel this booking? This does not send a message.")) return;
-            try {
-              await api.post(`/public/bookings/${token}/${id}/cancel`);
-              loadBookings();
-            } catch (e) {
-              const detail = e.response?.data?.detail;
-              alert(typeof detail === "string" ? detail : "Could not cancel this booking. Try again.");
-            }
-          }}
-        />
-        <JobEditModal open={!!editingBooking} job={editingBooking} token={token}
-          onClose={() => setEditingBooking(null)} onDone={loadBookings} />
 
         {/* Step indicator */}
         <Steps step={step} />
 
         {step === 1 && (
-          <Step title="Where is the vehicle?" sub="If at your shop, confirm the address. If at the customer's location, enter that address.">
+          <Step title="Where is the vehicle?" sub="Start with the shop address. Change it if the vehicle is somewhere else.">
             <input className="input" value={address} onChange={e => { setAddress(e.target.value); setZoneInfo(null); }}
               onBlur={geocodeAddr} placeholder="123 Main St, Phoenix, AZ" data-testid="booking-address" />
             {zoneInfo && zoneInfo.in_metro && (
@@ -234,7 +199,7 @@ export default function PublicBooking() {
                 const next = e.target.value;
                 setDate(next);
                 loadSlots(next);
-                if (isOwner && customTime && next) setChosenSlot({ start: phoenixInstant(next, customTime) });
+                if (customTime && next) setChosenSlot({ start: phoenixInstant(next, customTime) });
                 else setChosenSlot(null);
               }}
               data-testid="booking-date" />
@@ -268,7 +233,7 @@ export default function PublicBooking() {
                 </div>
               </div>
             )}
-            {isOwner && date && (
+            {date && (
               <div style={{ marginTop: 16 }}>
                 <label className="label" htmlFor="owner-time">Set a time</label>
                 <input id="owner-time" className="input" type="time" value={customTime}
@@ -378,15 +343,10 @@ export default function PublicBooking() {
           </Step>
         )}
       </div>
-    </div>
+    </Shell>
   );
 }
 
-const Center = ({ children }) => (
-  <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-    {children}
-  </div>
-);
 const Step = ({ title, sub, children }) => (
   <div className="surface page-fade" style={{ padding: 24 }}>
     <div className="h2" style={{ marginBottom: sub ? 4 : 16 }}>{title}</div>
@@ -407,46 +367,6 @@ const NavBtns = ({ onBack, onNext, nextDisabled, nextLabel = "Continue →", dat
     <button className="btn btn-primary" onClick={onNext} disabled={nextDisabled} data-testid={dataTestId || "step-next"}>{nextLabel}</button>
   </div>
 );
-function ShopBookings({ bookings, onEdit, onCancel }) {
-  return (
-    <section style={{ marginBottom: 24 }} data-testid="your-bookings">
-      <h2 className="h3" style={{ marginBottom: 10 }}>Your bookings</h2>
-      {bookings.length === 0 ? (
-        <div className="surface muted" style={{ padding: 16, textAlign: "center" }}>No upcoming bookings.</div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {bookings.map((job) => (
-            <div key={job.id} className="surface" style={{ padding: 14 }} data-testid={`booking-${job.id}`}>
-              <div style={{ fontWeight: 600 }}>
-                {job.vehicle_year} {job.vehicle_make} {job.vehicle_model}
-              </div>
-              <div className="muted" style={{ fontSize: 13, marginTop: 4 }}>
-                {[job.customer_first_name, job.customer_last_name].filter(Boolean).join(" ")}
-                {" · "}{formatDate(job.scheduled_start)} · {formatTime(job.scheduled_start)}
-              </div>
-              <div style={{ fontSize: 13, marginTop: 4 }}>{job.job_address}</div>
-              <div style={{ marginTop: 8 }}>
-                <span className={`badge badge-${job.status}`} data-testid={`booking-status-${job.id}`}>
-                  {jobStatusLabel(job.status)}
-                </span>
-              </div>
-              {job.notes && (
-                <div style={{ fontSize: 13, marginTop: 6, whiteSpace: "pre-wrap" }}>{job.notes}</div>
-              )}
-              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                <button type="button" className="btn btn-ghost" onClick={() => onEdit(job)}
-                  data-testid={`booking-edit-${job.id}`}>Edit</button>
-                <button type="button" className="btn btn-ghost" onClick={() => onCancel(job.id)}
-                  data-testid={`booking-cancel-${job.id}`}>Cancel booking</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
 const Steps = ({ step }) => (
   <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 20 }}>
     {[1,2,3,4,5].map(i => (

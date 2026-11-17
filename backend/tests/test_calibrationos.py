@@ -112,19 +112,16 @@ def test_pricing_reference():
 
 
 def test_public_booking_flow(owner_token):
-    # Get a shop and its token
     shops = requests.get(f"{API}/shops", headers=auth(owner_token), timeout=30).json()
     shop = next(s for s in shops if "Safelite" in s["name"])
-    token = shop["booking_link_token"]
-    # Public shop endpoint
-    r = requests.get(f"{API}/public/shop/{token}", timeout=30)
-    assert r.status_code == 200
+    gone = requests.get(f"{API}/public/shop/{shop['booking_link_token']}", timeout=30)
+    assert gone.status_code == 404
     # Availability
     target_date = (datetime.now(timezone.utc).date() + timedelta(days=2))
     while target_date.weekday() == 6:
         target_date += timedelta(days=1)
-    r = requests.post(f"{API}/public/availability", json={
-        "booking_token": token, "job_address": "200 Main St, Mesa, AZ",
+    r = requests.post(f"{API}/shops/{shop['id']}/availability", headers=auth(owner_token), json={
+        "job_address": "200 Main St, Mesa, AZ",
         "date": target_date.isoformat()
     }, timeout=30)
     assert r.status_code == 200
@@ -134,8 +131,8 @@ def test_public_booking_flow(owner_token):
     assert len(avail["slots"]) > 0
     slot = avail["slots"][0]
     # Book
-    r = requests.post(f"{API}/public/book", json={
-        "booking_token": token, "job_address": "200 Main St, Mesa, AZ",
+    r = requests.post(f"{API}/shops/{shop['id']}/book", headers=auth(owner_token), json={
+        "job_address": "200 Main St, Mesa, AZ",
         "scheduled_start": slot["start"],
         "customer_last_name": "TESTCUST", "year": 2022, "make": "Honda", "model": "Civic",
         "vin": "1HGCM82633A123456", "adas_system": "forward_camera",
@@ -151,12 +148,12 @@ def test_public_booking_flow(owner_token):
 
 def test_sunday_no_slots(owner_token):
     shops = requests.get(f"{API}/shops", headers=auth(owner_token), timeout=30).json()
-    token = shops[0]["booking_link_token"]
+    shop = shops[0]
     today = datetime.now(timezone.utc).date()
     # find next sunday
     sun = today + timedelta(days=(6 - today.weekday()) % 7 or 7)
-    r = requests.post(f"{API}/public/availability", json={
-        "booking_token": token, "job_address": "Mesa, AZ", "date": sun.isoformat()
+    r = requests.post(f"{API}/shops/{shop['id']}/availability", headers=auth(owner_token), json={
+        "job_address": "Mesa, AZ", "date": sun.isoformat()
     }, timeout=30)
     assert r.status_code == 200
     assert r.json()["slots"] == []
@@ -164,20 +161,20 @@ def test_sunday_no_slots(owner_token):
 
 def test_past_date(owner_token):
     shops = requests.get(f"{API}/shops", headers=auth(owner_token), timeout=30).json()
-    token = shops[0]["booking_link_token"]
+    shop = shops[0]
     past = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
-    r = requests.post(f"{API}/public/availability", json={
-        "booking_token": token, "job_address": "Mesa, AZ", "date": past
+    r = requests.post(f"{API}/shops/{shop['id']}/availability", headers=auth(owner_token), json={
+        "job_address": "Mesa, AZ", "date": past
     }, timeout=30)
     assert r.json()["slots"] == []
 
 
 def test_too_far_out(owner_token):
     shops = requests.get(f"{API}/shops", headers=auth(owner_token), timeout=30).json()
-    token = shops[0]["booking_link_token"]
+    shop = shops[0]
     far = (datetime.now(timezone.utc).date() + timedelta(days=30)).isoformat()
-    r = requests.post(f"{API}/public/availability", json={
-        "booking_token": token, "job_address": "Mesa, AZ", "date": far
+    r = requests.post(f"{API}/shops/{shop['id']}/availability", headers=auth(owner_token), json={
+        "job_address": "Mesa, AZ", "date": far
     }, timeout=30)
     assert r.json()["slots"] == []
 
@@ -185,17 +182,16 @@ def test_too_far_out(owner_token):
 def test_custom_pricing(owner_token):
     shops = requests.get(f"{API}/shops", headers=auth(owner_token), timeout=30).json()
     agn = next(s for s in shops if "AutoGlassNow" in s["name"])
-    token = agn["booking_link_token"]
     target = datetime.now(timezone.utc).date() + timedelta(days=3)
     while target.weekday() == 6:
         target += timedelta(days=1)
-    r = requests.post(f"{API}/public/availability", json={
-        "booking_token": token, "job_address": "Goodyear, AZ", "date": target.isoformat()
+    r = requests.post(f"{API}/shops/{agn['id']}/availability", headers=auth(owner_token), json={
+        "job_address": "Goodyear, AZ", "date": target.isoformat()
     }, timeout=30)
     slots = r.json()["slots"]
     assert len(slots) > 0
-    r = requests.post(f"{API}/public/book", json={
-        "booking_token": token, "job_address": "Goodyear, AZ",
+    r = requests.post(f"{API}/shops/{agn['id']}/book", headers=auth(owner_token), json={
+        "job_address": "Goodyear, AZ",
         "scheduled_start": slots[0]["start"],
         "customer_last_name": "AGNCUST", "year": 2023, "make": "Toyota", "model": "Camry",
         "adas_system": "forward_camera", "calibration_type": "static",
@@ -210,15 +206,14 @@ def test_full_job_lifecycle_with_invoice(owner_token):
     # Book a job
     shops = requests.get(f"{API}/shops", headers=auth(owner_token), timeout=30).json()
     shop = next(s for s in shops if "Glass Doctor" in s["name"])
-    token = shop["booking_link_token"]
     target = datetime.now(timezone.utc).date() + timedelta(days=4)
     while target.weekday() == 6:
         target += timedelta(days=1)
-    av = requests.post(f"{API}/public/availability", json={
-        "booking_token": token, "job_address": "Mesa, AZ", "date": target.isoformat()
+    av = requests.post(f"{API}/shops/{shop['id']}/availability", headers=auth(owner_token), json={
+        "job_address": "Mesa, AZ", "date": target.isoformat()
     }, timeout=30).json()
-    book = requests.post(f"{API}/public/book", json={
-        "booking_token": token, "job_address": "Mesa, AZ",
+    book = requests.post(f"{API}/shops/{shop['id']}/book", headers=auth(owner_token), json={
+        "job_address": "Mesa, AZ",
         "scheduled_start": av["slots"][0]["start"],
         "customer_last_name": "LIFECYCLE", "year": 2021, "make": "Ford", "model": "F150",
         "adas_system": "forward_camera", "calibration_type": "dual",

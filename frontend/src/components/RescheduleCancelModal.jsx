@@ -22,12 +22,9 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
   useEffect(() => {
     if (!open || mode !== "reschedule" || !job) return;
     setSlotsError("");
-    // Find the shop to use its booking token (we need it for availability)
     let cancelled = false;
     (async () => {
-      const shop = (await api.get(`/shops/${job.shop_id}`)).data;
-      const { data } = await api.post("/public/availability", {
-        booking_token: shop.booking_link_token,
+      const { data } = await api.post(`/shops/${job.shop_id}/availability`, {
         job_address: job.job_address,
         date,
       });

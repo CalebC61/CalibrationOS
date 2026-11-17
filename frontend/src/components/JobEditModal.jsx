@@ -39,8 +39,9 @@ const emptyForm = {
   calibration_type: "static", price: "", date: "", time: "", zone: "east", notes: "",
 };
 
-export default function JobEditModal({ open, job, onClose, onDone, token }) {
-  const ownerFields = !token;
+export default function JobEditModal({ open, job, onClose, onDone, shopEdit = false, client }) {
+  const http = client || api;
+  const ownerFields = !shopEdit;
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -101,10 +102,8 @@ export default function JobEditModal({ open, job, onClose, onDone, token }) {
     setSaving(true);
     setError(null);
     try {
-      const url = token
-        ? `/public/bookings/${token}/${job.id}`
-        : `/jobs/${job.id}`;
-      await api.patch(url, payload);
+      const url = shopEdit ? `/portal/jobs/${job.id}` : `/jobs/${job.id}`;
+      await http.patch(url, payload);
       onDone?.();
       onClose();
     } catch (e) {

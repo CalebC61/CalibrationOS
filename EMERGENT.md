@@ -22,6 +22,11 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-17): shops book only after they log in.** Public `/book/{token}` and
+  `/scorecard/{token}` no longer show or change jobs. Booking, edits, cancels, and the
+  scorecard go through the shop portal. The owner still books for a shop from the shop
+  page. Welcome mail points at the portal login. `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED`
+  are unchanged. Details in `CHANGELOG.md`.
 - **Session (2026-11-12): cancelled jobs leave the owner and technician day list.**
   `GET /api/jobs` now omits `cancelled` and `declined`. The jobs stay in Mongo.
   `include_cancelled=true` is an opt-in for a future history view; the dashboard,

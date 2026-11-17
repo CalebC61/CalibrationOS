@@ -15,6 +15,25 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — shops book only after they log in (2026-11-17)
+A booking link is no longer a way to book, change, cancel, or read a shop's jobs.
+`GET /api/public/shop/{token}`, `POST /api/public/availability`, `POST /api/public/book`,
+`GET /api/public/bookings/{token}`, `PATCH /api/public/bookings/{token}/{job_id}`,
+`POST /api/public/bookings/{token}/{job_id}/cancel`, and `GET /api/public/shop-status/{token}`
+are gone. Old `/book/{token}` and `/scorecard/{token}` pages send the visitor to the shop
+portal login and do not show job data.
+
+Shops book, see open times, edit, and cancel through the portal login:
+`POST /api/portal/availability`, `POST /api/portal/book`, `PATCH /api/portal/jobs/{job_id}`,
+`POST /api/portal/jobs/{job_id}/cancel`, and `GET /api/portal/scorecard` (that shop only).
+The card-on-file and charge-terms checks are unchanged. `SHOP_EMAILS_ENABLED` and
+`BILLING_ENABLED` are unchanged.
+
+The owner still books for a shop from the shop page (`POST /api/shops/{shop_id}/book` and
+`POST /api/shops/{shop_id}/availability`). Owner reschedule uses that availability route.
+Welcome mail and the owner "finished signup" mail point at `/portal/login`. The invite
+mail still opens the setup page, and says booking happens in the shop portal.
+
 ### Fixed — every shop needs a verified card before it can book (2026-11-14)
 The server no longer trusts a payment method id from the browser. Signup and
 the portal send a SetupIntent id. The API retrieves it and saves the card only

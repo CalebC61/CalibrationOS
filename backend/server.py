@@ -102,7 +102,7 @@ from onboarding import (
     welcome_email_html,
 )
 from owner_reads import owner_documents, public_invite
-# Invite, reset, and booking links. A blank FRONTEND_URL uses the public site.
+# Invite, reset, and portal links. A blank FRONTEND_URL uses the public site.
 FRONTEND_URL = resolve_frontend_url(_env("FRONTEND_URL"), PUBLIC_SITE_URL)
 from billing import (
     CHARGE_MODE, INVOICE_MODE, TRIP_FEE_REASONS, amount_due, apply_late_fee, apply_trip_fee_only,
@@ -141,7 +141,7 @@ from business_time import (
     offered_slot_starts, zone_window,
 )
 from booking_fields import completion_notes, job_customer_fields
-from job_edits import changed_keys, is_upcoming, prepare_edit, shift_scheduled_end
+from job_edits import changed_keys, prepare_edit, shift_scheduled_end
 from regeocode import (
     detect_zone, jobs_on_phoenix_day, location_set, regeocode_records,
     regeocode_scope, zone_for_geocode,
@@ -1025,13 +1025,13 @@ class ShopIn(BaseModel):
 class ShopUpdate(ShopIn):
     status: Optional[Literal["active", "paused", "inactive", "suspended"]] = None
 
-class SlotQuery(BaseModel):
-    booking_token: str
+class AvailabilityIn(BaseModel):
     job_address: str
     date: str  # YYYY-MM-DD
 
 class BookingIn(BaseModel):
-    booking_token: str
+    # Older portal screens sent this. It is ignored. The shop comes from the login.
+    booking_token: Optional[str] = None
     job_address: str
     scheduled_start: str  # ISO datetime
     customer_last_name: str
@@ -1437,7 +1437,8 @@ async def get_shop(shop_id: str, tech=Depends(require_owner)):
     shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
     if not shop:
         raise HTTPException(404, "Shop not found")
-    return shop
+    gate = await _booking_gate_for_shop(shop)
+    return {**shop, "booking_open": gate["allowed"], "booking_message": gate["message"]}
 
 @api.put("/shops/{shop_id}")
 async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner)):
@@ -1488,28 +1489,10 @@ async def regenerate_link(shop_id: str, tech=Depends(require_owner)):
     await db.shops.update_one({"id": shop_id}, {"$set": {"booking_link_token": token, "updated_at": iso(now_utc())}})
     return {"booking_link_token": token}
 
-# ---------- Public booking by token ----------
+# ---------- Booking (portal login, or the owner booking for a shop) ----------
 async def _booking_gate_for_shop(shop: dict) -> dict:
     user = await _billing_user_for(shop.get("id"))
     return booking_gate(shop, user)
-
-
-_PUBLIC_SHOP_KEYS = (
-    "custom_rate_static", "custom_rate_dynamic", "custom_rate_dual", "custom_rate_triple",
-    "custom_rate_tesla", "pricing_tier", "name", "address", "contact_phone", "contact_email",
-    "id", "booking_link_token", "zone", "requires_billing_setup", "status", "lat", "lng",
-    "formatted_address", "geocode_source",
-)
-
-
-@api.get("/public/shop/{token}")
-async def public_shop(token: str):
-    shop = await db.shops.find_one({"booking_link_token": token}, {"_id": 0})
-    if not shop or shop.get("status") not in ("active", "suspended"):
-        raise HTTPException(404, "This booking link is not active. Contact The Calibration Crew.")
-    gate = await _booking_gate_for_shop(shop)
-    public = {key: shop.get(key) for key in _PUBLIC_SHOP_KEYS if key in shop}
-    return {**public, "booking_open": gate["allowed"], "booking_message": gate["message"]}
 
 def shop_price_for(shop: dict, cal_type: str) -> float:
     if shop.get("pricing_tier") == "custom":
@@ -2096,16 +2079,6 @@ async def _arrival_plan(tech, day, start: datetime, new_point: tuple, jobs: list
     decided["duration_minutes"] = ctx["duration"]
     return decided
 
-async def _shop_for_booking_token(token: str) -> dict:
-    """Active shop for a booking link. A suspended shop is a 403, not a missing link."""
-    shop = await db.shops.find_one({"booking_link_token": token})
-    if shop and shop.get("status") == "suspended":
-        raise HTTPException(403, "This shop is suspended and cannot book.")
-    if not shop or shop.get("status") != "active":
-        raise HTTPException(404, "Invalid booking link")
-    return shop
-
-
 async def _pin_for_job(shop: dict, address: str) -> dict:
     """Reuse the shop's signup pin when the job is still at that address."""
     saved = reused_shop_pin(shop, address)
@@ -2117,15 +2090,14 @@ async def _pin_for_job(shop: dict, address: str) -> dict:
         raise HTTPException(400, str(exc))
 
 
-@api.post("/public/availability")
-async def public_availability(query: SlotQuery):
-    try:
-        shop = await _shop_for_booking_token(query.booking_token)
-    except HTTPException as exc:
-        if exc.status_code == 403:
-            return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
-                    "message": exc.detail if isinstance(exc.detail, str) else "This shop is suspended and cannot book."}
-        raise
+async def _availability_for_shop(shop: dict | None, query: AvailabilityIn):
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    if shop.get("status") == "suspended":
+        return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
+                "message": "This shop is suspended and cannot book."}
+    if shop.get("status") != "active":
+        raise HTTPException(400, "Your shop is not active")
     gate = await _booking_gate_for_shop(shop)
     if not gate["allowed"]:
         return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
@@ -2167,13 +2139,18 @@ async def public_availability(query: SlotQuery):
         payload["message"] = closed_message
     return payload
 
-@api.post("/public/book")
-async def public_book(data: BookingIn):
+async def _book_job(shop: dict | None, data: BookingIn):
+    """Create a job for this shop. The caller has already proved who they are."""
     try:
         data.notification_phone = normalize_us_phone(data.notification_phone)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    shop = await _shop_for_booking_token(data.booking_token)
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    if shop.get("status") == "suspended":
+        raise HTTPException(403, "This shop is suspended and cannot book.")
+    if shop.get("status") != "active":
+        raise HTTPException(400, "Your shop is not active")
     gate = await _booking_gate_for_shop(shop)
     if not gate["allowed"]:
         raise HTTPException(403, gate["message"])
@@ -2299,26 +2276,34 @@ async def public_book(data: BookingIn):
         "shop_email_delivered": bool(shop_mail and shop_mail.get("delivered")),
     }
 
-async def _job_for_shop_token(token: str, job_id: str) -> tuple:
-    shop = await _shop_for_booking_token(token)
-    job = await db.jobs.find_one({"id": job_id, "shop_id": shop["id"]}, {"_id": 0})
-    if not job:
+async def _job_for_portal_shop(su: dict, job_id: str) -> tuple:
+    shop = await db.shops.find_one({"id": su["shop_id"]})
+    job = await db.jobs.find_one({"id": job_id, "shop_id": su["shop_id"]}, {"_id": 0})
+    if not shop or not job:
         raise HTTPException(404, "Booking not found")
     return shop, job
 
-@api.get("/public/bookings/{token}")
-async def public_booking_list(token: str):
-    """Upcoming jobs for this booking link only. Other shops' jobs are not included."""
-    shop = await _shop_for_booking_token(token)
-    jobs = await db.jobs.find({"shop_id": shop["id"]}, {"_id": 0}).to_list(500)
-    upcoming = [job for job in jobs if is_upcoming(job)]
-    upcoming.sort(key=lambda job: job.get("scheduled_start") or "")
-    return upcoming
+@api.post("/portal/availability")
+async def portal_availability(query: AvailabilityIn, su=Depends(get_current_shop_user)):
+    shop = await db.shops.find_one({"id": su["shop_id"]})
+    return await _availability_for_shop(shop, query)
 
-@api.patch("/public/bookings/{token}/{job_id}")
-async def public_booking_edit(token: str, job_id: str, body: JobEditIn):
-    """Shop edit via its booking token. Price and zone stay owner-only. No messages."""
-    shop, job = await _job_for_shop_token(token, job_id)
+@api.post("/shops/{shop_id}/availability")
+async def owner_availability(shop_id: str, query: AvailabilityIn, tech=Depends(require_owner)):
+    """Times the owner can offer while booking for this shop. No public token."""
+    shop = await db.shops.find_one({"id": shop_id})
+    return await _availability_for_shop(shop, query)
+
+@api.post("/shops/{shop_id}/book")
+async def owner_book_for_shop(shop_id: str, data: BookingIn, tech=Depends(require_owner)):
+    """Owner books a job for a shop. The card and terms checks still apply."""
+    shop = await db.shops.find_one({"id": shop_id})
+    return await _book_job(shop, data)
+
+@api.patch("/portal/jobs/{job_id}")
+async def portal_job_edit(job_id: str, body: JobEditIn, su=Depends(get_current_shop_user)):
+    """This shop edits its own job. Price and zone stay owner-only. No messages."""
+    shop, job = await _job_for_portal_shop(su, job_id)
     try:
         fields = prepare_edit(body.model_dump(exclude_unset=True), allow_price=False, allow_zone=False)
     except ValueError as exc:
@@ -2327,10 +2312,10 @@ async def public_booking_edit(token: str, job_id: str, body: JobEditIn):
         job, fields, {"kind": "shop", "id": shop["id"], "name": shop["name"]},
     )
 
-@api.post("/public/bookings/{token}/{job_id}/cancel")
-async def public_booking_cancel(token: str, job_id: str):
+@api.post("/portal/jobs/{job_id}/cancel")
+async def portal_job_cancel(job_id: str, su=Depends(get_current_shop_user)):
     """Cancel one of this shop's jobs. Does not send SMS or email."""
-    shop, job = await _job_for_shop_token(token, job_id)
+    shop, job = await _job_for_portal_shop(su, job_id)
     if job.get("status") == "cancelled":
         raise HTTPException(400, "Job is already cancelled")
     if job.get("status") == "complete":
@@ -3143,13 +3128,12 @@ async def download_document(doc_id: str, tech=Depends(get_current_tech)):
     return Response(content=binary, media_type=doc.get("content_type", "application/octet-stream"),
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"})
 
-# ---------- Public shop status page ----------
-@api.get("/public/shop-status/{token}")
-async def public_shop_status(token: str):
-    shop = await db.shops.find_one({"booking_link_token": token, "status": "active"}, {"_id": 0})
+# ---------- Shop scorecard (portal login; this shop only) ----------
+@api.get("/portal/scorecard")
+async def portal_scorecard(su=Depends(get_current_shop_user)):
+    shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
     if not shop:
-        raise HTTPException(404, "Shop not found or link inactive")
-    # Last 30 days of jobs for this shop
+        raise HTTPException(404, "Shop not found")
     cutoff = iso(now_utc() - timedelta(days=30))
     jobs = await db.jobs.find(
         {"shop_id": shop["id"], "scheduled_start": {"$gte": cutoff}},
@@ -3162,9 +3146,8 @@ async def public_shop_status(token: str):
     total_spent = sum(j["price"] for j in completed)
     return {
         "shop_name": shop["name"],
-        "shop_address": shop["address"],
-        "zone": shop["zone"],
-        "booking_link": shop["booking_link_token"],
+        "shop_address": shop.get("address"),
+        "zone": shop.get("zone"),
         "stats": {
             "jobs_last_30_days": len(jobs),
             "completed_count": len(completed),
@@ -4234,7 +4217,7 @@ async def portal_accept_charge(body: AcceptChargeIn, request: Request, su=Depend
     fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
     if shop and not su.get("charge_authorization_accepted_at"):
         await _send_signup_finished(shop, fresh["email"])
-    return {"shop_user": fresh, "booking_link_token": (shop or {}).get("booking_link_token")}
+    return {"shop_user": fresh}
 
 
 @api.get("/portal/stripe-setup-status")
@@ -4281,6 +4264,8 @@ async def portal_login(body: ShopUserLoginIn):
 @api.get("/portal/me")
 async def portal_me(su=Depends(get_current_shop_user)):
     shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
+    if shop:
+        shop = {key: value for key, value in shop.items() if key != "booking_link_token"}
     return {
         "shop_user": su, "shop": shop, "setup": booking_gate(shop or {}, su),
         "site_url": FRONTEND_URL,
@@ -4356,14 +4341,14 @@ def _signup_limited(request: Request, kind: str, limit: int) -> None:
 async def _send_signup_finished(shop: dict, email: str) -> None:
     """Welcome the shop and tell the owner. Shop mail still follows SHOP_EMAILS_ENABLED."""
     try:
-        booking_url = app_link(FRONTEND_URL, f"/book/{shop['booking_link_token']}")
+        portal_url = app_link(FRONTEND_URL, "/portal/login")
     except ValueError:
-        booking_url = f"/book/{shop['booking_link_token']}"
-        logger.error("[EMAIL] FRONTEND_URL is not set, welcome email has a relative booking link.")
+        portal_url = "/portal/login"
+        logger.error("[EMAIL] FRONTEND_URL is not set, welcome email has a relative portal link.")
     await _send_booking_message({
         "to": email,
         "subject": f"You're set — {shop['name']}",
-        "html": welcome_email_html(shop["name"], booking_url),
+        "html": welcome_email_html(shop["name"], portal_url),
         "kind": "welcome",
         "reply_to": owner_notify_email(),
         "meta": {"shop_id": shop["id"]},
@@ -4371,7 +4356,7 @@ async def _send_signup_finished(shop: dict, email: str) -> None:
     await send_email(
         owner_notify_email(),
         f"{shop['name']} finished signup",
-        f"<p>{shop['name']} finished signup. Booking link: {booking_url}</p>",
+        f"<p>{shop['name']} finished signup. They book from the shop portal after they log in: {portal_url}</p>",
         kind="signup_finished",
         meta={"shop_id": shop["id"]},
     )
@@ -4977,15 +4962,9 @@ async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_
 
 @api.post("/portal/book")
 async def portal_book(data: BookingIn, su=Depends(get_current_shop_user)):
-    """Booking through the portal — uses authenticated shop_user instead of token."""
+    """Booking through the portal. A booking-link token in the body is ignored."""
     shop = await db.shops.find_one({"id": su["shop_id"]})
-    if shop and shop.get("status") == "suspended":
-        raise HTTPException(403, "This shop is suspended and cannot book.")
-    if not shop or shop.get("status") != "active":
-        raise HTTPException(400, "Your shop is not active")
-    # Override booking_token to the shop's current token internally
-    data.booking_token = shop["booking_link_token"]
-    return await public_book(data)
+    return await _book_job(shop, data)
 
 # ---------- Owner: charge queue ----------
 @api.get("/charge-queue")
@@ -5324,7 +5303,7 @@ def security_self_check():
         warnings.append(sender_problem)
     if not _env("FRONTEND_URL"):
         logger.info(
-            "[EMAIL] FRONTEND_URL is not set. Invite, reset, and booking links use %s.",
+            "[EMAIL] FRONTEND_URL is not set. Invite, reset, and portal links use %s.",
             FRONTEND_URL,
         )
     if cors_allow_origins() == ["*"]:

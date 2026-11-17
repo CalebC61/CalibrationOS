@@ -84,8 +84,8 @@ export default function PortalBook() {
   async function loadSlots(d) {
     setSlots([]); setSlotsMsg(""); setSlotsError(false);
     try {
-      const { data } = await portalApi.post("/public/availability", {
-        booking_token: shop.booking_link_token, job_address: address, date: d,
+      const { data } = await portalApi.post("/portal/availability", {
+        job_address: address, date: d,
       });
       setSlots(data.slots || []);
       if ((data.slots || []).length === 0) setSlotsMsg(data.message || "No slots available.");
@@ -109,7 +109,7 @@ export default function PortalBook() {
     setSubmitting(true);
     try {
       const { data } = await portalApi.post("/portal/book", {
-        booking_token: shop.booking_link_token, job_address: address,
+        job_address: address,
         scheduled_start: chosen.start, customer_last_name: veh.customer_last_name,
         customer_first_name: veh.customer_first_name.trim() || null,
         notes: veh.notes.trim() || null,
