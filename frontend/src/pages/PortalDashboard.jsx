@@ -42,7 +42,9 @@ export default function PortalDashboard() {
   if (!data) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
 
   const own = data.own || [];
-  const points = own.filter(j => j.job_lat && j.job_lng).map(j => [j.job_lat, j.job_lng]);
+  const others = data.others || [];
+  const points = [...own, ...others].filter(j => j.job_lat && j.job_lng).map(j => [j.job_lat, j.job_lng]);
+  const windowFor = (start, end) => (start && end ? `${fmt(start)}–${fmt(end)}` : (start ? fmt(start) : ""));
 
   return (
     <PortalShell>
@@ -70,9 +72,9 @@ export default function PortalDashboard() {
 
       {points.length === 0 ? (
         <div className="surface" data-testid="portal-day-empty" style={{ padding: "28px 20px", marginBottom: 20, textAlign: "center" }}>
-          <h2 className="h3" style={{ marginBottom: 8 }}>No jobs on this day</h2>
+          <h2 className="h3" style={{ marginBottom: 8 }}>No stops on this day</h2>
           <p className="muted" style={{ margin: "0 auto", maxWidth: "36rem", lineHeight: 1.5 }}>
-            When you book a calibration, the stop shows up here with the time and the vehicle.
+            When a calibration is on the route, it shows up here. Your jobs include the details. Other stops show the time only.
           </p>
         </div>
       ) : (
@@ -81,19 +83,41 @@ export default function PortalDashboard() {
             <MapContainer center={points[0]} zoom={10}
               style={{ height: "100%", width: "100%", background: "#0d1116" }}>
               <DarkBasemap />
-              {own.filter(j => j.job_lat && j.job_lng).map((j, idx) => (
+              {own.filter(j => j.job_lat && j.job_lng).map((j) => (
                 <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-                  icon={pinIcon(`Y${idx + 1}`, "#FF5F1F", false, "#0a0a0a")}>
+                  icon={pinIcon(j.route_order || "Y", "#FF5F1F", false, "#0a0a0a")}>
                   <Tooltip>
                     <div style={{ fontSize: 12 }}>
-                      <b>Your job · {fmt(j.scheduled_start)}</b><br />
-                      {j.vehicle_year} {j.vehicle_make} {j.vehicle_model}
+                      <b>Your job · {windowFor(j.scheduled_start, j.scheduled_end)}</b><br />
+                      {j.vehicle_year} {j.vehicle_make} {j.vehicle_model}<br />
+                      {j.job_address}
+                    </div>
+                  </Tooltip>
+                </Marker>
+              ))}
+              {others.filter(j => j.job_lat && j.job_lng).map((j) => (
+                <Marker key={`stop-${j.route_order}`} position={[j.job_lat, j.job_lng]}
+                  icon={pinIcon(j.route_order || "·", "#8E95A3", false, "#0a0a0a")}>
+                  <Tooltip>
+                    <div style={{ fontSize: 12 }} data-testid={`portal-other-stop-${j.route_order}`}>
+                      <b>Stop {j.route_order}</b><br />
+                      {windowFor(j.arrival_start, j.arrival_end)}
                     </div>
                   </Tooltip>
                 </Marker>
               ))}
               <FitBounds points={points} />
             </MapContainer>
+          </div>
+          <div style={{ display: "flex", gap: 16, marginTop: 12, fontSize: 12, flexWrap: "wrap" }} className="muted" data-testid="portal-map-legend">
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 999, background: "#FF5F1F", display: "inline-block" }} />
+              Your jobs
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 999, background: "#8E95A3", display: "inline-block" }} />
+              Other stops on the route — time window only
+            </span>
           </div>
         </div>
       )}
@@ -109,7 +133,7 @@ export default function PortalDashboard() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                   <div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                      <span className="font-mono" style={{ background: "var(--bg-elevated)", padding: "2px 8px", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>Y{idx + 1}</span>
+                      <span className="font-mono" style={{ background: "var(--bg-elevated)", padding: "2px 8px", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{j.route_order || idx + 1}</span>
                       <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
                       {j.is_at_risk && <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)" }}>⚠ AT RISK</span>}
                     </div>

@@ -16,10 +16,15 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 version drift apart.
 
 ### Fixed — pre-launch privacy, limits, and a few shop-facing snags (2026-11-17)
-A logged-in shop's day map (`GET /api/portal/day-map`) now returns only that
-shop's jobs. Other shops' jobs, addresses, and coordinates are not queried and
-not included. A day with no jobs shows a short empty state instead of a map
-centered on the valley. The legend that mentioned other shops is gone.
+A logged-in shop's day map (`GET /api/portal/day-map`) shows every stop on the
+owner's route for that America/Phoenix day, in route order. This shop's jobs
+stay in full (customer, vehicle, address, status, and the arrival window).
+Another shop's stop is a gray pin: route position, the arrival window, and a
+coordinate rounded to three decimal places (about a block). The response for
+that stop does not include a job id, shop name, customer, vehicle, VIN, address
+text, phone, notes, or price. The empty state is only for a day with no stops
+at all. The legend says the gray pins are other stops and show the time window
+only.
 
 `POST /api/auth/login`, `POST /api/portal/auth/login`, and
 `POST /api/portal/auth/forgot-password` use the same in-memory counter as

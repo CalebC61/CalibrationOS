@@ -134,9 +134,11 @@ def _day_jobs():
     return day, when, done
 
 
-def test_day_map_returns_only_this_shops_jobs(monkeypatch):
+def test_day_map_shows_the_route_and_strips_other_shops(monkeypatch):
     db = _DB()
     day, when, done = _day_jobs()
+    later = (business_day_bounds(day)[0] + timedelta(hours=6)).isoformat()
+    later_end = (business_day_bounds(day)[0] + timedelta(hours=7)).isoformat()
     db.shop_users.docs.extend([
         {"id": "su-a", "shop_id": "shop-a", "full_name": "Ada", "is_active": True},
         {"id": "su-new", "shop_id": "shop-new", "full_name": "New", "is_active": True},
@@ -144,63 +146,99 @@ def test_day_map_returns_only_this_shops_jobs(monkeypatch):
     db.jobs.docs.extend([
         {
             "id": "job-own", "shop_id": "shop-a", "status": "booked",
-            "scheduled_start": when, "scheduled_end": done,
+            "sequence_order": 2,
+            "scheduled_start": later, "scheduled_end": later_end,
             "job_address": STREET, "job_lat": 33.448093, "job_lng": -112.072849,
-            "customer_last_name": "Ng", "shop_name": "Ada Glass",
+            "customer_last_name": "Ng", "customer_first_name": "Ada",
+            "shop_name": "Ada Glass",
             "vehicle_year": 2022, "vehicle_make": "Honda", "vehicle_model": "Civic",
+            "vehicle_vin": "1HGCM82633A123456",
+            "notification_phone": "+14805550100", "notes": "Use the side gate",
             "price": 125,
         },
         {
             "id": "job-cancelled", "shop_id": "shop-a", "status": "cancelled",
+            "sequence_order": 9,
             "scheduled_start": when, "scheduled_end": done,
             "job_address": "cancelled own", "job_lat": 33.45, "job_lng": -112.08,
         },
         {
             "id": "job-secret", "shop_id": "shop-b", "status": "booked",
+            "sequence_order": 1,
             "scheduled_start": when, "scheduled_end": done,
             "job_address": "SECRET-OTHER-ADDRESS",
             "job_lat": 33.111111, "job_lng": -111.222222,
-            "customer_last_name": "SecretOther", "shop_name": "Secret Shop",
+            "customer_last_name": "SecretOther", "customer_first_name": "Hidden",
+            "shop_name": "Secret Shop",
+            "vehicle_year": 2019, "vehicle_make": "SecretMake", "vehicle_model": "SecretModel",
+            "vehicle_vin": "SECRETVIN123456789",
+            "notification_phone": "+16025550999", "notes": "SECRET-NOTES",
+            "price": 225,
         },
     ])
-    drives = []
-
-    async def drive(*args, **kwargs):
-        drives.append(args)
-        return {"duration_minutes": 12}
 
     monkeypatch.setattr(server, "db", db)
-    monkeypatch.setattr(server, "get_drive_time", drive)
     token = server.make_portal_token("su-a")
     fresh = server.make_portal_token("su-new")
+    quiet = (day + timedelta(days=3)).isoformat()
 
     async def run():
         async with _client() as client:
-            own = await client.get(
+            mine = await client.get(
                 f"/api/portal/day-map?date_str={day.isoformat()}",
                 headers={"Authorization": f"Bearer {token}"},
             )
-            empty = await client.get(
+            seen = await client.get(
                 f"/api/portal/day-map?date_str={day.isoformat()}",
                 headers={"Authorization": f"Bearer {fresh}"},
             )
-            return own, empty
+            empty = await client.get(
+                f"/api/portal/day-map?date_str={quiet}",
+                headers={"Authorization": f"Bearer {fresh}"},
+            )
+            return mine, seen, empty
 
-    own, empty = asyncio.run(run())
-    assert own.status_code == 200, own.text
-    body = own.json()
+    mine, seen, empty = asyncio.run(run())
+    assert mine.status_code == 200, mine.text
+    body = mine.json()
     assert [job["id"] for job in body["own"]] == ["job-own"]
-    assert "others" not in body
-    assert "SECRET-OTHER-ADDRESS" not in own.text
-    assert "SecretOther" not in own.text
-    assert "33.111111" not in own.text
-    assert "-111.222222" not in own.text
-    assert "job-secret" not in own.text
-    assert drives == []
+    own_job = body["own"][0]
+    assert own_job["route_order"] == 2
+    assert own_job["customer_last_name"] == "Ng"
+    assert own_job["vehicle_make"] == "Honda"
+    assert own_job["vehicle_vin"] == "1HGCM82633A123456"
+    assert own_job["job_address"] == STREET
+    assert own_job["status"] == "booked"
+    assert own_job["price"] == 125
+    assert own_job["scheduled_start"] == later
+    assert own_job["scheduled_end"] == later_end
+    assert body["others"] == [{
+        "route_order": 1,
+        "arrival_start": when,
+        "arrival_end": done,
+        "job_lat": 33.111,
+        "job_lng": -111.222,
+    }]
+    leaked = (
+        "SECRET-OTHER-ADDRESS", "SecretOther", "Secret Shop", "SecretMake",
+        "SECRETVIN", "SECRET-NOTES", "+16025550999", "job-secret", "33.111111",
+        "-111.222222", "225",
+    )
+    for secret in leaked:
+        assert secret not in mine.text
+    assert "cancelled own" not in mine.text
+
+    assert seen.status_code == 200, seen.text
+    stranger = seen.json()
+    assert stranger["own"] == []
+    assert [stop["route_order"] for stop in stranger["others"]] == [1, 2]
+    assert stranger["others"][1]["job_lat"] == 33.448
+    assert stranger["others"][1]["job_lng"] == -112.073
+    for secret in ("Ng", "Honda", "Ada Glass", STREET, "job-own", "1HGCM82633A123456", "Use the side gate"):
+        assert secret not in seen.text
+
     assert empty.status_code == 200, empty.text
-    assert empty.json() == {"own": [], "date": day.isoformat()}
-    assert "SECRET-OTHER-ADDRESS" not in empty.text
-    assert "33.448093" not in empty.text
+    assert empty.json() == {"own": [], "others": [], "date": quiet}
 
 
 def _staff(db):

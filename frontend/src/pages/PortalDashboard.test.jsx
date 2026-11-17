@@ -45,17 +45,17 @@ function show(day) {
   return render(<PortalDashboard />);
 }
 
-test("a shop with no jobs sees an empty day instead of a valley map", async () => {
-  show({ own: [], date: "2026-11-18" });
-  expect(await screen.findByTestId("portal-day-empty")).toHaveTextContent("No jobs on this day");
+test("an empty route shows a note instead of a valley map", async () => {
+  show({ own: [], others: [], date: "2026-11-18" });
+  expect(await screen.findByTestId("portal-day-empty")).toHaveTextContent("No stops on this day");
   expect(screen.queryByTestId("portal-map")).not.toBeInTheDocument();
-  expect(screen.queryByText(/other shops/i)).not.toBeInTheDocument();
 });
 
-test("the day map does not draw another shop's stop", async () => {
+test("other stops stay on the map as a time window", async () => {
   show({
     own: [{
       id: "job-1",
+      route_order: 2,
       job_lat: 33.45,
       job_lng: -112.07,
       scheduled_start: "2026-11-18T16:00:00+00:00",
@@ -64,21 +64,39 @@ test("the day map does not draw another shop's stop", async () => {
       vehicle_year: 2022,
       vehicle_make: "Honda",
       vehicle_model: "Civic",
+      job_address: "1 E Washington St",
       calibration_label: "Static",
       customer_last_name: "Ng",
       price: 125,
     }],
     others: [{
-      id: "job-secret",
-      job_lat: 33.111111,
-      job_lng: -111.222222,
-      scheduled_start: "2026-11-18T16:00:00+00:00",
-      drive_minutes_from_you: 40,
+      route_order: 1,
+      job_lat: 33.111,
+      job_lng: -111.222,
+      arrival_start: "2026-11-18T15:00:00+00:00",
+      arrival_end: "2026-11-18T16:00:00+00:00",
     }],
   });
   expect(await screen.findByTestId("portal-own-job-job-1")).toBeInTheDocument();
-  expect(screen.getAllByTestId("map-marker")).toHaveLength(1);
+  expect(screen.getAllByTestId("map-marker")).toHaveLength(2);
+  expect(screen.getByTestId("portal-other-stop-1")).toHaveTextContent("Stop 1");
+  expect(screen.getByTestId("portal-map-legend")).toHaveTextContent("time window only");
+  expect(screen.getAllByText(/Honda/).length).toBeGreaterThan(0);
   expect(screen.queryByText(/other shops/i)).not.toBeInTheDocument();
-  expect(screen.queryByText(/min drive/i)).not.toBeInTheDocument();
-  expect(screen.queryByText(/job-secret/)).not.toBeInTheDocument();
+});
+
+test("a shop with no jobs of its own still sees the rest of the route", async () => {
+  show({
+    own: [],
+    others: [{
+      route_order: 1,
+      job_lat: 33.111,
+      job_lng: -111.222,
+      arrival_start: "2026-11-18T15:00:00+00:00",
+      arrival_end: "2026-11-18T16:00:00+00:00",
+    }],
+  });
+  expect(await screen.findByTestId("portal-map")).toBeInTheDocument();
+  expect(screen.queryByTestId("portal-day-empty")).not.toBeInTheDocument();
+  expect(screen.getByText(/No jobs from your shop on this day/)).toBeInTheDocument();
 });

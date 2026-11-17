@@ -22,8 +22,9 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
-- **Session (2026-11-17): pre-launch guards.** The shop day map returns only that
-  shop's jobs. Sign-in, password reset, public geocode, and the contact form
+- **Session (2026-11-17): pre-launch guards.** The shop day map shows the whole
+  route. Other shops' stops are a rough pin and a time window, without names or
+  the job id. Sign-in, password reset, public geocode, and the contact form
   are rate limited. A cached geocode drops a leading business name before the
   street is saved. Portal report downloads send the login token. The card form
   opens expanded. A failed portal booking shows an inline error. No env, Stripe,

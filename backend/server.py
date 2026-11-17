@@ -4969,24 +4969,60 @@ async def portal_document_download(job_id: str, doc_id: str, su=Depends(get_curr
     return Response(content=binary, media_type=doc.get("content_type", "application/octet-stream"),
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"})
 
+def _block_coord(value):
+    """About a block. Three decimal degrees is roughly 100 meters."""
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _route_sort_key(job: dict):
+    sequence = job.get("sequence_order")
+    return (sequence is None, sequence if sequence is not None else 0, job.get("scheduled_start") or "")
+
+
+def _other_stop(job: dict, route_order: int) -> dict:
+    """A stop on the owner's route that belongs to another shop.
+
+    The pin can be drawn. Nothing that names the shop, the customer, the
+    vehicle, or the exact address is included, and the job id is left off.
+    """
+    return {
+        "route_order": route_order,
+        "arrival_start": job.get("scheduled_start"),
+        "arrival_end": job.get("scheduled_end"),
+        "job_lat": _block_coord(job.get("job_lat")),
+        "job_lng": _block_coord(job.get("job_lng")),
+    }
+
+
 @api.get("/portal/day-map")
 async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_shop_user)):
-    """This shop's jobs for one America/Phoenix civil date.
+    """Every stop on the owner's route for one America/Phoenix civil date.
 
-    Omitted, `date_str` is today's Phoenix date. Other shops' jobs, addresses,
-    and coordinates are not included.
+    Omitted, `date_str` is today's Phoenix date. This shop's jobs are returned
+    in full. Another shop's stop is a time window, a route position, and a
+    coordinate rounded to about a block.
     """
     if date_str:
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
     else:
         d = business_date()
     day_start, day_end = business_day_bounds(d)
-    own = await db.jobs.find({
-        "shop_id": su["shop_id"],
+    jobs = await db.jobs.find({
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
         "status": {"$nin": ["cancelled", "declined"]},
-    }, {"_id": 0}).sort("scheduled_start", 1).to_list(500)
-    return {"own": annotate_at_risk(own), "date": d.isoformat()}
+    }, {"_id": 0}).to_list(500)
+    jobs.sort(key=_route_sort_key)
+    own, others = [], []
+    for route_order, job in enumerate(jobs, start=1):
+        if job.get("shop_id") == su["shop_id"]:
+            job["route_order"] = route_order
+            own.append(job)
+        else:
+            others.append(_other_stop(job, route_order))
+    return {"own": annotate_at_risk(own), "others": others, "date": d.isoformat()}
 
 @api.post("/portal/book")
 async def portal_book(data: BookingIn, su=Depends(get_current_shop_user)):
