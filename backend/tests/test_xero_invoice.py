@@ -99,10 +99,11 @@ def test_changing_the_calibration_type_prices_the_shop_wholesale_rate():
     )
     assert custom["price"] == 150
 
+    # Same type, wrong stored price: Complete still writes the wholesale rate.
     assert price_updates_for_calibration_change(
         {"calibration_type": "static", "price": 99},
         standard, "static", STANDARD, DEFAULT_SPECIAL_RATES,
-    ) == {}
+    ) == {"price": 125.0, "calibration_price": 125.0}
     assert price_updates_for_calibration_change(
         {"calibration_type": "static", "price": 30, "calibration_not_performed": True},
         standard, "dual", STANDARD, DEFAULT_SPECIAL_RATES,
@@ -111,6 +112,71 @@ def test_changing_the_calibration_type_prices_the_shop_wholesale_rate():
         {"calibration_type": "static", "price": 125, "xero_invoice_id": "INV-1"},
         standard, "dual", STANDARD, DEFAULT_SPECIAL_RATES,
     ) == {}
+
+
+def test_complete_prices_preferred_dynamic_realfast_static_and_standard_dual():
+    """The job price at Complete is the shop's wholesale card, trip fee aside."""
+    from xero_invoice import price_updates_for_calibration_change
+
+    preferred = price_updates_for_calibration_change(
+        {"calibration_type": "dynamic", "price": 125},
+        {"name": "Preferred Auto Glass"},
+        "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert preferred == {"price": 75.0, "calibration_price": 75.0}
+
+    realfast = price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 125},
+        {"name": "Real Fast Auto Glass"},
+        "static", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert realfast == {"price": 115.0, "calibration_price": 115.0}
+
+    dual = price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 125},
+        {"name": "Star Windshield"},
+        "dual", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert dual == {"price": 175.0, "calibration_price": 175.0}
+
+    # An outside-area Preferred Dynamic keeps the $30 trip fee on the $75 rate.
+    outside = price_updates_for_calibration_change(
+        {"calibration_type": "dynamic", "price": 155, "outside_service_area": True, "calibration_price": 125},
+        {"name": "Preferred Auto Glass"},
+        "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert outside["calibration_price"] == 75
+    assert outside["price"] == 105
+    assert outside["trip_fee"] == 30
+
+
+def test_booking_price_matches_the_xero_wholesale_price():
+    """Booking stores the same amount the Xero draft will put on the calibration line."""
+    import server
+    from xero_invoice import wholesale_amount
+
+    standard = {key: float(row["price"]) for key, row in server.STANDARD_PRICING.items()}
+    cases = [
+        ({"name": "Preferred Auto Glass"}, "dynamic", 75.0),
+        ({"name": "Real Fast Auto Glass"}, "static", 115.0),
+        ({"name": "Star Windshield"}, "dual", 175.0),
+        ({"name": "Preferred Auto Glass", "wholesale_schedule": "standard"}, "dynamic", 125.0),
+        ({"name": "Star Windshield", "wholesale_schedule": "realfast"}, "static", 115.0),
+        ({"name": "Real Fast Auto Glass", "wholesale_schedule": "preferred"}, "dynamic", 75.0),
+        ({"name": "Preferred Auto Glass", "wholesale_schedule": "custom", "custom_rate_dynamic": 50}, "dynamic", 50.0),
+        ({"name": "Local Glass", "pricing_tier": "custom", "custom_rate_dual": 150}, "dual", 150.0),
+        # A Preferred shop keeps the Preferred card even when a custom tier is also filled in.
+        ({"name": "Preferred", "pricing_tier": "custom", "custom_rate_dynamic": 50}, "dynamic", 75.0),
+        ({"name": "Preferred Auto Glass", "wholesale_schedule": "auto"}, "dynamic", 75.0),
+    ]
+    for shop, calibration, expected in cases:
+        booked = server.shop_price_for(shop, calibration)
+        drafted = wholesale_amount(shop, calibration, standard, server.SPECIAL_WHOLESALE)
+        assert booked == drafted == expected
+    # The booking screen quotes this same map.
+    assert server.shop_prices({"name": "Preferred Auto Glass"})["dynamic"] == 75.0
+    assert server.shop_prices({"name": "Real Fast Auto Glass"})["static"] == 115.0
+    assert server.shop_prices({"name": "Star Windshield"})["dual"] == 175.0
 
 
 def test_job_date_is_the_phoenix_day_and_due_the_same_day():

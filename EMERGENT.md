@@ -22,6 +22,11 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-17): job price uses the wholesale card.** Booking and
+  Complete price a job from the shop's wholesale schedule (standard, Real
+  Fast, Preferred, or that shop's custom rates). A Preferred Dynamic job is
+  $75 at booking, on the local invoice, and on the Xero draft. The $30 trip
+  fee stays a separate line. No new env vars.
 - **Session (2026-11-17): Complete can file the Xero draft.** Post-scan VINs are
   read with pypdf (the old stream reader is the fallback). Dispatch Complete
   asks for calibration type, POP, and a signed PDF before it completes the job.

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { api, formatTime, formatDate, getStoredAuth, jobStatusLabel } from "../lib/api";
+import { api, formatTime, formatDate, getStoredAuth, jobStatusLabel, phoenixTodayStr } from "../lib/api";
 import Brand from "../components/Brand";
 import JobEditModal from "../components/JobEditModal";
 
@@ -106,6 +106,8 @@ export default function PublicBooking() {
 
   function priceFor(type) {
     if (!shop) return 0;
+    const quoted = shop.prices && shop.prices[type];
+    if (quoted != null && quoted !== "") return Number(quoted);
     if (shop.pricing_tier === "custom" && shop[`custom_rate_${type}`] != null) return Number(shop[`custom_rate_${type}`]);
     const std = { static: 125, dynamic: 125, dual: 175, triple: 185, tesla: 225 };
     return std[type];

@@ -15,6 +15,28 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — job price follows the shop's wholesale card (2026-11-17)
+A Preferred Dynamic job was stored at the standard $125. Completing it
+without changing the calibration type left that $125 in place, while the
+Xero draft used the Preferred rate of $75. The local invoice, the admin
+email, the Stripe invoice, and a later card charge all used the stored
+price, so they disagreed with Xero.
+
+Booking and Complete now both price the job from the shop's wholesale
+schedule (`auto`, `standard`, `realfast`, `preferred`, or `custom`).
+`auto` still means Real Fast and Preferred are recognized by name, and
+everyone else is standard unless the shop is on a custom tier. An explicit
+schedule on the shop wins. Standard is Static 125, Dynamic 125, Dual 175,
+Triple 185, Tesla 225. Real Fast is 115, 100, 165, 175, 215. Preferred is
+115, 75, 165, 165, 215. The $30 trip fee stays its own line: an
+outside-area job is the wholesale rate plus $30, and a trip-fee-only job
+stays at $30. A job that already has a Xero invoice is not repriced.
+
+The public booking page and the portal booking page show that same quoted
+price (`prices` on `GET /api/public/shop/{token}` and `GET /api/portal/me`).
+The public date step also imports `phoenixTodayStr`, which it was calling
+without an import, so that step threw before a date could be picked.
+
 ### Fixed — Complete files a usable Xero draft (2026-11-17)
 The signed post-scan on a real scan tool is a font-encoded PDF. `vin_from_pdf`
 now reads that text with pypdf, collapses whitespace, and keeps the 17-character

@@ -325,17 +325,15 @@ def vin_from_pdf(data: bytes | None) -> str | None:
 
 
 def price_updates_for_calibration_change(job, shop, calibration_type, standard_prices, special_rates) -> dict:
-    """Price fields when Complete changes the calibration type.
+    """Price fields so Complete matches the shop's wholesale rate.
 
-    The new price is that shop's wholesale rate, so the local invoice and the
-    card charge match the Xero line. A trip-fee-only job stays at $30. An
-    outside-area job keeps the $30 on top of the new rate. A job that already
-    has a Xero invoice is left alone.
+    The price is that shop's wholesale rate whether or not the calibration
+    type changed, so the local invoice and the card charge match the Xero
+    line. A trip-fee-only job stays at $30. An outside-area job keeps the
+    $30 on top of the rate. A job that already has a Xero invoice is left alone.
     """
     job = job or {}
     if not calibration_type or job.get("xero_invoice_id"):
-        return {}
-    if calibration_type == job.get("calibration_type"):
         return {}
     if job.get("calibration_not_performed"):
         return {}
