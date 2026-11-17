@@ -22,6 +22,13 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-17): pre-launch guards.** The shop day map returns only that
+  shop's jobs. Sign-in, password reset, public geocode, and the contact form
+  are rate limited. A cached geocode drops a leading business name before the
+  street is saved. Portal report downloads send the login token. The card form
+  opens expanded. A failed portal booking shows an inline error. No env, Stripe,
+  Render, or Vercel setting changes. Public booking, scorecard, job completion,
+  Xero, and SMS are unchanged.
 - **Session (2026-11-12): cancelled jobs leave the owner and technician day list.**
   `GET /api/jobs` now omits `cancelled` and `declined`. The jobs stay in Mongo.
   `include_cancelled=true` is an opt-in for a future history view; the dashboard,

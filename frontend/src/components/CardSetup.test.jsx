@@ -18,7 +18,11 @@ jest.mock("@stripe/react-stripe-js", () => ({
 
 import { resolveSignupPaymentMethod, SIGNUP_CARD_ELEMENT_OPTIONS, stripeErrorMessage } from "./CardSetup";
 
-test("the card form hides Link and wallet buttons", () => {
+test("the card form shows the card fields immediately and hides wallets", () => {
+  expect(SIGNUP_CARD_ELEMENT_OPTIONS.layout).toEqual({
+    type: "tabs",
+    defaultCollapsed: false,
+  });
   expect(SIGNUP_CARD_ELEMENT_OPTIONS.wallets).toEqual({
     applePay: "never",
     googlePay: "never",

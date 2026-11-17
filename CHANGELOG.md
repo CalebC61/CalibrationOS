@@ -15,6 +15,39 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — pre-launch privacy, limits, and a few shop-facing snags (2026-11-17)
+A logged-in shop's day map (`GET /api/portal/day-map`) now returns only that
+shop's jobs. Other shops' jobs, addresses, and coordinates are not queried and
+not included. A day with no jobs shows a short empty state instead of a map
+centered on the valley. The legend that mentioned other shops is gone.
+
+`POST /api/auth/login`, `POST /api/portal/auth/login`, and
+`POST /api/portal/auth/forgot-password` use the same in-memory counter as
+signup. Sign-in allows 8 attempts per 15 minutes per network and per email,
+then `429` with "Too many sign-in attempts. Wait 15 minutes and try again."
+Password reset allows 5 per hour per network and per email, then a clear `429`,
+and does not send another email. `POST /api/geocode` allows 30 lookups per hour
+per network. `POST /api/public/contact` allows 5 messages per hour per network
+and per email. Signup's own limit is unchanged.
+
+A portal report download now requests the file with the shop's login token and
+saves it from that response. The old plain link had no token, so the download
+could not be authorized.
+
+A geocode cache hit runs the street-line strip again. An older cached line that
+still starts with a business name is saved as the street
+(`1 E Washington St, Phoenix, AZ 85004, USA`). A suite number stays. A fresh
+Google lookup was already doing this; the cache path was not.
+
+The card form in signup and Settings → Update card uses Stripe's tabs layout
+with the card fields open, still cards only, with Link and wallets off.
+
+A failed booking in the shop portal shows the error on the page. It no longer
+uses a browser alert.
+
+`SHOP_EMAILS_ENABLED`, `BILLING_ENABLED`, the public booking link, the
+scorecard link, job completion, Xero, and SMS are unchanged.
+
 ### Fixed — every shop needs a verified card before it can book (2026-11-14)
 The server no longer trusts a payment method id from the browser. Signup and
 the portal send a SetupIntent id. The API retrieves it and saves the card only

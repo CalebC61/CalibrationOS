@@ -42,8 +42,7 @@ export default function PortalDashboard() {
   if (!data) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
 
   const own = data.own || [];
-  const others = data.others || [];
-  const allPoints = [...own, ...others].filter(j => j.job_lat && j.job_lng).map(j => [j.job_lat, j.job_lng]);
+  const points = own.filter(j => j.job_lat && j.job_lng).map(j => [j.job_lat, j.job_lng]);
 
   return (
     <PortalShell>
@@ -69,46 +68,40 @@ export default function PortalDashboard() {
         <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} style={{ width: 200 }} data-testid="day-map-date" />
       </div>
 
-      <div className="surface" style={{ padding: 12, marginBottom: 20 }}>
-        <div style={{ height: 380, borderRadius: 8, overflow: "hidden" }} data-testid="portal-map">
-          <MapContainer center={allPoints[0] || [33.4484, -112.0740]} zoom={10}
-            style={{ height: "100%", width: "100%", background: "#0d1116" }}>
-            <DarkBasemap />
-            {own.map((j, idx) => (
-              <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-                icon={pinIcon(`Y${idx + 1}`, "#FF5F1F", false, "#0a0a0a")}>
-                <Tooltip>
-                  <div style={{ fontSize: 12 }}>
-                    <b>Your job · {fmt(j.scheduled_start)}</b><br />
-                    {j.vehicle_year} {j.vehicle_make} {j.vehicle_model}
-                  </div>
-                </Tooltip>
-              </Marker>
-            ))}
-            {others.map((j) => (
-              <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-                icon={pinIcon("·", "#666", true)}>
-                <Tooltip>
-                  <div style={{ fontSize: 12 }}>
-                    <b>{fmt(j.scheduled_start)}</b><br />
-                    ~{j.drive_minutes_from_you} min drive from your shop
-                  </div>
-                </Tooltip>
-              </Marker>
-            ))}
-            <FitBounds points={allPoints} />
-          </MapContainer>
+      {points.length === 0 ? (
+        <div className="surface" data-testid="portal-day-empty" style={{ padding: "28px 20px", marginBottom: 20, textAlign: "center" }}>
+          <h2 className="h3" style={{ marginBottom: 8 }}>No jobs on this day</h2>
+          <p className="muted" style={{ margin: "0 auto", maxWidth: "36rem", lineHeight: 1.5 }}>
+            When you book a calibration, the stop shows up here with the time and the vehicle.
+          </p>
         </div>
-        <div style={{ display: "flex", gap: 16, marginTop: 12, fontSize: 12 }} className="muted">
-          <span>🟧/🟦 Your jobs</span>
-          <span>⚫ Other shops (anonymized) — tap for time + drive estimate</span>
+      ) : (
+        <div className="surface" style={{ padding: 12, marginBottom: 20 }}>
+          <div style={{ height: 380, borderRadius: 8, overflow: "hidden" }} data-testid="portal-map">
+            <MapContainer center={points[0]} zoom={10}
+              style={{ height: "100%", width: "100%", background: "#0d1116" }}>
+              <DarkBasemap />
+              {own.filter(j => j.job_lat && j.job_lng).map((j, idx) => (
+                <Marker key={j.id} position={[j.job_lat, j.job_lng]}
+                  icon={pinIcon(`Y${idx + 1}`, "#FF5F1F", false, "#0a0a0a")}>
+                  <Tooltip>
+                    <div style={{ fontSize: 12 }}>
+                      <b>Your job · {fmt(j.scheduled_start)}</b><br />
+                      {j.vehicle_year} {j.vehicle_make} {j.vehicle_model}
+                    </div>
+                  </Tooltip>
+                </Marker>
+              ))}
+              <FitBounds points={points} />
+            </MapContainer>
+          </div>
         </div>
-      </div>
+      )}
 
       <section style={{ marginBottom: 24 }}>
-        <h2 className="h3" style={{ marginBottom: 10 }}>Your jobs today ({own.length})</h2>
+        <h2 className="h3" style={{ marginBottom: 10 }}>Your jobs ({own.length})</h2>
         {own.length === 0 ? (
-          <div className="surface muted" style={{ padding: 20, textAlign: "center" }}>No jobs from your shop today.</div>
+          <div className="surface muted" style={{ padding: 20, textAlign: "center" }}>No jobs from your shop on this day.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {own.map((j, idx) => (
