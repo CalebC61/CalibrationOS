@@ -100,9 +100,14 @@ def test_changing_the_calibration_type_prices_the_shop_wholesale_rate():
     assert custom["price"] == 150
 
     assert price_updates_for_calibration_change(
-        {"calibration_type": "static", "price": 99},
+        {"calibration_type": "static", "price": 125, "calibration_price": 125},
         standard, "static", STANDARD, DEFAULT_SPECIAL_RATES,
     ) == {}
+    # A same-type job stored at the wrong amount is corrected to the wholesale rate.
+    assert price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 99},
+        standard, "static", STANDARD, DEFAULT_SPECIAL_RATES,
+    ) == {"price": 125.0, "calibration_price": 125.0}
     assert price_updates_for_calibration_change(
         {"calibration_type": "static", "price": 30, "calibration_not_performed": True},
         standard, "dual", STANDARD, DEFAULT_SPECIAL_RATES,
@@ -111,6 +116,129 @@ def test_changing_the_calibration_type_prices_the_shop_wholesale_rate():
         {"calibration_type": "static", "price": 125, "xero_invoice_id": "INV-1"},
         standard, "dual", STANDARD, DEFAULT_SPECIAL_RATES,
     ) == {}
+
+
+def test_preferred_and_realfast_prices_match_wholesale_with_or_without_a_type_change():
+    from xero_invoice import price_updates_for_calibration_change
+
+    preferred = {"name": "Preferred Auto Glass"}
+    realfast = {"name": "Real Fast Auto Glass"}
+
+    preferred_same = price_updates_for_calibration_change(
+        {"calibration_type": "dynamic", "price": 125},
+        preferred, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert preferred_same == {"price": 75.0, "calibration_price": 75.0}
+
+    preferred_changed = price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 115, "calibration_price": 115},
+        preferred, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert preferred_changed == {"price": 75.0, "calibration_price": 75.0}
+
+    realfast_same = price_updates_for_calibration_change(
+        {"calibration_type": "dynamic", "price": 125, "calibration_price": 125},
+        realfast, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert realfast_same == {"price": 100.0, "calibration_price": 100.0}
+
+    realfast_changed = price_updates_for_calibration_change(
+        {"calibration_type": "static", "price": 115},
+        {"shop_code": "REALFAST"}, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert realfast_changed == {"price": 100.0, "calibration_price": 100.0}
+
+    assert price_updates_for_calibration_change(
+        {"calibration_type": "dynamic", "price": 75, "calibration_price": 75},
+        preferred, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    ) == {}
+    assert price_updates_for_calibration_change(
+        {"calibration_type": "dynamic", "price": 100, "calibration_price": 100},
+        realfast, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    ) == {}
+
+    # The $30 trip fee stays on top of the wholesale rate, even when the type is unchanged.
+    outside = price_updates_for_calibration_change(
+        {
+            "calibration_type": "dynamic", "price": 155, "outside_service_area": True,
+            "calibration_price": 125, "trip_fee": 30,
+        },
+        preferred, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert outside == {"calibration_price": 75.0, "price": 105.0, "trip_fee": 30.0}
+    outside_changed = price_updates_for_calibration_change(
+        {
+            "calibration_type": "static", "price": 145, "outside_service_area": True,
+            "calibration_price": 115, "trip_fee": 30,
+        },
+        realfast, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    )
+    assert outside_changed == {"calibration_price": 100.0, "price": 130.0, "trip_fee": 30.0}
+    assert price_updates_for_calibration_change(
+        {
+            "calibration_type": "dynamic", "price": 105, "outside_service_area": True,
+            "calibration_price": 75, "trip_fee": 30,
+        },
+        preferred, "dynamic", STANDARD, DEFAULT_SPECIAL_RATES,
+    ) == {}
+
+
+def test_triple_xero_item_is_subaru_mc_calibration_code_8():
+    from xero_invoice import ITEM_CODES, ITEM_NAMES, find_item
+
+    assert ITEM_NAMES["triple"] == "Subaru MC Calibration"
+    assert ITEM_CODES["triple"] == "8"
+    subaru = {
+        "ItemID": "sub", "Code": "8", "Name": "Subaru MC Calibration",
+        "Description": "Subaru EyeSight calibration",
+    }
+    legacy = {
+        "ItemID": "old", "Code": "Triple/Subaru Calibration",
+        "Name": "Triple/Subaru Calibration",
+    }
+    assert find_item([subaru, legacy], "triple")["Code"] == "8"
+    assert find_item([legacy], "triple")["Name"] == "Triple/Subaru Calibration"
+    assert find_item([{"ItemID": "code", "Code": "8", "Name": "EyeSight"}], "triple")["ItemID"] == "code"
+    assert find_item([{"Code": "Static Calibration", "Name": "Static Calibration"}], "triple") is None
+    assert find_item([
+        {"ItemID": "a", "Code": "8", "Name": "Subaru MC Calibration"},
+        {"ItemID": "b", "Code": "8", "Name": "Other eight"},
+    ], "triple") is None
+    assert find_item(
+        [{"Code": "Static Calibration", "Name": "Static Calibration"}], "static",
+    )["Code"] == "Static Calibration"
+
+
+def test_booking_price_uses_the_shop_wholesale_schedule():
+    os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+    os.environ.setdefault("DB_NAME", "ci")
+    from server import quoted_prices, shop_price_for
+
+    preferred = {"name": "Preferred Auto Glass"}
+    realfast = {"name": "Real Fast Auto Glass"}
+    assert shop_price_for(preferred, "dynamic") == 75
+    assert shop_price_for(preferred, "triple") == 165
+    assert shop_price_for({"name": "Preferred", "wholesale_schedule": "auto"}, "dynamic") == 75
+    assert shop_price_for(
+        {"name": "Preferred Auto Glass", "pricing_tier": "custom", "custom_rate_dynamic": 50},
+        "dynamic",
+    ) == 75
+    assert shop_price_for(realfast, "dynamic") == 100
+    assert shop_price_for(realfast, "triple") == 175
+    assert shop_price_for({"name": "Star Windshield"}, "dynamic") == 125
+    assert shop_price_for({"name": "Star Windshield"}, "triple") == 185
+    assert shop_price_for(
+        {"name": "Preferred Auto Glass", "wholesale_schedule": "standard"}, "dynamic",
+    ) == 125
+    assert shop_price_for(
+        {"name": "Local Glass", "wholesale_schedule": "custom", "custom_rate_dynamic": 90},
+        "dynamic",
+    ) == 90
+    assert shop_price_for({"name": "Local Glass", "pricing_tier": "custom"}, "static") == 125
+    quoted = quoted_prices(preferred)
+    assert quoted["dynamic"] == 75
+    assert quoted["triple"] == 165
+    assert "static" in quoted and "dual" in quoted and "tesla" in quoted
 
 
 def test_job_date_is_the_phoenix_day_and_due_the_same_day():

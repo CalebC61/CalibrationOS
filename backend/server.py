@@ -89,7 +89,7 @@ if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
 
 # Xero drafts filed when a job is completed. The card charge path is separate.
-from xero_invoice import merge_special_rates, parse_pop, price_updates_for_calibration_change
+from xero_invoice import merge_special_rates, parse_pop, price_updates_for_calibration_change, wholesale_amount
 from xero_draft import (
     HttpXeroGateway, draft_is_finished, file_calibration_draft, public_xero, spec_document_name,
     state_from_job,
@@ -1737,14 +1737,29 @@ async def public_shop(token: str):
         raise HTTPException(404, "This booking link is not active. Contact The Calibration Crew.")
     gate = await _booking_gate_for_shop(shop)
     public = {key: shop.get(key) for key in _PUBLIC_SHOP_KEYS if key in shop}
-    return {**public, "booking_open": gate["allowed"], "booking_message": gate["message"]}
+    return {
+        **public,
+        "prices": quoted_prices(shop),
+        "booking_open": gate["allowed"],
+        "booking_message": gate["message"],
+    }
 
 def shop_price_for(shop: dict, cal_type: str) -> float:
-    if shop.get("pricing_tier") == "custom":
-        custom = shop.get(f"custom_rate_{cal_type}")
-        if custom is not None:
-            return float(custom)
-    return float(STANDARD_PRICING[cal_type]["price"])
+    """This shop's wholesale rate for the calibration. The $30 trip fee is not included.
+
+    auto follows the shop name (Real Fast, Preferred, custom, otherwise standard).
+    An explicit wholesale_schedule of standard, realfast, preferred, or custom wins.
+    """
+    standard = {key: float(value["price"]) for key, value in STANDARD_PRICING.items()}
+    try:
+        return wholesale_amount(shop, cal_type, standard, SPECIAL_WHOLESALE)
+    except ValueError:
+        return float(STANDARD_PRICING[cal_type]["price"])
+
+
+def quoted_prices(shop: dict | None) -> dict:
+    """The rates a booking screen should show for this shop."""
+    return {key: shop_price_for(shop or {}, key) for key in STANDARD_PRICING}
 
 def parse_time_str(t: str) -> time:
     h, m = t.split(":")
@@ -2448,7 +2463,7 @@ async def public_book(data: BookingIn):
     }
     await db.vehicles.insert_one(vehicle.copy())
 
-    # Determine price from shop rate card
+    # Wholesale for this shop and calibration. The $30 trip fee is added later, on its own.
     price = shop_price_for(shop, data.calibration_type)
 
     # Sequence is this technician's jobs that Phoenix day, on either side of the valley.
@@ -2486,6 +2501,7 @@ async def public_book(data: BookingIn):
         "actual_arrival": None, "actual_completion": None,
         "result": None, "notes": customer["notes"],
         "price": price,
+        "calibration_price": price,
         "payment_mode": INVOICE_MODE if data.invoice_instead else CHARGE_MODE,
         "invoice_id": None, "invoice_status": "pending",
         "google_calendar_event_id": None,
@@ -3212,19 +3228,24 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
 
     already_complete = job.get("status") == "complete"
     updates = {"updated_at": iso(now_utc())}
-    if body.calibration_type and not job.get("xero_invoice_id"):
-        updates["calibration_type"] = body.calibration_type
-        updates["calibration_label"] = STANDARD_PRICING[body.calibration_type]["label"]
-        shop = await db.shops.find_one({"id": job.get("shop_id")}) if job.get("shop_id") else None
-        if not shop:
-            shop = {"name": job.get("shop_name") or ""}
-        standard = {key: float(value["price"]) for key, value in STANDARD_PRICING.items()}
-        try:
-            updates.update(price_updates_for_calibration_change(
-                job, shop, body.calibration_type, standard, SPECIAL_WHOLESALE,
-            ))
-        except ValueError as exc:
-            raise HTTPException(400, str(exc))
+    # Wholesale price is stored before the local invoice, the admin email,
+    # and any card charge. Xero runs after those.
+    if not job.get("xero_invoice_id"):
+        final_type = body.calibration_type or job.get("calibration_type")
+        if body.calibration_type:
+            updates["calibration_type"] = body.calibration_type
+            updates["calibration_label"] = STANDARD_PRICING[body.calibration_type]["label"]
+        if final_type:
+            shop = await db.shops.find_one({"id": job.get("shop_id")}) if job.get("shop_id") else None
+            if not shop:
+                shop = {"name": job.get("shop_name") or ""}
+            standard = {key: float(value["price"]) for key, value in STANDARD_PRICING.items()}
+            try:
+                updates.update(price_updates_for_calibration_change(
+                    job, shop, final_type, standard, SPECIAL_WHOLESALE,
+                ))
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
     if body.pop is not None and not job.get("xero_invoice_id"):
         updates["pop_approved"] = str(body.pop)
     if not already_complete:
@@ -4589,6 +4610,8 @@ async def portal_login(body: ShopUserLoginIn, request: Request):
 @api.get("/portal/me")
 async def portal_me(su=Depends(get_current_shop_user)):
     shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
+    if shop is not None:
+        shop = {**shop, "prices": quoted_prices(shop)}
     return {
         "shop_user": su, "shop": shop, "setup": booking_gate(shop or {}, su),
         "site_url": FRONTEND_URL,

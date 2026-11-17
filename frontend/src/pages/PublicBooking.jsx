@@ -106,6 +106,7 @@ export default function PublicBooking() {
 
   function priceFor(type) {
     if (!shop) return 0;
+    if (shop.prices && shop.prices[type] != null) return Number(shop.prices[type]);
     if (shop.pricing_tier === "custom" && shop[`custom_rate_${type}`] != null) return Number(shop[`custom_rate_${type}`]);
     const std = { static: 125, dynamic: 125, dual: 175, triple: 185, tesla: 225 };
     return std[type];
