@@ -10,22 +10,38 @@ jest.mock("react-router-dom", () => {
 }, { virtual: true });
 
 jest.mock("../components/Shell", () => ({ children }) => <div>{children}</div>);
-jest.mock("../components/DispatchModal", () => () => null);
 jest.mock("../components/RouteMap", () => () => null);
 jest.mock("../components/TomorrowStrip", () => () => null);
 jest.mock("../components/JobEditModal", () => () => null);
 
-jest.mock("../lib/api", () => ({
-  api: { get: jest.fn(), post: jest.fn(), delete: jest.fn() },
-  formatTime: () => "9:00 AM",
-  formatDate: () => "Tue, Nov 17",
-  phoenixTodayStr: () => "2026-11-17",
-  dateStr: () => "2026-11-17",
-  todayStr: () => "2026-11-17",
-  getStoredAuth: () => mockAuth,
-  isOnDayBoard: (job) => job?.status !== "cancelled" && job?.status !== "declined",
-  jobStatusLabel: (status) => status || "",
-}));
+jest.mock("../lib/api", () => {
+  const phoenixNow = new Date("2026-11-18T04:00:00Z");
+  function phoenixTodayStr(instant = phoenixNow) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Phoenix",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(instant);
+    const get = (type) => parts.find((part) => part.type === type).value;
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  }
+  return {
+    api: { get: jest.fn(), post: jest.fn(), delete: jest.fn() },
+    formatTime: () => "9:00 AM",
+    formatDate: () => "Tue, Nov 17",
+    phoenixTodayStr,
+    dateStr: () => "2026-11-17",
+    todayStr: () => "2026-11-17",
+    getStoredAuth: () => mockAuth,
+    isOnDayBoard: (job) => job?.status !== "cancelled" && job?.status !== "declined",
+    isPhoenixToday: (iso, now = phoenixNow) => {
+      if (!iso) return false;
+      return phoenixTodayStr(new Date(iso)) === phoenixTodayStr(now);
+    },
+    jobStatusLabel: (status) => status || "",
+  };
+});
 
 import Dashboard from "./Dashboard";
 import { api } from "../lib/api";
@@ -61,7 +77,6 @@ function mockGets(documents, listed = job) {
       return Promise.resolve({ data: { job_count: 1, revenue: 125, estimated_miles: 6, done_by: null, shop_emails_enabled: true } });
     }
     if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
-    if (path.includes("/contractor-offers")) return Promise.resolve({ data: [] });
     if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
     return Promise.resolve({ data: [] });
   });
@@ -201,6 +216,53 @@ test("the delete dialog names a linked Xero draft and Stripe invoice", async () 
     "This job has Stripe invoice in_123; deleting the job does not delete it in Stripe",
   ]);
   expect(api.delete).not.toHaveBeenCalled();
+});
+
+test("Start Driving waits until the Phoenix day of the job", async () => {
+  mockGets([], {
+    ...job,
+    status: "booked",
+    scheduled_start: "2026-11-19T16:00:00Z",
+  });
+  render(<Dashboard />);
+  const action = await screen.findByTestId("job-action-job-1");
+  expect(action).toBeDisabled();
+  expect(action).toHaveTextContent("Start Driving");
+  expect(screen.getByTestId("job-travel-wait-job-1")).toHaveTextContent("Available on the day of the job");
+  expect(screen.queryByText("Dispatch to Contractor")).not.toBeInTheDocument();
+  fireEvent.click(action);
+  expect(api.post).not.toHaveBeenCalled();
+  expect(api.get.mock.calls.some(([url]) => String(url).includes("contractor"))).toBe(false);
+});
+
+test("Start Driving sends the on-my-way step on a Phoenix-today job", async () => {
+  mockGets([], {
+    ...job,
+    status: "booked",
+    scheduled_start: "2026-11-18T02:00:00Z",
+  });
+  api.post.mockResolvedValue({ data: {} });
+  render(<Dashboard />);
+  const action = await screen.findByTestId("job-action-job-1");
+  expect(action).toBeEnabled();
+  expect(screen.queryByTestId("job-travel-wait-job-1")).not.toBeInTheDocument();
+  fireEvent.click(action);
+  await waitFor(() => expect(api.post).toHaveBeenCalledWith("/jobs/job-1/status", { status: "driving" }));
+});
+
+test("I've Arrived waits until the Phoenix day of the job", async () => {
+  mockGets([], {
+    ...job,
+    status: "driving",
+    scheduled_start: "2026-11-16T16:00:00Z",
+  });
+  render(<Dashboard />);
+  const action = await screen.findByTestId("job-action-job-1");
+  expect(action).toBeDisabled();
+  expect(action).toHaveTextContent("I've Arrived");
+  expect(screen.getByTestId("job-travel-wait-job-1")).toHaveTextContent("Available on the day of the job");
+  fireEvent.click(action);
+  expect(api.post).not.toHaveBeenCalled();
 });
 
 test("a non-owner dispatch login does not get Delete", async () => {

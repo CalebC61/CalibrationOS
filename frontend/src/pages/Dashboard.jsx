@@ -1,10 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
-import { api, formatTime, formatDate, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, jobStatusLabel } from "../lib/api";
+import { api, formatTime, formatDate, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, isPhoenixToday, jobStatusLabel } from "../lib/api";
 import { fresherJob, mergeJobList } from "../lib/jobState";
 import { useRefreshOnShow } from "../lib/refreshOnShow";
 import Shell from "../components/Shell";
-import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
 import RescheduleCancelModal from "../components/RescheduleCancelModal";
 import TomorrowStrip from "../components/TomorrowStrip";
@@ -25,8 +24,6 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [alerts, setAlerts] = useState({ count: 0, alerts: [] });
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const [offers, setOffers] = useState([]);
-  const [dispatchTarget, setDispatchTarget] = useState(null);
   const [rescheduleTarget, setRescheduleTarget] = useState(null); // { job, mode: 'reschedule' | 'cancel' }
   const [dragOver, setDragOver] = useState(null);
   const [refreshingMap, setRefreshingMap] = useState(false);
@@ -47,18 +44,17 @@ export default function Dashboard() {
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
     try {
-      const [j, s, a, o] = await Promise.all([
+      const [j, s, a] = await Promise.all([
         api.get(`/jobs?date_str=${date}`),
         api.get(`/dashboard/summary?date_str=${date}`),
         api.get(`/notifications/new-bookings`),
-        api.get(`/contractor-offers`),
       ]);
       if (gen !== loadGen.current) return;
       const visible = (j.data || []).filter(job => !removedJobIds.current.has(job.id));
       const alertRows = (a.data?.alerts || []).filter(alert =>
         !removedJobIds.current.has(alert.job_id) && !silencedAlertJobs.current.has(alert.job_id)
       );
-      setJobs(current => mergeJobList(current, visible)); setSummary(s.data); setAlerts({ count: alertRows.length, alerts: alertRows }); setOffers(o.data);
+      setJobs(current => mergeJobList(current, visible)); setSummary(s.data); setAlerts({ count: alertRows.length, alerts: alertRows });
       try {
         const t = await api.get("/routing-techs");
         if (gen !== loadGen.current) return;
@@ -123,8 +119,12 @@ export default function Dashboard() {
     }
   }
   async function setStatus(jobId, status) {
-    await api.post(`/jobs/${jobId}/status`, { status });
-    load();
+    try {
+      await api.post(`/jobs/${jobId}/status`, { status });
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Could not update this job.");
+    }
   }
   async function completeJob(jobId, body) {
     try {
@@ -215,13 +215,7 @@ export default function Dashboard() {
       alert(e.response?.data?.detail || "Could not update that request.");
     }
   }
-  async function manualRespond(offerId, accept) {
-    await api.post(`/contractor-offers/${offerId}/respond`, { accept });
-    load();
-  }
-
   const newJobIds = new Set(alerts.alerts.map(a => a.job_id));
-  const offerByJob = Object.fromEntries(offers.filter(o => o.status === "pending").map(o => [o.job_id, o]));
   const dayJobs = jobs.filter(isOnDayBoard);
 
   const routingTechs = techs.filter(t => t.role !== "contractor" && t.routes_jobs !== false && t.is_active !== false);
@@ -371,8 +365,7 @@ export default function Dashboard() {
             onPayment={setPaymentMode} onCharge={chargeNow}
             onOutside={setOutside} onTripFee={chargeTripFee} onRetryXero={retryXero}
             accent={tech.color || "#FF5F1F"}
-            newJobIds={newJobIds} offerByJob={offerByJob}
-            onDispatch={setDispatchTarget} onRespond={manualRespond}
+            newJobIds={newJobIds}
             onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
             onEdit={isOwner ? setEditTarget : null}
             onDelete={isOwner ? askDelete : null}
@@ -422,8 +415,6 @@ export default function Dashboard() {
       </>
       )}
 
-      <DispatchModal open={!!dispatchTarget} job={dispatchTarget}
-        onClose={() => setDispatchTarget(null)} onDone={load} />
       <JobEditModal open={!!editTarget} job={editTarget}
         onClose={() => setEditTarget(null)} onDone={load} />
       <DeleteJobDialog job={deleteTarget} busy={deleting} error={deleteError}
@@ -623,8 +614,8 @@ function Metric({ label, value, highlight }) {
   );
 }
 
-function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, accent, newJobIds, offerByJob,
-                    onDispatch, onRespond, onReschedule, onEdit, onDelete, onDecide, dragOver, setDragOver, onDrop }) {
+function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, accent, newJobIds,
+                    onReschedule, onEdit, onDelete, onDecide, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className="zone-header">
@@ -642,8 +633,8 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPaymen
           <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus} onComplete={onComplete}
             onPayment={onPayment} onCharge={onCharge}
             onOutside={onOutside} onTripFee={onTripFee} onRetryXero={onRetryXero}
-            isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
-            onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule} onEdit={onEdit}
+            isNew={newJobIds?.has(j.id)}
+            onReschedule={onReschedule} onEdit={onEdit}
             onDelete={onDelete} onDecide={onDecide}
             zone={zone} dropIndex={idx}
             isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
@@ -659,16 +650,6 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPaymen
       </div>
     </section>
   );
-}
-
-function OfferCountdown({ expiresAt }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
-  const ms = new Date(expiresAt).getTime() - now;
-  if (ms <= 0) return <span className="muted">expired</span>;
-  const min = Math.floor(ms / 60000);
-  const sec = Math.floor((ms % 60000) / 1000);
-  return <span className="font-mono">{min}:{String(sec).padStart(2, "0")}</span>;
 }
 
 function TripFeeControls({ job, onOutside, onTripFee }) {
@@ -698,9 +679,11 @@ function TripFeeControls({ job, onOutside, onTripFee }) {
   );
 }
 
-function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDelete, onDecide,
+function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, onReschedule, onEdit, onDelete, onDecide,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
+  const travelStep = flow && (flow.next === "driving" || flow.next === "on_site");
+  const travelToday = isPhoenixToday(job.scheduled_start);
   const [completeOpen, setCompleteOpen] = useState(false);
   const isLocked = job.status === "complete" || job.status === "cancelled" || job.status === "declined" || job.status === "requested";
   return (
@@ -728,11 +711,6 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
             {job.payment_mode === "invoice_hold" && <span className="badge badge-draft">Invoice — hold charge</span>}
             {job.payment_status === "payment_failed" && <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)" }}>Payment failed</span>}
             {job.late_fee ? <span className="badge badge-draft">Late fee ${job.late_fee}</span> : null}
-            {offer && (
-              <span className="badge badge-dispatched_to_contractor" data-testid={`offer-countdown-${job.id}`}>
-                {offer.contractor_name} · <OfferCountdown expiresAt={offer.expires_at} />
-              </span>
-            )}
             {job.is_at_risk && (
               <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)", border: "1px solid rgba(239,68,68,0.3)" }}
                 title={job.risk_reason} data-testid={`badge-at-risk-${job.id}`}>
@@ -826,7 +804,16 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
               data-testid={`xero-retry-${job.id}`}>Retry Xero draft</button>
           </>
         )}
-        {flow && (
+        {flow && travelStep && !travelToday && (
+          <>
+            <button className="btn btn-primary" type="button" disabled
+              data-testid={`job-action-${job.id}`}
+              style={{ opacity: 0.45 }}>{flow.label}</button>
+            <span className="muted" style={{ fontSize: 13, alignSelf: "center" }}
+              data-testid={`job-travel-wait-${job.id}`}>Available on the day of the job</span>
+          </>
+        )}
+        {flow && !(travelStep && !travelToday) && (
           <button className="btn btn-primary" onClick={() => {
             if (flow.next === "complete") setCompleteOpen(true);
             else onStatus(job.id, flow.next);
@@ -834,20 +821,10 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
         )}
         {job.status === "booked" && (
           <>
-            <button className="btn btn-ghost" onClick={() => onDispatch(job)}
-              data-testid={`job-dispatch-${job.id}`}>Dispatch to Contractor</button>
             <button className="btn btn-ghost" onClick={() => onReschedule(job, "reschedule")}
               data-testid={`job-reschedule-${job.id}`}>Reschedule</button>
             <button className="btn btn-ghost" onClick={() => onReschedule(job, "cancel")}
               data-testid={`job-cancel-${job.id}`}>Cancel</button>
-          </>
-        )}
-        {offer && (
-          <>
-            <button className="btn btn-ghost" style={{ borderColor: "rgba(16,185,129,0.4)", color: "var(--green)" }}
-              onClick={() => onRespond(offer.id, true)} data-testid={`offer-accept-${offer.id}`}>Mark Accepted</button>
-            <button className="btn btn-ghost" style={{ borderColor: "rgba(239,68,68,0.4)", color: "var(--red)" }}
-              onClick={() => onRespond(offer.id, false)} data-testid={`offer-decline-${offer.id}`}>Mark Declined</button>
           </>
         )}
       </div>

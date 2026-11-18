@@ -30,13 +30,6 @@ def owner_token():
     return r.json()["token"]
 
 
-@pytest.fixture(scope="module")
-def contractor_token():
-    r = requests.post(f"{API}/auth/login", json=CONTRACTOR, timeout=30)
-    assert r.status_code == 200
-    return r.json()["token"]
-
-
 @pytest.fixture(scope="module", autouse=True)
 def require_assist_enabled(owner_token):
     r = requests.get(f"{API}/integrations/status", headers=_auth(owner_token), timeout=30)
@@ -52,17 +45,10 @@ def _msg(token, message, conversation_id=None):
 
 
 # ---------- RBAC ----------
-def test_rbac_contractor_forbidden(contractor_token):
-    for method, path, body in [
-        ("POST", "/assist/message", {"message": "hi"}),
-        ("GET", "/assist/tools", None),
-        ("GET", "/assist/conversations/whatever", None),
-        ("POST", "/assist/actions/whatever/confirm", None),
-        ("POST", "/assist/actions/whatever/cancel", None),
-    ]:
-        r = requests.request(method, f"{API}{path}", json=body,
-                              headers=_auth(contractor_token), timeout=30)
-        assert r.status_code == 403, f"{method} {path} should be owner-only, got {r.status_code}"
+def test_contractor_login_is_not_a_working_account():
+    r = requests.post(f"{API}/auth/login", json=CONTRACTOR, timeout=30)
+    assert r.status_code in (401, 403)
+    assert "token" not in r.json()
 
 
 # ---------- integrations/status + tool listing ----------
@@ -79,8 +65,10 @@ def test_tools_listing_has_tiers(owner_token):
     # spot-check the tier mapping: GET-backed safe, mutation-backed risky
     assert tools["list_jobs"]["tier"] == "safe"
     assert tools["get_pricing"]["tier"] == "safe"
-    assert tools["dispatch_job"]["tier"] == "risky"
     assert tools["update_pricing"]["tier"] == "risky"
+    assert "dispatch_job" not in tools
+    assert "list_contractors" not in tools
+    assert "update_contractor" not in tools
     assert tools["send_touch"]["tier"] == "risky"
     assert "reels" not in " ".join(tools)  # reels tools must not exist
 
@@ -184,7 +172,7 @@ def test_confirm_nonexistent_404(owner_token):
 
 # ---------- risky tool that hits a validation error still surfaces cleanly ----------
 def test_confirmed_action_with_bad_target_reports_failure(owner_token):
-    r = _msg(owner_token, '/run dispatch_job {"job_id": "nonexistent", "contractor_id": "also-nonexistent"}')
+    r = _msg(owner_token, '/run cancel_job {"job_id": "nonexistent"}')
     pending = r.json()["pending_action"]
     r = requests.post(f"{API}/assist/actions/{pending['id']}/confirm",
                        headers=_auth(owner_token), timeout=60)

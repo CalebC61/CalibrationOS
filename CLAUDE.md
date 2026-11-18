@@ -45,6 +45,12 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   mirror the same "real-if-configured, else flag the job" pattern and keep the Xero code until
   the swap is verified end-to-end (don't delete it preemptively).
 - **Mocked:** Twilio SMS, cloud document storage (base64-in-Mongo).
+- **Removed (2026-11-18):** contractor dispatch, offers, accounts, the Settings
+  contractor tab, and the Assist contractor tools. Hired technicians, route
+  order, the owner map, and the Dispatch day view stay. Existing contractor
+  rows are left in Mongo and are not read or written. `CONTRACTOR_EMAIL` and
+  `CONTRACTOR_PASSWORD` are ignored. Start Driving and I've Arrived work only
+  on a job scheduled for today in America/Phoenix.
 - **Missing:** Google Calendar sync (explicitly deferred).
 - **On hold:** Twilio SMS (Step 2) — deprioritized by the user, not needed for MVP. Don't pick this
   up unless asked.

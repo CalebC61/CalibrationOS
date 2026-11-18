@@ -13,6 +13,8 @@ jest.mock("../lib/api", () => ({
   getStoredAuth: () => ({ role: "owner", name: "Caleb" }),
   setStoredAuth: jest.fn(),
   todayStr: () => "2026-11-17",
+  phoenixTodayStr: () => "2026-11-17",
+  isPhoenixToday: () => true,
   isOnDayBoard: (job) => job?.status !== "cancelled" && job?.status !== "declined",
   jobStatusLabel: (status) => status || "",
 }));

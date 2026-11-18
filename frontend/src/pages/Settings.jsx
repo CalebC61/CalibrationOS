@@ -3,7 +3,7 @@ import { api } from "../lib/api";
 import { useRefreshOnShow } from "../lib/refreshOnShow";
 import Shell from "../components/Shell";
 
-const TABS = ["pricing", "technicians", "schedule", "contractor", "integrations"];
+const TABS = ["pricing", "technicians", "schedule", "integrations"];
 
 function xeroReturnTab() {
   const flag = new URLSearchParams(window.location.search).get("xero");
@@ -25,7 +25,6 @@ export default function Settings() {
       {tab === "pricing" && <PricingTab />}
       {tab === "technicians" && <TechniciansTab />}
       {tab === "schedule" && <ScheduleTab />}
-      {tab === "contractor" && <ContractorTab />}
       {tab === "integrations" && <IntegrationsTab />}
     </Shell>
   );
@@ -403,62 +402,6 @@ function ScheduleTab() {
         </div>
       ))}
     </div>
-    </div>
-  );
-}
-
-function ContractorTab() {
-  const [contractors, setContractors] = useState([]);
-  const [edits, setEdits] = useState({});
-  const [savingId, setSavingId] = useState(null);
-
-  async function load() {
-    const { data } = await api.get("/contractors");
-    setContractors(data);
-    const e = {};
-    data.forEach(c => { e[c.id] = { name: c.name, phone: c.phone, home_address: c.home_address, is_active: c.is_active }; });
-    setEdits(e);
-  }
-  useEffect(() => { load(); }, []);
-
-  async function save(id) {
-    setSavingId(id);
-    try {
-      await api.put(`/contractors/${id}`, edits[id]);
-      await load();
-    } catch (e) { alert(e.response?.data?.detail || "Save failed"); }
-    finally { setSavingId(null); }
-  }
-
-  return (
-    <div data-testid="contractor-tab">
-      {contractors.length === 0 && <div className="muted">No contractors. Add via direct DB seed for now.</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 640 }}>
-        {contractors.map(c => (
-          <div key={c.id} className="surface" style={{ padding: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div className="h3">{c.name}</div>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                <input type="checkbox" checked={edits[c.id]?.is_active || false}
-                  onChange={e => setEdits({...edits, [c.id]: {...edits[c.id], is_active: e.target.checked}})}
-                  data-testid={`contractor-active-${c.id}`} />
-                Active
-              </label>
-            </div>
-            <Row>
-              <Field label="Name"><input className="input" value={edits[c.id]?.name || ""}
-                onChange={e => setEdits({...edits, [c.id]: {...edits[c.id], name: e.target.value}})} /></Field>
-              <Field label="Phone"><input className="input" value={edits[c.id]?.phone || ""}
-                onChange={e => setEdits({...edits, [c.id]: {...edits[c.id], phone: e.target.value}})} /></Field>
-            </Row>
-            <Field label="Home address (used as drive origin)"><input className="input" value={edits[c.id]?.home_address || ""}
-              onChange={e => setEdits({...edits, [c.id]: {...edits[c.id], home_address: e.target.value}})} /></Field>
-            <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>Email (login): {c.email}</div>
-            <button className="btn btn-primary" onClick={() => save(c.id)} disabled={savingId === c.id}
-              data-testid={`save-contractor-${c.id}`}>{savingId === c.id ? "Saving…" : "Save"}</button>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

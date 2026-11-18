@@ -132,23 +132,12 @@ TOOLS: list[Tool] = [
         parameters=_params({"date_str": _str("Day to summarize, YYYY-MM-DD. Omit for today.")}),
     ),
     Tool(
-        name="dispatch_job", tier="risky", method="POST",
-        path_template="/jobs/{job_id}/dispatch", body_params=["contractor_id"],
-        description=(
-            "Offer a booked job to a contractor (starts a 30-minute accept/decline window and "
-            "notifies them). Find the contractor's id with list_contractors first."),
-        parameters=_params({
-            "job_id": _str("The job's id."),
-            "contractor_id": _str("The contractor's id."),
-        }, ["job_id", "contractor_id"]),
-        summary_template="Dispatch job {job_id} to contractor {contractor_id} (30-min offer, sends notification)",
-    ),
-    Tool(
         name="update_job_status", tier="risky", method="POST",
         path_template="/jobs/{job_id}/status", body_params=["status"],
         description=(
             "Advance or change a job's status: driving, on_site, complete, or cancelled. "
-            "Status changes can trigger customer notifications."),
+            "driving (Start Driving) and on_site (I've Arrived) only succeed when the job "
+            "is scheduled for today in America/Phoenix. Status changes can trigger customer notifications."),
         parameters=_params({
             "job_id": _str("The job's id."),
             "status": {"type": "string", "enum": ["driving", "on_site", "complete", "cancelled"],
@@ -268,11 +257,6 @@ TOOLS: list[Tool] = [
         parameters=_params({}),
     ),
     Tool(
-        name="list_contractors", tier="safe", method="GET", path_template="/contractors",
-        description="List contractors with id, name, phone, home zone, and active status.",
-        parameters=_params({}),
-    ),
-    Tool(
         name="update_pricing", tier="risky", method="PUT", path_template="/settings/pricing",
         body_params=["static", "dynamic", "dual", "triple", "tesla"],
         description=(
@@ -302,22 +286,6 @@ TOOLS: list[Tool] = [
             "buffer_minutes": _int("Drive buffer in minutes."),
         }, ["zone_key"]),
         summary_template="Update {zone_key} zone schedule settings",
-    ),
-    Tool(
-        name="update_contractor", tier="risky", method="PUT",
-        path_template="/contractors/{contractor_id}",
-        body_params=["name", "phone", "home_address", "is_active"],
-        description=(
-            "Update a contractor's profile, or activate/deactivate them (inactive contractors "
-            "can't be dispatched)."),
-        parameters=_params({
-            "contractor_id": _str("The contractor's id."),
-            "name": _str("New name."),
-            "phone": _str("New phone."),
-            "home_address": _str("New home base address (re-geocoded)."),
-            "is_active": _bool("false blocks new dispatches to them."),
-        }, ["contractor_id"]),
-        summary_template="Update contractor {contractor_id}",
     ),
     # ---------------- Growth (Module 9) ----------------
     Tool(

@@ -22,6 +22,15 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): contractors are gone, and travel steps are today-only.**
+  Dispatch to Contractor, contractor offers, the Settings contractor tab, the
+  field-app offer list, contractor login, and the contractor API routes are
+  removed. Assist cannot dispatch to a contractor. Existing contractor rows and
+  offer rows stay in Mongo and are not read or written. `CONTRACTOR_EMAIL` and
+  `CONTRACTOR_PASSWORD` are ignored. Start Driving and I've Arrived work only
+  on a job scheduled for today in America/Phoenix. Cancel, Complete, Xero
+  drafts, billing, and the shop portal are unchanged. `BILLING_ENABLED` and
+  `SHOP_EMAILS_ENABLED` are unchanged. No new env vars.
 - **Session (2026-11-18): day-before shop reminder, and booking address suggestions.**
   At 5:00 PM America/Phoenix the existing background loop emails each shop that
   has jobs tomorrow. Cancelled and declined jobs are skipped. The mail uses the
@@ -60,11 +69,11 @@ See `CHANGELOG.md` for the full log. Current state:
   portal Book when the shop is already logged in. Welcome mail points at the portal
   login. `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged. Details in `CHANGELOG.md`.
 - **Session (2026-11-18): the owner can delete a job.** `DELETE /api/jobs/{id}`
-  is owner-only (shop, technician, and contractor logins are 403). It removes
-  the job and its documents, alerts, offers, and action tokens. It does not
-  email, text, cancel, or call Xero or Stripe. Invoice rows stay. Dispatch
-  shows Delete with a confirmation. No new env vars. `SHOP_EMAILS_ENABLED`
-  and `BILLING_ENABLED` are unchanged.
+  is owner-only (shop and technician logins are 403). It removes the job and
+  its documents, alerts, and action tokens. Offer rows are left in place.
+  It does not email, text, cancel, or call Xero or Stripe. Invoice rows stay.
+  Dispatch shows Delete with a confirmation. No new env vars.
+  `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged.
 - **Session (2026-11-17): triple drafts and wholesale prices.** Triple files
   the Xero item Subaru MC Calibration (code 8), with Triple/Subaru Calibration
   as the fallback name. Booking and Complete price the job at the shop's
@@ -256,10 +265,10 @@ new integration to wire up, only account setup:
   repo's default is public, so a real deployment MUST override it.
 - `OWNER_PASSWORD` — the owner login password. Set this and restart; on an existing DB the stored
   owner password is rotated to match (this is how you retire the old `Owner123!` default).
-- `CONTRACTOR_PASSWORD` *(optional)* — same idea for the starter contractor account.
-- `OWNER_EMAIL` / `CONTRACTOR_EMAIL` *(optional, default to the existing seeded emails)*.
-  `OWNER_EMAIL` is also where same-day and before-8:00 AM booking alerts go, and the
-  Reply-To on shop booking mail.
+- `OWNER_EMAIL` *(optional, default `caleb@thecalibrationcrew.us`)*.
+  This is where same-day and before-8:00 AM booking alerts go, and the
+  Reply-To on shop booking mail. `CONTRACTOR_EMAIL` and `CONTRACTOR_PASSWORD`
+  are no longer read. Leaving them set does nothing.
 - `PUBLIC_SITE_URL` *(optional)* — host used in the owner's Approve and Decline links.
   Blank uses `https://www.thecalibrationcrew.us`.
 - `SENDER_EMAIL` must be a verified address on `thecalibrationcrew.us`. The code default

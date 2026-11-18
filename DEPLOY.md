@@ -38,7 +38,6 @@ Any database user with read and write works, including permission to create inde
 
    **Optional — the app boots and the matching feature stays mocked or off until set:**
    - `ADMIN_EMAIL` (default `admin@thecalibrationcrew.us`)
-   - `CONTRACTOR_EMAIL` (default `contractor@thecalibrationcrew.us`), `CONTRACTOR_PASSWORD` (no contractor account in production until this or demo seed is on)
    - `SHOP_EMAILS_ENABLED` — leave `false` until you want shop and customer mail to actually send. While it is false, that mail is stored for Email preview. The 5:00 PM Phoenix day-before reminder uses this same flag and the API process's existing background loop. There is no separate secret.
    - `TEST_EMAIL_ALLOWLIST` — your own address, so an invite or password reset can reach you while shop mail is off.
    - `BILLING_ENABLED` — leave `false` until you want a completed job to charge the card and the late-fee sweep to run. A live Stripe key is ignored until this is true.

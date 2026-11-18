@@ -15,6 +15,40 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Removed — contractor dispatch; travel steps are today-only (2026-11-18)
+The business does not use contractors. The product no longer offers that path.
+
+Removed from the owner Dispatch board: the Dispatch to Contractor button, the
+contractor picker dialog, pending-offer countdown, and Mark Accepted / Mark
+Declined. Removed from the phone field view: the pending-offers list and its
+Accept / Decline buttons. Removed from Settings: the Contractor tab. Assist no
+longer has `dispatch_job`, `list_contractors`, or `update_contractor`.
+
+Removed API routes: `POST /api/jobs/{id}/dispatch`, `GET /api/contractor-offers`,
+`POST /api/contractor-offers/{id}/respond`, `GET /api/contractors`, and
+`PUT /api/contractors/{id}`. Those paths are 404. The server no longer creates
+contractor offers, no longer expires them, and no longer sends the contractor
+offer, accept, decline, or expiry texts. Startup no longer creates a contractor
+login and no longer rotates `CONTRACTOR_PASSWORD`. An existing contractor row
+cannot sign in (`403`, "Contractor accounts are no longer used"). A saved
+contractor token is rejected the same way. `CONTRACTOR_EMAIL` and
+`CONTRACTOR_PASSWORD` are not read. Leaving them set does nothing.
+`BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+
+Nothing deletes or rewrites contractor rows, offer rows, or a job already
+marked `dispatched_to_contractor`. Deleting a job no longer deletes its offer
+rows. The shop portal still counts a leftover `dispatched_to_contractor` job as
+upcoming, so that job does not disappear. Hired technicians, route order, the
+owner map, and the Dispatch day view stay.
+
+Start Driving and I've Arrived work only when the job's `scheduled_start` is
+today in America/Phoenix, including an evening job whose UTC date is already
+the next day. On any other day the buttons are disabled and the screen says
+"Available on the day of the job". The same words are the `400` from
+`POST /api/jobs/{id}/status` for `driving` and `on_site`. That rejection sends
+no text. Cancel and Complete still work on a job that is not today. A 6:30 PM
+Phoenix job is still today.
+
 ### Added — day-before reminder for shops (2026-11-18)
 Each evening at 5:00 PM America/Phoenix, every shop with jobs the next Phoenix
 day gets one email. It lists each job's vehicle, customer, address, calibration

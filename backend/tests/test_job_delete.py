@@ -256,7 +256,7 @@ def test_owner_delete_removes_the_job_and_sends_nothing(world):
         assert "job-keep" in portal_ids
         assert [doc["id"] for doc in world["db"].documents.docs] == ["doc-keep"]
         assert [alert["id"] for alert in world["db"].new_booking_alerts.docs] == ["alert-keep"]
-        assert world["db"].contractor_offers.docs == []
+        assert world["db"].contractor_offers.docs == [{"id": "offer-1", "job_id": "job-1", "status": "pending"}]
         assert world["db"].owner_action_tokens.docs == []
         assert [row["id"] for row in world["db"].vehicles.docs] == ["veh-keep", "veh-shared"]
         assert world["db"].sms_log.docs == []

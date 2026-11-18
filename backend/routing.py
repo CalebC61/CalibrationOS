@@ -25,7 +25,10 @@ def haversine_miles(lat1, lng1, lat2, lng2) -> float:
 
 
 def is_routing_tech(person: dict) -> bool:
-    """Owners and hired technicians cover routes. Contractors do not."""
+    """Owners and hired technicians cover routes.
+
+    A leftover contractor row stays out. This does not write that row.
+    """
     if not person or person.get("role") == "contractor":
         return False
     if person.get("role") not in ("owner", "technician"):
@@ -136,12 +139,6 @@ def owner_routing_updates(owner: dict) -> dict:
     if not owner.get("max_jobs"):
         updates["max_jobs"] = DEFAULT_MAX_JOBS
     return updates
-
-
-def contractor_routing_updates(person: dict) -> dict:
-    if person.get("role") == "contractor" and "routes_jobs" not in person:
-        return {"routes_jobs": False}
-    return {}
 
 
 def next_tech_color(used: list) -> str:

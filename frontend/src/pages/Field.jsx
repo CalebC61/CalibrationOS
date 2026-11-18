@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr, isOnDayBoard, jobStatusLabel } from "../lib/api";
+import { api, formatTime, getStoredAuth, setStoredAuth, phoenixTodayStr, isPhoenixToday, isOnDayBoard, jobStatusLabel } from "../lib/api";
 import { fresherJob, mergeJobList } from "../lib/jobState";
 import { useRefreshOnShow } from "../lib/refreshOnShow";
 import JobEditModal from "../components/JobEditModal";
@@ -34,20 +34,14 @@ export default function Field() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
 
-  const [offers, setOffers] = useState([]);
-
   const loadGen = useRef(0);
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
     try {
-      const [j, o] = await Promise.all([
-        api.get(`/jobs?date_str=${todayStr()}`),
-        api.get(`/contractor-offers`),
-      ]);
+      const j = await api.get(`/jobs?date_str=${phoenixTodayStr()}`);
       if (gen !== loadGen.current) return;
       const visible = (j.data || []).filter(isOnDayBoard);
       setJobs(current => mergeJobList(current, visible));
-      setOffers(o.data.filter(x => x.status === "pending"));
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
@@ -87,11 +81,6 @@ export default function Field() {
     return () => { cancel = true; };
   }, [active]);
 
-  async function respondOffer(offerId, accept) {
-    await api.post(`/contractor-offers/${offerId}/respond`, { accept });
-    load();
-  }
-
   async function uploadDoc(jobId, file) {
     setUploading(true);
     try {
@@ -107,8 +96,12 @@ export default function Field() {
   }
 
   async function setStatus(jobId, status) {
-    await api.post(`/jobs/${jobId}/status`, { status });
-    load();
+    try {
+      await api.post(`/jobs/${jobId}/status`, { status });
+      load();
+    } catch (e) {
+      alert(e.response?.data?.detail || "Could not update this job.");
+    }
   }
   async function complete(jobId) {
     setCompleting(true);
@@ -182,12 +175,20 @@ export default function Field() {
             <p className="muted" style={{ marginTop: 16 }}>Only Caleb can change this job.</p>
           )}
           {auth?.role === "owner" && j.status === "booked" && (
-            <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
-              onClick={() => setStatus(j.id, "driving")} data-testid="action-start-driving">Start Driving</button>
+            isPhoenixToday(j.scheduled_start) ? (
+              <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
+                onClick={() => setStatus(j.id, "driving")} data-testid="action-start-driving">Start Driving</button>
+            ) : (
+              <p className="muted" style={{ marginTop: 16, fontSize: 14 }} data-testid="action-travel-wait">Available on the day of the job</p>
+            )
           )}
           {auth?.role === "owner" && j.status === "driving" && (
-            <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
-              onClick={() => setStatus(j.id, "on_site")} data-testid="action-arrived">I&apos;ve Arrived</button>
+            isPhoenixToday(j.scheduled_start) ? (
+              <button className="btn btn-primary" style={{ width: "100%", marginTop: 16, padding: 14 }}
+                onClick={() => setStatus(j.id, "on_site")} data-testid="action-arrived">I&apos;ve Arrived</button>
+            ) : (
+              <p className="muted" style={{ marginTop: 16, fontSize: 14 }} data-testid="action-travel-wait">Available on the day of the job</p>
+            )
           )}
           {auth?.role === "owner" && j.status === "on_site" && (
             <div style={{ marginTop: 16 }}>
@@ -295,35 +296,11 @@ export default function Field() {
       <div style={{ padding: 12 }}>
         <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4 }}>Today</div>
         <h1 className="h1" style={{ marginBottom: 12, fontSize: 28 }}>
-          {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+          {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/Phoenix" })}
         </h1>
         {loading && <div className="muted">Loading…</div>}
 
-        {offers.length > 0 && (
-          <div style={{ marginBottom: 16 }} data-testid="pending-offers">
-            <div className="label" style={{ color: "var(--accent-ink)" }}>Pending offers ({offers.length})</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {offers.map(o => (
-                <div key={o.id} className="card-job-new card-job" data-testid={`offer-${o.id}`}>
-                  <div className="h3">{o.shop_name}</div>
-                  <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>{o.vehicle}</div>
-                  <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
-                    {formatTime(o.scheduled_start)} · ${o.price.toFixed(2)}
-                  </div>
-                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{o.job_address}</div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                    <button className="btn btn-primary" style={{ flex: 1 }}
-                      onClick={() => respondOffer(o.id, true)} data-testid={`accept-${o.id}`}>Accept</button>
-                    <button className="btn btn-ghost" style={{ flex: 1, borderColor: "rgba(239,68,68,0.4)", color: "var(--red)" }}
-                      onClick={() => respondOffer(o.id, false)} data-testid={`decline-${o.id}`}>Decline</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {!loading && jobs.length === 0 && offers.length === 0 && (
+        {!loading && jobs.length === 0 && (
           <div className="surface muted" style={{ padding: 24, textAlign: "center" }}>No jobs today.</div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

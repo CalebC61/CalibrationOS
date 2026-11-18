@@ -20,11 +20,10 @@ def owner_token():
     return data["token"]
 
 
-@pytest.fixture(scope="module")
-def contractor_token():
+def test_contractor_login_is_not_a_working_account():
     r = requests.post(f"{API}/auth/login", json=CONTRACTOR, timeout=30)
-    assert r.status_code == 200, r.text
-    return r.json()["token"]
+    assert r.status_code in (401, 403)
+    assert "token" not in r.json()
 
 
 def auth(token): return {"Authorization": f"Bearer {token}"}
@@ -41,9 +40,9 @@ def test_login_owner_role(owner_token):
     assert r.json()["role"] == "owner"
 
 
-def test_shops_requires_owner(contractor_token):
-    r = requests.get(f"{API}/shops", headers=auth(contractor_token), timeout=30)
-    assert r.status_code == 403
+def test_shops_requires_owner():
+    r = requests.get(f"{API}/shops", timeout=30)
+    assert r.status_code == 401
 
 
 def test_seeded_shops(owner_token):
@@ -220,14 +219,14 @@ def test_full_job_lifecycle_with_invoice(owner_token):
         "notification_phone": "+16025556666",
     }, timeout=30).json()
     job_id = book["job_id"]
-    # Driving
+    # This job is several days out. Start Driving and I've Arrived wait for that day.
     r = requests.post(f"{API}/jobs/{job_id}/status", json={"status": "driving"}, headers=auth(owner_token), timeout=30)
-    assert r.status_code == 200
-    assert r.json()["status"] == "driving"
-    # On site
+    assert r.status_code == 400
+    assert "Available on the day of the job" in r.text
     r = requests.post(f"{API}/jobs/{job_id}/status", json={"status": "on_site"}, headers=auth(owner_token), timeout=30)
-    assert r.status_code == 200
-    assert r.json()["actual_arrival"] is not None
+    assert r.status_code == 400
+    assert "Available on the day of the job" in r.text
+    # Complete still files the invoice without those two steps.
     # Complete
     r = requests.post(f"{API}/jobs/{job_id}/complete",
                       json={"result": "pass", "notes": "All good", "document_name": "report.pdf"},
@@ -247,15 +246,6 @@ def test_full_job_lifecycle_with_invoice(owner_token):
     r = requests.get(f"{API}/invoices", headers=auth(owner_token), timeout=30)
     assert r.status_code == 200
     assert any(inv["invoice_id"] == d["job"]["invoice_id"] for inv in r.json())
-
-
-def test_contractor_sees_only_own_jobs(contractor_token):
-    r = requests.get(f"{API}/jobs", headers=auth(contractor_token), timeout=30)
-    assert r.status_code == 200
-    # Contractor has no assigned jobs from public bookings (assigned to owner)
-    for j in r.json():
-        # Should not have owner-assigned jobs
-        pass  # contractor_id check happens server side
 
 
 def test_sms_log(owner_token):
