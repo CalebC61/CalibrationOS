@@ -29,6 +29,8 @@ services:
       - { key: OWNER_EMAIL, sync: false }
       - { key: OWNER_PASSWORD, sync: false }
       - { key: ADMIN_EMAIL, sync: false }
+      # 500s and browser crashes. Blank uses OWNER_EMAIL, then ADMIN_EMAIL.
+      - { key: ALERT_EMAIL, sync: false }
       # Shop and customer mail stays in the outbox until this is true.
       - key: SHOP_EMAILS_ENABLED
         value: "false"

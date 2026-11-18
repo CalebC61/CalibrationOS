@@ -104,6 +104,10 @@ html, body, #root {
 }
 .btn-primary { background: var(--accent); color: #0a0a0a; }
 .btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.app-error-refresh:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 3px;
+}
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; filter: none; }
 .btn-ghost { background: transparent; color: var(--text-primary); border-color: var(--border); }
 .btn-ghost:hover { background: var(--bg-elevated); border-color: var(--border-active); }

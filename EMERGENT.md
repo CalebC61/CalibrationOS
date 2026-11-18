@@ -22,6 +22,13 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): health check and owner error mail.** `GET /api/health`
+  pings Mongo and returns 503 when it is unreachable. Unhandled 500s and
+  browser crashes email `ALERT_EMAIL`, then `OWNER_EMAIL`, then `ADMIN_EMAIL`.
+  Nothing is sent when all three are blank. The mail still goes out while
+  `SHOP_EMAILS_ENABLED` is false, at most once per error every 15 minutes and
+  10 times an hour. The web app shows a refresh screen and reports the crash.
+  New env var: `ALERT_EMAIL` (optional).
 - **Session (2026-11-18): a paid card charge shows as paid.** A successful
   charge, and `invoice.paid` / `invoice.payment_succeeded`, set the job and
   the `job_invoices` row to paid. `invoice.finalized` no longer reopens a
@@ -272,6 +279,10 @@ new integration to wire up, only account setup:
   repo's default is public, so a real deployment MUST override it.
 - `OWNER_PASSWORD` — the owner login password. Set this and restart; on an existing DB the stored
   owner password is rotated to match (this is how you retire the old `Owner123!` default).
+- `ALERT_EMAIL` *(optional)* — inbox for unhandled 500s and browser crash
+  reports. Blank uses `OWNER_EMAIL`, then `ADMIN_EMAIL`. Blank for all three
+  sends nothing. These notes ignore `SHOP_EMAILS_ENABLED`. Resend still needs
+  `RESEND_API_KEY` and `SENDER_EMAIL`.
 - `OWNER_EMAIL` *(optional, default `caleb@thecalibrationcrew.us`)*.
   This is where same-day and before-8:00 AM booking alerts go, and the
   Reply-To on shop booking mail. `CONTRACTOR_EMAIL` and `CONTRACTOR_PASSWORD`

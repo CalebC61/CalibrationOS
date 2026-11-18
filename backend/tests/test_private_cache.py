@@ -16,7 +16,12 @@ os.environ.setdefault("DB_NAME", "ci")
 import server  # noqa: E402
 
 
-def test_api_responses_are_not_stored():
+def test_api_responses_are_not_stored(monkeypatch):
+    async def ping():
+        return {"ok": 1}
+
+    monkeypatch.setattr(server, "ping_database", ping)
+
     async def run():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=server.app), base_url="http://test") as client:
             health = await client.get("/api/health")
