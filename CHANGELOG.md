@@ -15,6 +15,37 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — health check and owner error mail (2026-11-18)
+`GET /api/health` pings Mongo and returns 503 when the database does not
+answer. The driver gives up after 2 seconds, and the request itself is capped
+at 2.5 seconds. A healthy database still returns `{"status":"ok"}`. A failure
+returns `{"status":"unavailable"}` and does not include the connection string.
+`render.yaml` already sets `healthCheckPath: /api/health`, so Render's health
+check and failure email use this result. No dashboard change is required
+unless that path was edited by hand.
+
+An unhandled server error (HTTP 500) emails the owner after the response is
+sent. The note has the time, method, route, error type, message, and a trimmed
+traceback. Connection strings, tokens, card numbers, and auth headers are
+removed. The request body is not included. `POST /api/client-errors` accepts
+the same kind of note from the browser. It does not require a login, rejects a
+body over 4KB, and allows 8 reports a minute from one IP.
+
+Alerts go to `ALERT_EMAIL`. When that is blank they go to `OWNER_EMAIL`, then
+`ADMIN_EMAIL`. When all three are blank, nothing is sent. Sending uses the
+existing Resend helper, including while `SHOP_EMAILS_ENABLED` is false. One
+error is mailed at most once every 15 minutes, and the process sends at most
+10 alerts an hour. A mail failure does not change the HTTP response.
+
+The web app shows "Something went wrong" and a Refresh button when a screen
+crashes, a script error fires, or a promise is rejected without a handler. It
+reports that to `/api/client-errors` without the auth token or the query
+string.
+
+Set `ALERT_EMAIL` on Render when these notes should go somewhere other than
+the owner or admin address. `RESEND_API_KEY` and `SENDER_EMAIL` still decide
+whether Resend delivers the note or it is only logged.
+
 ### Fixed — paid card charges still looked unpaid (2026-11-18)
 A live Stripe test-mode charge was succeeding: the PaymentIntent succeeded,
 the Stripe invoice was marked paid, and `invoice.paid` was received. Dispatch,

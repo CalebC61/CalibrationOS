@@ -69,6 +69,16 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   default. **Reels are explicitly deferred** — no video-generation capability exists; the
   `ReelAsset` model and `/api/growth/reels/generate` are not implemented.
 
+### Health check and error mail (2026-11-18)
+- `GET /api/health` pings Mongo (about 2.5s) and returns 503 when it does not answer.
+  `render.yaml` already points Render's health check at `/api/health`.
+- Unhandled 500s, and `POST /api/client-errors` from the web app, email
+  `ALERT_EMAIL`, then `OWNER_EMAIL`, then `ADMIN_EMAIL`. No address means no
+  mail. The notes still send while `SHOP_EMAILS_ENABLED` is off. One error is
+  sent at most once per 15 minutes, with a cap of 10 an hour. Set `ALERT_EMAIL`
+  on Render when the inbox should not be the owner or admin address. Delivery
+  still needs `RESEND_API_KEY` and `SENDER_EMAIL`.
+
 ### Production hardening (2026-07-21) — required before launch, set on Emergent's side
 - The app now has a production mode. To go live: set `APP_ENV=production`, a strong random
   `JWT_SECRET`, `OWNER_PASSWORD` (retires the old `Owner123!` default — rotates on restart), and

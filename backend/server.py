@@ -10,6 +10,7 @@ import os
 import asyncio
 import html
 import logging
+import traceback
 import uuid
 import hashlib
 import secrets
@@ -150,6 +151,10 @@ from address_pin import (
 from booking_mail import (
     booking_confirmation_email, mail_route, normalize_us_phone, owner_alert_email,
     owner_needs_alert, shop_emails_enabled, shop_event_email,
+)
+from error_alerts import (
+    CLIENT_ERROR_IP_LIMIT, CLIENT_ERROR_MAX_BYTES, CLIENT_ERROR_WINDOW_SECONDS,
+    prepare_client_report, prepare_server_alert,
 )
 from day_before import next_reminder_delay, run_reminders
 from days_off import closure_message, holiday_records, jobs_to_flag, parse_range
@@ -6381,9 +6386,127 @@ async def list_address_pins(tech=Depends(require_owner)):
     return {"shops": bad_shops, "jobs": bad_jobs}
 
 
+HEALTH_PING_TIMEOUT_SECONDS = 2.5
+_ALERT_TASKS = set()
+_health_client = None
+
+
+def _database_health_client():
+    """Separate client so a dead database fails in a couple of seconds.
+
+    The main client keeps its normal server-selection timeout. A health ping
+    on that client would sit there until the driver gave up.
+    """
+    global _health_client
+    if _health_client is None:
+        timeout_ms = 2000
+        _health_client = AsyncIOMotorClient(
+            mongo_url,
+            serverSelectionTimeoutMS=timeout_ms,
+            connectTimeoutMS=timeout_ms,
+            socketTimeoutMS=timeout_ms,
+        )
+    return _health_client
+
+
+async def ping_database():
+    """One cheap round trip. The health check is the only caller."""
+    return await _database_health_client().admin.command("ping")
+
+
+def schedule_error_alert(payload) -> None:
+    """Send after the response. A failure here must not change the response."""
+    if not payload:
+        return
+
+    async def _run():
+        try:
+            await asyncio.wait_for(
+                send_email(
+                    payload["to"],
+                    payload["subject"],
+                    payload["html"],
+                    kind=payload.get("kind") or "error_alert",
+                ),
+                timeout=8,
+            )
+        except Exception:
+            logger.error("error alert was not sent")
+
+    try:
+        task = asyncio.get_running_loop().create_task(_run())
+        _ALERT_TASKS.add(task)
+        task.add_done_callback(_ALERT_TASKS.discard)
+    except Exception:
+        logger.error("error alert was not scheduled")
+
+
+def _alert_route(request: Request) -> str:
+    route = request.scope.get("route")
+    return str(getattr(route, "path", None) or request.url.path)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """500s email the owner. HTTP errors keep their own handlers."""
+    method = request.method
+    path = _alert_route(request)
+    logger.error("unhandled %s %s %s", method, path, type(exc).__name__)
+    try:
+        trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        schedule_error_alert(prepare_server_alert(
+            method=method, path=path, exc=exc, traceback_text=trace,
+        ))
+    except Exception:
+        logger.error("error alert was not scheduled")
+    return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
+
+@api.post("/client-errors")
+async def report_client_error(request: Request):
+    """Browser crash report. No login. Small body, and a per-IP cap."""
+    declared = request.headers.get("content-length")
+    if declared:
+        try:
+            too_big = int(declared) > CLIENT_ERROR_MAX_BYTES
+        except ValueError:
+            too_big = True
+        if too_big:
+            return JSONResponse(status_code=413, content={"ok": False})
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > CLIENT_ERROR_MAX_BYTES:
+            return JSONResponse(status_code=413, content={"ok": False})
+        chunks.append(chunk)
+    raw = b"".join(chunks)
+    ip = _client_ip(request) or "unknown"
+    if rate_limit_exceeded(
+        f"client-error:ip:{ip}",
+        limit=CLIENT_ERROR_IP_LIMIT,
+        window_seconds=CLIENT_ERROR_WINDOW_SECONDS,
+    ):
+        return JSONResponse(status_code=429, content={"ok": False})
+    try:
+        payload = prepare_client_report(raw)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"ok": False})
+    try:
+        schedule_error_alert(payload)
+    except Exception:
+        logger.error("error alert was not scheduled")
+    return {"ok": True}
+
+
 @api.get("/health")
 async def health():
-    """Unauthenticated liveness probe for Render / uptime checks."""
+    """Unauthenticated readiness probe. 503 when Mongo does not answer."""
+    try:
+        await asyncio.wait_for(ping_database(), timeout=HEALTH_PING_TIMEOUT_SECONDS)
+    except Exception:
+        logger.warning("health check failed: database unreachable")
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
     return {"status": "ok"}
 
 
@@ -6442,3 +6565,5 @@ app.add_middleware(_PrivateNoStore)
 @app.on_event("shutdown")
 async def shutdown():
     client.close()
+    if _health_client is not None:
+        _health_client.close()

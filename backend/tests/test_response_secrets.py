@@ -301,6 +301,11 @@ def test_docs_are_off_in_production_unless_the_flag_is_true(monkeypatch):
 def test_docs_routes_are_404_when_disabled(monkeypatch):
     monkeypatch.setattr(server, "api_docs_enabled", lambda: False)
 
+    async def ping():
+        return {"ok": 1}
+
+    monkeypatch.setattr(server, "ping_database", ping)
+
     async def run():
         async with _client() as client:
             docs = await client.get("/docs")

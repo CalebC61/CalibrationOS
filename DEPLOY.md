@@ -38,6 +38,7 @@ Any database user with read and write works, including permission to create inde
 
    **Optional — the app boots and the matching feature stays mocked or off until set:**
    - `ADMIN_EMAIL` (default `admin@thecalibrationcrew.us`)
+   - `ALERT_EMAIL` — where 500s and browser crashes are mailed. Blank uses `OWNER_EMAIL`, then `ADMIN_EMAIL`. Blank for all three sends nothing. These notes still send while `SHOP_EMAILS_ENABLED` is false. They need `RESEND_API_KEY` and `SENDER_EMAIL` to leave the server; otherwise they are logged like other mail.
    - `SHOP_EMAILS_ENABLED` — leave `false` until you want shop and customer mail to actually send. While it is false, that mail is stored for Email preview. The 5:00 PM Phoenix day-before reminder uses this same flag and the API process's existing background loop. There is no separate secret.
    - `TEST_EMAIL_ALLOWLIST` — your own address, so an invite or password reset can reach you while shop mail is off.
    - `BILLING_ENABLED` — leave `false` until you want a completed job to charge the card and the late-fee sweep to run. A live Stripe key is ignored until this is true.
@@ -52,7 +53,7 @@ Any database user with read and write works, including permission to create inde
    - `ASSIST_MODEL` (default `gemini-2.5-flash`), `ASSIST_PENDING_TTL_SECONDS` (default `300`)
    - `ASSIST_SELF_BASE_URL` — leave blank. Assist then calls `http://127.0.0.1:$PORT`, which matches the port Render assigns. Set it only if that loopback call cannot work.
 
-4. Deploy. Check `https://<service>.onrender.com/api/health` returns `{"status":"ok"}`. `/api/health` does not check Mongo; a failed startup (bad `MONGO_URL`, or the dev `JWT_SECRET`) never serves that route.
+4. Deploy. Check `https://<service>.onrender.com/api/health` returns `{"status":"ok"}`. That route pings Mongo and returns 503 `{"status":"unavailable"}` when the database does not answer within a few seconds. `render.yaml` sets the Render health check to `/api/health`. A failed startup (bad `MONGO_URL`, or the dev `JWT_SECRET`) never serves that route.
 5. **Settings → Custom Domains** → add `api.thecalibrationcrew.us` and copy the CNAME target Render shows.
 
 The `starter` plan (~$7/mo) avoids free-tier sleep, which would make the field app slow on first open. `render.yaml` selects it.

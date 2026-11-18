@@ -105,6 +105,17 @@
 user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first. Module 9 — build out the Partner Growth Engine (Power Connector 5+50+100 CRM + 3-D introductions) from its inert scaffold into a real, flagged-on v1; reels explicitly deferred (no video-generation capability available). Module 8 — a natural-language AI assistant built into the admin page that can DO anything on the admin surface by plain-English prompting, with reads answering instantly and every real action gated behind an owner confirmation; scoped to in-process Gemini (google-genai) rather than the original Cloud Run/ADK/Postgres concept."
 
 backend:
+  - task: "Health check pings Mongo and 500s email the owner"
+    implemented: true
+    working: true
+    file: "backend/error_alerts.py, backend/server.py, backend/tests/test_health_and_alerts.py, backend/tests/test_error_alerts.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "GET /api/health pings Mongo and returns 503 {status:unavailable} when the ping fails or exceeds ~2.5s, and 200 {status:ok} when it answers. The body has no connection string. Unhandled exceptions return 500 and schedule one Resend alert via send_email even when SHOP_EMAILS_ENABLED is false. ALERT_EMAIL, else OWNER_EMAIL, else ADMIN_EMAIL. No address means no mail. Same error once per 15 minutes, 10 per hour. POST /api/client-errors is unauthenticated, 4KB cap, 8/minute per IP, and reuses that mail. Secrets, card numbers, auth headers, and request bodies are not in the note. 404 and 422 do not email."
   - task: "Day-before shop reminder at 5:00 PM Phoenix"
     implemented: true
     working: true
@@ -261,6 +272,17 @@ backend:
           comment: "Verified all three states: key set → 5 /api/assist routes registered + integrations/status.assist.mode=live; no key → 0 routes (404s); key set but ASSIST_MODULE_ENABLED=false → 0 routes."
 
 frontend:
+  - task: "App error screen reports crashes"
+    implemented: true
+    working: true
+    file: "frontend/src/components/AppErrorBoundary.jsx, frontend/src/index.js, frontend/src/components/AppErrorBoundary.test.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "AppErrorBoundary wraps the app. A render error, window error, or unhandled rejection shows Something went wrong and Refresh, and POSTs message, stack, path, and source to /api/client-errors without an Authorization header or query string. Covered by AppErrorBoundary.test.jsx."
   - task: "Portal booking address suggestions when the shop address is already filled"
     implemented: true
     working: true
