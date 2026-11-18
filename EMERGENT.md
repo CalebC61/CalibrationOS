@@ -238,6 +238,11 @@ new integration to wire up, only account setup:
   deleted via the UI.)*
 - `CORS_ORIGINS` *(already existed; now checked)* — set to your real app domain(s), comma-separated,
   instead of the `*` default.
+- `ENABLE_API_DOCS` *(optional)* — interactive docs (`/docs`, `/redoc`, `/openapi.json`).
+  Unset: on in development, off when `APP_ENV` is `production` or `prod`. Set `true` to turn
+  them on in production (the pages are mounted at process start), or `false` to turn them off
+  everywhere. Turning them off takes effect on the next request. Turning them on in a process
+  that booted with them unmounted needs a restart.
 
 **Added for real Google Maps (2026-07-21):**
 - `GOOGLE_MAPS_API_KEY` — a Google Cloud API key with the **Geocoding API** and **Routes API**

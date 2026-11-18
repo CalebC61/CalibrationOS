@@ -73,7 +73,7 @@ export default function PortalSettings() {
 
       <div className="surface" style={{ padding: 20, marginBottom: 16, maxWidth: 560 }} data-testid="payment-method-section">
         <div className="h3" style={{ marginBottom: 12 }}>Payment method</div>
-        {su.stripe_payment_method_id ? (
+        {su.has_payment_method ? (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, background: "var(--bg-elevated)", borderRadius: 8 }}>
               <div>

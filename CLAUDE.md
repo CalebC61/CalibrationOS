@@ -71,6 +71,11 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   unchanged until `APP_ENV=production` is set, so tests and the preview deployment are unaffected.
 - **No code launch-blockers remain.** What's left is a live `STRIPE_API_KEY` (see the Stripe
   section below) plus the other credential/env items already tracked in "Open action items."
+- Interactive API docs (`/docs`, `/redoc`, `/openapi.json`) are off when `APP_ENV=production`
+  unless `ENABLE_API_DOCS=true`. `ENABLE_API_DOCS=false` turns them off in any environment.
+  Staff and shop-user JSON uses an allowlist (`backend/client_views.py`); Xero tokens and
+  Stripe customer/payment-method ids are not in it. The client gets `xero_connected` and
+  `xero_org_name`, and shop users get `has_payment_method`.
 
 ### Card charging (2026-07-21) — done, reuses the existing STRIPE_API_KEY, set on Emergent's side
 - `POST /api/charge-queue/{job_id}/charge` (owner-only, from the Charge Queue page) charges a
