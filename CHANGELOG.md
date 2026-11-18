@@ -15,6 +15,11 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Added — screen review, no product change (2026-11-18)
+`docs/ui-audit-2026-11-18.md` is a read-only review of every screen: the phone
+view, the shop portal, the owner app, and the public site. No routes, copy, or
+layout changed with it.
+
 ### Fixed — invited shops can accept charge terms and then book (2026-11-18)
 Self-signup writes `charge_authorization_accepted_at` on the shop and the shop
 user when the shop accepts the charge terms and a card is saved. Invite
