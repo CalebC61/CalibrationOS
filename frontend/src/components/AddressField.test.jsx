@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import AddressField, { resetPlacesLoader } from "./AddressField";
 
@@ -165,11 +166,11 @@ test("a picked suggestion sends the place id and formatted address", async () =>
   const input = await screen.findByTestId("address");
   await waitFor(() => expect(input.getAttribute("data-address-mode")).toBe("places"));
   fireEvent.change(input, { target: { value: "100 W Guadalupe" } });
-  expect(fetchSuggestions).toHaveBeenCalledWith(expect.objectContaining({
+  await waitFor(() => expect(fetchSuggestions).toHaveBeenCalledWith(expect.objectContaining({
     input: "100 W Guadalupe",
     includedRegionCodes: ["us"],
     locationRestriction: VALLEY,
-  }));
+  })));
   fireEvent.click(await screen.findByRole("option"));
   await waitFor(() => expect(onPlace).toHaveBeenCalledWith({
     address: "100 W Guadalupe Rd, Gilbert, AZ 85233, USA",
@@ -284,4 +285,158 @@ test("editing a prefilled address requests suggestions for the whole new text", 
     lat: 33.42,
     lng: -111.83,
   })));
+});
+
+function suggestionFor(label) {
+  return {
+    placePrediction: {
+      text: { text: label },
+      toPlace() {
+        return placeResult({
+          formattedAddress: label,
+          id: "ChIJ-live",
+          location: { lat: () => 33.4, lng: () => -111.8 },
+        });
+      },
+    },
+  };
+}
+
+test("a burst of typing asks Places once for the text in the field", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  const fetchSuggestions = jest.fn(async ({ input }) => ({
+    suggestions: [suggestionFor(input)],
+  }));
+  installPlaces(fetchSuggestions);
+  renderField();
+  const input = await screen.findByTestId("address");
+  await waitFor(() => expect(input.getAttribute("data-address-mode")).toBe("places"));
+
+  fireEvent.change(input, { target: { value: "1" } });
+  fireEvent.change(input, { target: { value: "12" } });
+  fireEvent.change(input, { target: { value: "123 Main" } });
+  expect(fetchSuggestions).not.toHaveBeenCalled();
+
+  await waitFor(() => expect(fetchSuggestions).toHaveBeenCalledTimes(1));
+  expect(fetchSuggestions).toHaveBeenCalledWith(expect.objectContaining({ input: "123 Main" }));
+  expect((await screen.findByRole("option")).textContent).toBe("123 Main");
+});
+
+test("text typed before Places loads is suggested without another keystroke", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  let release;
+  const fetchSuggestions = jest.fn(async ({ input }) => ({
+    suggestions: [suggestionFor(input)],
+  }));
+  window.google = {
+    maps: {
+      importLibrary: jest.fn(() => new Promise((resolve) => {
+        release = () => resolve({
+          AutocompleteSuggestion: { fetchAutocompleteSuggestions: fetchSuggestions },
+        });
+      })),
+    },
+  };
+  renderField();
+  const input = await screen.findByTestId("address");
+  expect(input.getAttribute("data-address-mode")).toBe("typed");
+
+  fireEvent.change(input, { target: { value: "100" } });
+  fireEvent.change(input, { target: { value: "100 Main" } });
+  expect(fetchSuggestions).not.toHaveBeenCalled();
+
+  await act(async () => { release(); });
+  await waitFor(() => expect(fetchSuggestions).toHaveBeenCalledWith(expect.objectContaining({
+    input: "100 Main",
+  })));
+  expect(fetchSuggestions).not.toHaveBeenCalledWith(expect.objectContaining({ input: "100" }));
+  expect((await screen.findByRole("option")).textContent).toBe("100 Main");
+});
+
+test("clearing the field ignores a suggestion response already in flight", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  let resolveFetch;
+  const fetchSuggestions = jest.fn(() => new Promise((resolve) => {
+    resolveFetch = () => resolve({ suggestions: [suggestionFor("100 Main St")] });
+  }));
+  installPlaces(fetchSuggestions);
+  renderField();
+  const input = await screen.findByTestId("address");
+  await waitFor(() => expect(input.getAttribute("data-address-mode")).toBe("places"));
+
+  fireEvent.change(input, { target: { value: "100 Main" } });
+  await waitFor(() => expect(fetchSuggestions).toHaveBeenCalledTimes(1));
+  fireEvent.change(input, { target: { value: "" } });
+  await act(async () => { resolveFetch(); });
+  expect(screen.queryByRole("listbox")).toBeNull();
+});
+
+test("an older in-flight Places response does not satisfy a newer query", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  const pending = [];
+  let inflight = null;
+  const fetchSuggestions = jest.fn(({ input }) => {
+    if (inflight) return inflight.promise;
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    const slot = {
+      input,
+      promise,
+      resolve() {
+        inflight = null;
+        resolve({ suggestions: [suggestionFor(slot.input)] });
+      },
+    };
+    inflight = slot;
+    pending.push(slot);
+    return promise;
+  });
+  installPlaces(fetchSuggestions);
+  renderField();
+  const input = await screen.findByTestId("address");
+  await waitFor(() => expect(input.getAttribute("data-address-mode")).toBe("places"));
+
+  fireEvent.change(input, { target: { value: "100" } });
+  await waitFor(() => expect(pending.map((slot) => slot.input)).toEqual(["100"]));
+  fireEvent.change(input, { target: { value: "100 Main" } });
+  await act(async () => { pending[0].resolve(); });
+
+  await waitFor(() => expect(pending.map((slot) => slot.input)).toContain("100 Main"));
+  await act(async () => {
+    pending.find((slot) => slot.input === "100 Main").resolve();
+  });
+  expect(screen.getByRole("option").textContent).toBe("100 Main");
+});
+
+test("a parent that stores each change still suggests the latest text", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  const fetchSuggestions = jest.fn(async ({ input }) => ({
+    suggestions: [suggestionFor(input)],
+  }));
+  installPlaces(fetchSuggestions);
+  function Harness() {
+    const [value, setValue] = useState("");
+    return (
+      <AddressField
+        id="address"
+        value={value}
+        onChange={setValue}
+        placeholder="Street, city, AZ"
+        testId="address"
+      />
+    );
+  }
+  render(<Harness />);
+  const input = await screen.findByTestId("address");
+  await waitFor(() => expect(input.getAttribute("data-address-mode")).toBe("places"));
+
+  fireEvent.change(input, { target: { value: "1" } });
+  fireEvent.change(input, { target: { value: "12" } });
+  fireEvent.change(input, { target: { value: "123 Main" } });
+  expect(screen.getByTestId("address")).toHaveValue("123 Main");
+  expect(fetchSuggestions).not.toHaveBeenCalled();
+
+  await waitFor(() => expect(fetchSuggestions).toHaveBeenCalledTimes(1));
+  expect(fetchSuggestions).toHaveBeenLastCalledWith(expect.objectContaining({ input: "123 Main" }));
+  expect((await screen.findByRole("option")).textContent).toBe("123 Main");
 });

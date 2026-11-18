@@ -294,6 +294,17 @@ frontend:
         - working: true
           agent: "main"
           comment: "The portal book address uses AddressField. A prefilled shop address does not request suggestions until the user edits it. The edit requests Places suggestions for the full new text. In our Phoenix service area still follows the shop-address shortcut and the geocode check. Covered by AddressField.test.jsx and PortalBook.test.jsx."
+  - task: "Places suggestions match the current address after the pause"
+    implemented: true
+    working: true
+    file: "frontend/src/components/AddressField.jsx, frontend/src/components/AddressField.test.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "A burst of typing requests Places once, for the final text, after the pause. Text typed before the library loads is requested when Places is ready, without another keystroke. Clearing the field ignores an in-flight response. An older in-flight payload does not satisfy a newer query; the current text is requested next. A parent that stores each change still shows suggestions for the latest text. A prefilled shop address still does not request until edited. Covered by AddressField.test.jsx and PortalBook.test.jsx."
   - task: "Settings → Integrations: Connect/Disconnect Xero + live status banner"
     implemented: true
     working: "NA"
