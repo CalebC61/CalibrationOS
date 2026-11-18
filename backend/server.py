@@ -90,7 +90,10 @@ if RESEND_API_KEY:
     resend_sdk.api_key = RESEND_API_KEY
 
 # Xero drafts filed when a job is completed. The card charge path is separate.
-from xero_invoice import merge_special_rates, parse_pop, price_updates_for_calibration_change, wholesale_amount
+from xero_invoice import (
+    merge_special_rates, parse_pop, price_updates_for_calibration_change,
+    rate_card_label, rate_schedule_name, wholesale_amount,
+)
 from xero_draft import (
     HttpXeroGateway, draft_is_finished, file_calibration_draft, public_xero, spec_document_name,
     state_from_job,
@@ -107,7 +110,7 @@ from onboarding import (
     PASSWORD_MIN_LENGTH, PASSWORD_RULE, SIGNUP_ATTEMPT_LIMIT,
     SIGNUP_WINDOW_SECONDS, agreement_text,
     address_needs_confirmation, addresses_match, address_problem, app_link, billing_view,
-    booking_gate, canonical_email, duplicate_fields, invite_email_html, invite_register_url,
+    booking_gate, canonical_email, card_on_file_facts, duplicate_fields, invite_email_html, invite_register_url,
     normalize_phone, password_error, pick_billing_user, rate_limit_exceeded, resolve_frontend_url,
     reused_shop_pin, sender_email_problem, shop_card_backfill, shop_contact_errors,
     welcome_email_html,
@@ -1648,7 +1651,7 @@ async def list_shops(tech=Depends(require_owner)):
     """Every shop. No status, archived, or owner filter, and no server-side sort."""
     shops = await owner_documents(db.shops, limit=1000, sort_key="name")
     logger.info("[SHOPS] owner list %s", len(shops))
-    return [client_shop(shop) for shop in shops]
+    return [_owner_shop_row(shop) for shop in shops]
 
 async def _duplicate_lists():
     shops = await db.shops.find({}, {"_id": 0, "id": 1, "name": 1, "contact_email": 1}).to_list(5000)
@@ -1745,12 +1748,18 @@ async def get_shop(shop_id: str, tech=Depends(require_owner)):
     if not shop:
         raise HTTPException(404, "Shop not found")
     gate = await _booking_gate_for_shop(shop)
-    return client_shop({
+    user = await _billing_user_for(shop.get("id"))
+    shown = client_shop({
         **shop,
         "prices": quoted_prices(shop),
         "booking_open": gate["allowed"],
         "booking_message": gate["message"],
+        "rate_label": shop_rate_label(shop),
+        "rate_schedule": rate_schedule_name(shop),
     })
+    shown["card_on_file"] = card_on_file_facts(shop, user)
+    shown["jobs"] = await _owner_shop_jobs(shop_id)
+    return shown
 
 @api.put("/shops/{shop_id}")
 async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner)):
@@ -1809,6 +1818,94 @@ async def regenerate_link(shop_id: str, tech=Depends(require_owner)):
 async def _booking_gate_for_shop(shop: dict) -> dict:
     user = await _billing_user_for(shop.get("id"))
     return booking_gate(shop, user)
+
+
+def shop_rate_label(shop: dict | None) -> str:
+    """The wholesale card and headline rates this shop is billed on."""
+    standard = {key: float(value["price"]) for key, value in STANDARD_PRICING.items()}
+    return rate_card_label(shop or {}, standard, SPECIAL_WHOLESALE)
+
+
+def _owner_shop_row(shop: dict) -> dict:
+    shown = client_shop(shop)
+    shown["rate_label"] = shop_rate_label(shop)
+    shown["rate_schedule"] = rate_schedule_name(shop)
+    return shown
+
+
+_OPEN_SHOP_JOBS = {"booked", "requested", "driving", "on_site", "dispatched_to_contractor"}
+_STATUS_LABELS = {
+    "requested": "Pending approval",
+    "booked": "Booked",
+    "driving": "Driving",
+    "on_site": "On site",
+    "complete": "Complete",
+    "cancelled": "Cancelled",
+    "declined": "Declined",
+}
+
+
+def owner_status_label(status) -> str:
+    text = str(status or "")
+    return _STATUS_LABELS.get(text, text.replace("_", " "))
+
+
+def _job_instant(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _owner_job_summary(job: dict) -> dict:
+    start = job.get("scheduled_start")
+    instant = _job_instant(start)
+    status = job.get("status") or ""
+    return {
+        "id": job.get("id"),
+        "scheduled_start": start,
+        "board_date": business_date(instant).isoformat() if instant else None,
+        "status": status,
+        "status_label": owner_status_label(status),
+        "vehicle": _vehicle_line(job),
+        "price": job.get("price"),
+        "calibration_label": job.get("calibration_label") or "",
+    }
+
+
+async def _owner_shop_jobs(shop_id: str) -> dict:
+    """Upcoming open jobs, then other jobs for this shop, newest recent first."""
+    empty = {"upcoming": [], "recent": []}
+    jobs_store = getattr(db, "jobs", None)
+    if jobs_store is None or not shop_id:
+        return empty
+    rows = await owner_documents(
+        jobs_store, query={"shop_id": shop_id}, limit=500,
+        sort_key="scheduled_start", reverse=True,
+    )
+    today_start, _today_end = business_day_bounds(business_date())
+    upcoming = []
+    recent = []
+    for job in rows:
+        instant = _job_instant(job.get("scheduled_start"))
+        still_ahead = (
+            job.get("status") in _OPEN_SHOP_JOBS
+            and instant is not None
+            and instant >= today_start
+        )
+        summary = _owner_job_summary(job)
+        if still_ahead:
+            upcoming.append(summary)
+        else:
+            recent.append(summary)
+    upcoming.sort(key=lambda row: row.get("scheduled_start") or "")
+    recent.sort(key=lambda row: row.get("scheduled_start") or "", reverse=True)
+    return {"upcoming": upcoming[:40], "recent": recent[:20]}
 
 
 def shop_price_for(shop: dict, cal_type: str) -> float:
@@ -4097,10 +4194,13 @@ async def _alerts_for_open_jobs(alerts: list) -> list:
     ids = [alert.get("job_id") for alert in alerts if alert.get("job_id")]
     jobs_store = getattr(db, "jobs", None)
     closed = set()
+    by_id = {}
     if jobs_store is not None and ids:
         try:
             rows = await jobs_store.find(
-                {"id": {"$in": ids}}, {"_id": 0, "id": 1, "status": 1},
+                {"id": {"$in": ids}},
+                {"_id": 0, "id": 1, "status": 1, "scheduled_start": 1, "price": 1,
+                 "shop_name": 1, "vehicle_year": 1, "vehicle_make": 1, "vehicle_model": 1},
             ).to_list(len(ids))
         except Exception as exc:
             logger.warning("could not check jobs for new-booking alerts: %s", exc)
@@ -4109,7 +4209,39 @@ async def _alerts_for_open_jobs(alerts: list) -> list:
             row.get("id") for row in rows
             if row.get("status") in ("cancelled", "declined")
         }
-    return [alert for alert in alerts if alert.get("job_id") not in closed]
+        by_id = {row.get("id"): row for row in rows}
+    fresh = []
+    for alert in alerts:
+        job_id = alert.get("job_id")
+        if job_id in closed:
+            continue
+        fresh.append(_alert_with_current_job(alert, by_id.get(job_id)))
+    return fresh
+
+
+def _alert_with_current_job(alert: dict, job: dict | None) -> dict:
+    """The notice the owner sees. Time and status come from the job now.
+
+    The stored alert keeps the time from the original booking. A shop edit
+    changes the job and leaves that snapshot alone.
+    """
+    if not job:
+        return alert
+    current = dict(alert)
+    if job.get("scheduled_start"):
+        current["scheduled_start"] = job["scheduled_start"]
+    status = job.get("status")
+    if status:
+        current["status"] = status
+        current["status_label"] = owner_status_label(status)
+    vehicle = _vehicle_line(job)
+    if vehicle:
+        current["vehicle"] = vehicle
+    if job.get("shop_name"):
+        current["shop_name"] = job["shop_name"]
+    if job.get("price") is not None:
+        current["price"] = job["price"]
+    return current
 
 
 @api.get("/notifications/new-bookings")

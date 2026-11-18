@@ -483,6 +483,35 @@ def _shop_signed(shop: Optional[dict]) -> bool:
     return bool(shop.get("terms_signed_at") and signed_by)
 
 
+def card_on_file_facts(shop: Optional[dict], shop_user: Optional[dict] = None, *, today: Optional[date] = None) -> dict:
+    """Card and charge-terms facts for the owner. Uses booking_gate; does not change it.
+
+    state is Active, Expired, Removed, or None. can_book and book_block are the
+    gate's allowed flag and its message.
+    """
+    gate = booking_gate(shop, shop_user, today=today)
+    view = billing_view(shop, shop_user)
+    reason = gate.get("card_problem")
+    if reason == "removed":
+        state = "Removed"
+    elif reason == "expired":
+        state = "Expired"
+    elif reason == "missing":
+        state = "None"
+    else:
+        state = "Active"
+    return {
+        "brand": view.get("card_brand"),
+        "last4": view.get("card_last4"),
+        "exp_month": view.get("card_exp_month"),
+        "exp_year": view.get("card_exp_year"),
+        "state": state,
+        "charge_terms_accepted": bool(gate.get("accepted")),
+        "can_book": bool(gate.get("allowed")),
+        "book_block": gate.get("message"),
+    }
+
+
 def booking_gate(shop: Optional[dict], shop_user: Optional[dict] = None, *, today: Optional[date] = None) -> dict:
     """Whether this shop may book a job.
 

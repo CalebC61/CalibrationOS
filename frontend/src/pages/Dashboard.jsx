@@ -10,6 +10,12 @@ import TomorrowStrip from "../components/TomorrowStrip";
 import JobEditModal from "../components/JobEditModal";
 import WarrantyBadge from "../components/WarrantyBadge";
 
+function boardDateFromSearch() {
+  if (typeof window === "undefined") return "";
+  const value = new URLSearchParams(window.location.search).get("date") || "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+}
+
 const STATUS_FLOW = {
   booked: { next: "driving", label: "Start Driving" },
   driving: { next: "on_site", label: "I've Arrived" },
@@ -18,7 +24,7 @@ const STATUS_FLOW = {
 
 export default function Dashboard() {
   const isOwner = getStoredAuth()?.role === "owner";
-  const [date, setDate] = useState(() => phoenixTodayStr());
+  const [date, setDate] = useState(() => boardDateFromSearch() || phoenixTodayStr());
   const [jobs, setJobs] = useState([]);
   const [techs, setTechs] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -63,6 +69,12 @@ export default function Dashboard() {
     } catch (e) { console.error(e); }
   }, [date]);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  useEffect(() => {
+    const jobId = new URLSearchParams(window.location.search).get("job") || "";
+    if (!jobId || !/^[\w-]+$/.test(jobId)) return;
+    const node = document.querySelector(`[data-testid="job-card-${jobId}"]`);
+    if (node && typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "center" });
+  }, [jobs, date]);
   useRefreshOnShow(load);
 
   function showJob(job) {
@@ -302,7 +314,12 @@ export default function Dashboard() {
                       </div>
                       <div style={{ textAlign: "right" }}>
                         <span className={`badge badge-${a.zone}`}>{a.zone}</span>
-                        <div className="font-mono" style={{ fontSize: 12, marginTop: 4 }}>{formatTime(a.scheduled_start)}</div>
+                        <div className="font-mono" style={{ fontSize: 12, marginTop: 4 }} data-testid={`new-booking-time-${a.job_id}`}>{formatTime(a.scheduled_start)}</div>
+                        {(a.status_label || a.status) && (
+                          <div style={{ fontSize: 12, marginTop: 2 }} data-testid={`new-booking-status-${a.job_id}`}>
+                            {a.status_label || jobStatusLabel(a.status)}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -319,7 +336,7 @@ export default function Dashboard() {
           background: "rgba(245, 158, 11, 0.16)", color: "var(--yellow)",
           fontSize: 13, fontWeight: 600, textDecoration: "none",
         }}>
-          Shop emails: OFF (testing)
+          Shop emails are on hold — view held emails
         </Link>
       )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>

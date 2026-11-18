@@ -335,7 +335,7 @@ new integration to wire up, only account setup:
   `onboarding@resend.dev` only delivers to the Resend account owner.
 - `SHOP_EMAILS_ENABLED` *(default false)* — shop and customer booking mail. While false,
   confirmations and approve/decline/reschedule/cancel notices are stored in the email
-  outbox and are not sent. The owner dashboard shows "Shop emails: OFF (testing)".
+  outbox and are not sent. The owner dashboard says "Shop emails are on hold — view held emails" and links to Email preview.
 - `OWNER_EMAILS_ENABLED` *(default true)* — owner alert emails. Stays on when shop mail is off
   so the approve links can be tested. Set `false` to hold those too.
 - `SEED_DEMO_DATA` *(optional; default `true` in dev, `false` in production)* — whether to seed the

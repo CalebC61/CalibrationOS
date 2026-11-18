@@ -156,6 +156,43 @@ def contact_search_name(shop: dict | None) -> str | None:
     return raw or None
 
 
+_CARD_TITLES = {
+    "standard": "Standard",
+    "realfast": "Real Fast",
+    "preferred": "Preferred",
+    "custom": "Custom",
+}
+_HEADLINE_RATES = ("static", "dynamic", "dual")
+
+
+def _rate_dollars(amount) -> str:
+    amount = money(amount)
+    if amount == int(amount):
+        return f"${int(amount)}"
+    return f"${amount:.2f}"
+
+
+def rate_card_label(shop, standard_prices, special_rates) -> str:
+    """What this shop is billed on: Standard, or a card name plus its headline rates.
+
+    Headline rates are static, dynamic, and dual, in that order. A shop with no
+    named or custom card is Standard. pricing_tier is not part of this label.
+    """
+    schedule = rate_schedule_name(shop)
+    if schedule == "standard":
+        return "Standard"
+    title = _CARD_TITLES.get(schedule, "Custom")
+    parts = []
+    for key in _HEADLINE_RATES:
+        try:
+            amount = wholesale_amount(shop, key, standard_prices, special_rates)
+        except ValueError:
+            parts.append("—")
+            continue
+        parts.append(_rate_dollars(amount))
+    return f"{title}: {' / '.join(parts)}"
+
+
 def rate_schedule_name(shop: dict | None) -> str:
     """standard, realfast, preferred, or custom.
 
