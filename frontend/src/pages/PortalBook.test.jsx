@@ -281,3 +281,70 @@ test("picking a business suggestion confirms the street when geocoding the typed
   expect(screen.getByTestId("b-date")).not.toBeDisabled();
   expect(address).toHaveValue(street);
 });
+
+test("a business name does not show a geocode error while suggestions are open", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  const typed = "Downtown Phoenix Inc";
+  portalApi.post.mockImplementation((url) => {
+    if (String(url).includes("/geocode")) {
+      return Promise.reject({ response: { data: { detail: "We couldn't find that address, please check it" } } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  window.google = {
+    maps: {
+      importLibrary: jest.fn(async () => ({
+        AutocompleteSuggestion: {
+          fetchAutocompleteSuggestions: jest.fn(async ({ input }) => ({
+            suggestions: [{
+              placePrediction: {
+                text: { text: input },
+                toPlace() {
+                  return {
+                    fetchFields: async () => {},
+                    formattedAddress: "1 E Washington St, Phoenix, AZ 85004, USA",
+                    id: "ChIJdowntown",
+                    location: { lat: () => 33.448, lng: () => -112.074 },
+                  };
+                },
+              },
+            }],
+          })),
+        },
+      })),
+    },
+  };
+
+  render(<PortalBook />);
+  const address = await screen.findByTestId("b-addr");
+  await waitFor(() => expect(address.getAttribute("data-address-mode")).toBe("places"));
+  fireEvent.change(address, { target: { value: typed } });
+  expect(await screen.findByRole("option")).toHaveTextContent(typed);
+  await waitFor(() => expect(portalApi.post).toHaveBeenCalledWith("/geocode", { address: typed }));
+  expect(screen.queryByText("We couldn't find that address, please check it")).not.toBeInTheDocument();
+  expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+  fireEvent.blur(address);
+  expect(await screen.findByText("We couldn't find that address, please check it")).toBeInTheDocument();
+  expect(screen.getByTestId("b-date")).toBeDisabled();
+});
+
+test("a nonsense address shows the geocode error on blur", async () => {
+  const typed = "zzzz qqqq nowhere 99999";
+  portalApi.post.mockImplementation((url) => {
+    if (String(url).includes("/geocode")) {
+      return Promise.reject({ response: { data: { detail: "We couldn't find that address, please check it" } } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+
+  render(<PortalBook />);
+  const address = await screen.findByTestId("b-addr");
+  fireEvent.change(address, { target: { value: typed } });
+  await waitFor(() => expect(portalApi.post).toHaveBeenCalledWith("/geocode", { address: typed }));
+  expect(screen.queryByText("We couldn't find that address, please check it")).not.toBeInTheDocument();
+
+  fireEvent.blur(address);
+  expect(await screen.findByText("We couldn't find that address, please check it")).toBeInTheDocument();
+  expect(screen.getByTestId("b-date")).toBeDisabled();
+});
