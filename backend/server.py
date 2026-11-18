@@ -1,6 +1,6 @@
 """CalibrationOS Backend — Phase 1 MVP (Path B: revenue path with mocked integrations)."""
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -112,6 +112,7 @@ from onboarding import (
     welcome_email_html,
 )
 from owner_reads import owner_documents, public_invite
+from client_views import public_shop as client_shop, public_shop_user, public_staff
 # Invite, reset, and booking links. A blank FRONTEND_URL uses the public site.
 FRONTEND_URL = resolve_frontend_url(_env("FRONTEND_URL"), PUBLIC_SITE_URL)
 from billing import (
@@ -215,7 +216,56 @@ GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
 ASSIST_MODULE_ENABLED = bool(GOOGLE_API_KEY) and \
     os.environ.get('ASSIST_MODULE_ENABLED', 'true').lower() == 'true'
 
-app = FastAPI(title="CalibrationOS API")
+def api_docs_enabled() -> bool:
+    """Swagger, ReDoc, and /openapi.json.
+
+    On outside production. Off when APP_ENV is production or prod, unless
+    ENABLE_API_DOCS is true. ENABLE_API_DOCS=false turns them off in any environment.
+    Read on each request so a process that booted with the routes mounted still
+    refuses them once the flag is off.
+    """
+    flag = os.environ.get("ENABLE_API_DOCS", "").strip().lower()
+    if flag in {"1", "true", "yes", "on"}:
+        return True
+    if flag in {"0", "false", "no", "off"}:
+        return False
+    env = os.environ.get("APP_ENV", "development").strip().lower()
+    return env not in {"production", "prod"}
+
+
+def _is_api_doc_path(path: str) -> bool:
+    trimmed = (path or "").rstrip("/") or "/"
+    return (
+        trimmed in {"/docs", "/redoc", "/openapi.json"}
+        or (path or "").startswith("/docs/")
+        or (path or "").startswith("/redoc/")
+    )
+
+
+class _DocsGuard:
+    """404 the interactive docs when api_docs_enabled() is false.
+
+    Pure ASGI so it does not wrap the request body the way BaseHTTPMiddleware does.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and _is_api_doc_path(scope.get("path", "")) and not api_docs_enabled():
+            response = JSONResponse(status_code=404, content={"detail": "Not Found"})
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+_docs_on = api_docs_enabled()
+app = FastAPI(
+    title="CalibrationOS API",
+    docs_url="/docs" if _docs_on else None,
+    redoc_url="/redoc" if _docs_on else None,
+    openapi_url="/openapi.json" if _docs_on else None,
+)
 api = APIRouter(prefix="/api")
 
 logger = logging.getLogger(__name__)
@@ -1499,7 +1549,7 @@ async def login(data: LoginIn, request: Request):
 
 @api.get("/auth/me")
 async def me(tech=Depends(get_current_tech)):
-    return tech
+    return public_staff(tech)
 
 # ---------- Reference data ----------
 @api.get("/reference/zones")
@@ -1582,7 +1632,7 @@ async def list_shops(tech=Depends(require_owner)):
     """Every shop. No status, archived, or owner filter, and no server-side sort."""
     shops = await owner_documents(db.shops, limit=1000, sort_key="name")
     logger.info("[SHOPS] owner list %s", len(shops))
-    return shops
+    return [client_shop(shop) for shop in shops]
 
 async def _duplicate_lists():
     shops = await db.shops.find({}, {"_id": 0, "id": 1, "name": 1, "contact_email": 1}).to_list(5000)
@@ -1671,14 +1721,14 @@ async def create_shop(data: ShopIn, tech=Depends(require_owner)):
     _raise_if_duplicates(data.name, data.contact_email, shops, users, data.acknowledge_duplicate)
     shop = _shop_document(data, geo)
     await db.shops.insert_one(shop.copy())
-    return shop
+    return client_shop(shop)
 
 @api.get("/shops/{shop_id}")
 async def get_shop(shop_id: str, tech=Depends(require_owner)):
     shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
     if not shop:
         raise HTTPException(404, "Shop not found")
-    return shop
+    return client_shop(shop)
 
 @api.put("/shops/{shop_id}")
 async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner)):
@@ -1725,7 +1775,7 @@ async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner
     update["updated_at"] = iso(now_utc())
     await db.shops.update_one({"id": shop_id}, {"$set": update})
     fresh = await db.shops.find_one({"id": shop_id}, {"_id": 0})
-    return fresh
+    return client_shop(fresh)
 
 @api.post("/shops/{shop_id}/regenerate-link")
 async def regenerate_link(shop_id: str, tech=Depends(require_owner)):
@@ -3850,19 +3900,10 @@ async def list_contractors(tech=Depends(require_owner)):
     techs = await db.technicians.find(
         {"role": "contractor"}, {"_id": 0, "password_hash": 0}
     ).to_list(50)
-    return techs
+    return [public_staff(person) for person in techs]
 
 def _tech_public(person: dict) -> dict:
-    keys = (
-        "id", "name", "role", "phone", "email", "home_address", "home_lat", "home_lng",
-        "service_radius_miles", "day_start", "day_end", "slot_minutes", "max_jobs",
-        "is_active", "color", "routes_jobs",
-        "job_duration_minutes", "buffer_minutes",
-        "same_day_bookings_enabled", "same_day_cutoff",
-        "same_day_max_extra_drive_minutes", "same_day_max_later_finish_minutes",
-        "same_day_over_limit",
-    )
-    return {key: person.get(key) for key in keys}
+    return public_staff(person)
 
 def _check_routing_fields(fields: dict):
     radius = fields.get("service_radius_miles")
@@ -4161,7 +4202,7 @@ async def update_contractor(contractor_id: str, body: ContractorUpdate, tech=Dep
     update["updated_at"] = iso(now_utc())
     await db.technicians.update_one({"id": contractor_id}, {"$set": update})
     fresh = await db.technicians.find_one({"id": contractor_id}, {"_id": 0, "password_hash": 0})
-    return fresh
+    return public_staff(fresh)
 
 # ---------- Email (Resend) ----------
 async def send_email(to: str, subject: str, html: str, kind: str = "transactional", meta: Optional[dict] = None, reply_to: Optional[str] = None):
@@ -4573,8 +4614,8 @@ async def portal_complete_setup_intent(body: SetupIntentCompleteIn, su=Depends(g
     fresh = await _commit_verified_card(client, su, intent, action="replaced")
     return {
         "status": "complete",
-        "shop_user": fresh,
-        "needs_acceptance": not fresh.get("charge_authorization_accepted_at"),
+        "shop_user": public_shop_user(fresh),
+        "needs_acceptance": not (fresh or {}).get("charge_authorization_accepted_at"),
         "acceptance_text": CHARGE_ACCEPTANCE_TEXT,
     }
 
@@ -4589,8 +4630,8 @@ async def portal_save_payment_method(body: PaymentMethodIn, su=Depends(get_curre
     fresh = await _commit_verified_card(client, su, intent, action="replaced")
     return {
         "status": "complete",
-        "shop_user": fresh,
-        "needs_acceptance": not fresh.get("charge_authorization_accepted_at"),
+        "shop_user": public_shop_user(fresh),
+        "needs_acceptance": not (fresh or {}).get("charge_authorization_accepted_at"),
         "acceptance_text": CHARGE_ACCEPTANCE_TEXT,
     }
 
@@ -4622,7 +4663,7 @@ async def portal_accept_charge(body: AcceptChargeIn, request: Request, su=Depend
     fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
     if shop and not su.get("charge_authorization_accepted_at"):
         await _send_signup_finished(shop, fresh["email"])
-    return {"shop_user": fresh, "booking_link_token": (shop or {}).get("booking_link_token")}
+    return {"shop_user": public_shop_user(fresh), "booking_link_token": (shop or {}).get("booking_link_token")}
 
 
 @api.get("/portal/stripe-setup-status")
@@ -4649,8 +4690,8 @@ async def portal_stripe_setup_status(session_id: str, su=Depends(get_current_sho
     fresh = await _commit_verified_card(client, su, setup_intent, action="replaced")
     return {
         "status": "complete",
-        "shop_user": fresh,
-        "needs_acceptance": not fresh.get("charge_authorization_accepted_at"),
+        "shop_user": public_shop_user(fresh),
+        "needs_acceptance": not (fresh or {}).get("charge_authorization_accepted_at"),
         "acceptance_text": CHARGE_ACCEPTANCE_TEXT,
     }
 
@@ -4676,7 +4717,9 @@ async def portal_me(su=Depends(get_current_shop_user)):
     if shop is not None:
         shop = {**shop, "prices": quoted_prices(shop)}
     return {
-        "shop_user": su, "shop": shop, "setup": booking_gate(shop or {}, su),
+        "shop_user": public_shop_user(su),
+        "shop": client_shop(shop),
+        "setup": booking_gate(shop or {}, su),
         "site_url": FRONTEND_URL,
     }
 
@@ -5022,7 +5065,6 @@ async def public_create_shop(body: PublicShopIn, request: Request):
     if accepted_at:
         await _send_signup_finished(shop, email)
     token = make_portal_token(user_id)
-    public_user = {k: v for k, v in su.items() if k != "password_hash"}
     return {
         "token": token,
         "shop_user_id": user_id,
@@ -5032,9 +5074,9 @@ async def public_create_shop(body: PublicShopIn, request: Request):
         "has_payment_method": bool(card),
         "stripe_unavailable": stripe_unavailable,
         "stripe_error": stripe_error,
-        "booking_open": booking_gate(shop, public_user)["allowed"],
-        "shop_user": public_user,
-        "shop": shop,
+        "booking_open": booking_gate(shop, su)["allowed"],
+        "shop_user": public_shop_user(su),
+        "shop": client_shop(shop),
     }
 
 
@@ -5168,7 +5210,7 @@ async def approve_shop_request(request_id: str, tech=Depends(require_owner)):
         "[SHOPS] approved request %s shop %s invite %s email_status %s",
         request_id, shop.get("id"), invite.get("id"), shown.get("email_status"),
     )
-    return {"shop": shop, "invite": shown, "register_url": shown.get("register_url")}
+    return {"shop": client_shop(shop), "invite": shown, "register_url": shown.get("register_url")}
 
 
 @api.post("/shop-requests/{request_id}/decline")
@@ -5187,10 +5229,11 @@ async def decline_shop_request(request_id: str, tech=Depends(require_owner)):
 @api.get("/new-shops")
 async def list_new_shops(tech=Depends(require_owner)):
     """Shops that created themselves. Pending requests stay on /shop-requests."""
-    return await owner_documents(
+    shops = await owner_documents(
         db.shops, query={"signup_source": "self_serve"}, limit=200,
         sort_key="created_at", reverse=True,
     )
+    return [client_shop(shop) for shop in shops]
 
 
 @api.post("/shops/{shop_id}/flag")
@@ -6291,6 +6334,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Outermost: production (and ENABLE_API_DOCS=false) never serves /docs, /redoc, or /openapi.json.
+app.add_middleware(_DocsGuard)
 
 @app.on_event("shutdown")
 async def shutdown():

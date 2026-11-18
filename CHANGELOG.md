@@ -15,6 +15,35 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — session and shop responses no longer include credentials (2026-11-18)
+`GET /api/auth/me` returned the owner Mongo document. That document holds the
+Xero access token, refresh token, token expiry, and tenant id. Password hashes
+were already left out of that query. They were not the only secret on the row.
+
+Staff responses (`/api/auth/me`, `/api/contractors`, contractor update, and
+`/api/routing-techs`) now use an allowlist (`StaffPublic` in
+`backend/client_views.py`). The client still gets `xero_connected` and
+`xero_org_name` (the Xero organisation name). It does not get access, refresh,
+or id tokens, token expiry, or the tenant id.
+
+Shop-user responses (`/api/portal/me`, card setup completion, charge
+acceptance, and public shop signup) use `ShopUserPublic`. Card brand, last4,
+and expiry stay, because the portal shows them. `stripe_customer_id` and
+`stripe_payment_method_id` do not. `has_payment_method` replaces the raw card
+id. The portal settings page reads that boolean.
+
+Shop documents returned to the owner or the shop keep the booking link and the
+Xero contact id the owner edits. They drop Stripe customer and payment-method
+ids, password hashes, and token fields. `GET /api/public/shop/{token}` was
+already an allowlist and did not include those ids.
+
+`/docs`, `/redoc`, and `/openapi.json` are off when `APP_ENV` is `production`
+or `prod`, unless `ENABLE_API_DOCS=true`. `ENABLE_API_DOCS=false` turns them
+off in any environment. When they are off, those paths return 404. The React
+app does not request `/openapi.json`. A SetupIntent `client_secret` is still
+returned from the card-setup calls, because Stripe.js in the browser has to
+have it to confirm the card. It is not stored on the user document.
+
 ### Added — the owner can delete a job (2026-11-18)
 `DELETE /api/jobs/{job_id}` is owner-only. A shop portal login, a technician,
 and a contractor receive 403. The job row is removed, along with its documents,
