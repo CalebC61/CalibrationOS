@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 
 const VALLEY = { south: 32.9, west: -112.9, north: 33.9, east: -111.4 };
 
+/** One Places lookup per pause, for whatever is in the field when the pause ends. */
+const SUGGESTION_PAUSE_MS = 200;
+
 let mapsPromise = null;
 
 export function resetPlacesLoader() {
@@ -120,8 +123,7 @@ function predictionLabel(prediction) {
 
 /**
  * Phoenix Valley address. Suggestions come from the autocomplete data API
- * on each edit, including when the field already has the shop address.
- * The Places widget hides its list after a value is set on it.
+ * after a short pause, including when the field already has the shop address.
  * A picked suggestion inside the valley is the confirmed address.
  * Places failures stay a typed input.
  */
@@ -138,6 +140,13 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
   const sessionRef = useRef(null);
   const requestRef = useRef(0);
   const readyRef = useRef(false);
+  const textRef = useRef(value || "");
+  const editedRef = useRef(false);
+  const focusRef = useRef(false);
+  const pauseRef = useRef(null);
+  const flightRef = useRef(false);
+  const retryRef = useRef(false);
+  const runRef = useRef(async () => {});
   const [ready, setReady] = useState(false);
   const [text, setText] = useState(value || "");
   const [suggestions, setSuggestions] = useState([]);
@@ -146,8 +155,25 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
   const key = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
   const listId = `${id || testId || "address"}-suggestions`;
 
+  function clearPause() {
+    if (pauseRef.current) {
+      clearTimeout(pauseRef.current);
+      pauseRef.current = null;
+    }
+  }
+
+  function scheduleSuggestions() {
+    clearPause();
+    pauseRef.current = setTimeout(() => {
+      pauseRef.current = null;
+      runSuggestions();
+    }, SUGGESTION_PAUSE_MS);
+  }
+
   useEffect(() => {
-    setText(value || "");
+    const next = value || "";
+    textRef.current = next;
+    setText(next);
   }, [value]);
 
   useEffect(() => {
@@ -158,6 +184,8 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
     if (!key) {
       placesRef.current = null;
       readyRef.current = false;
+      requestRef.current += 1;
+      clearPause();
       setReady(false);
       setSuggestions([]);
       setOpen(false);
@@ -195,53 +223,77 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
       readyRef.current = true;
       setReady(true);
       onPlacesRef.current?.(true);
+      if (editedRef.current && String(textRef.current || "").trim() && !pauseRef.current) {
+        runRef.current();
+      }
     }).catch(() => fail());
 
     return () => {
       cancelled = true;
+      requestRef.current += 1;
+      clearPause();
       placesRef.current = null;
+      readyRef.current = false;
       window.gm_authFailure = previousAuthFailure;
     };
   }, [key]);
 
-  async function query(next) {
+  async function runSuggestions() {
+    if (flightRef.current) {
+      retryRef.current = true;
+      return;
+    }
     const places = placesRef.current;
     const fetchSuggestions = places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions;
+    const next = textRef.current;
     if (!readyRef.current || typeof fetchSuggestions !== "function") return;
     if (!String(next || "").trim()) {
+      requestRef.current += 1;
       setSuggestions([]);
       setOpen(false);
       return;
     }
     const requestId = ++requestRef.current;
-    const body = {
-      input: next,
-      includedRegionCodes: ["us"],
-      locationRestriction: { ...VALLEY },
-    };
-    const Token = places.AutocompleteSessionToken;
-    if (typeof Token === "function") {
-      if (!sessionRef.current) sessionRef.current = new Token();
-      body.sessionToken = sessionRef.current;
-    }
+    flightRef.current = true;
+    retryRef.current = false;
     try {
+      const body = {
+        input: next,
+        includedRegionCodes: ["us"],
+        locationRestriction: { ...VALLEY },
+      };
+      const Token = places.AutocompleteSessionToken;
+      if (typeof Token === "function") {
+        if (!sessionRef.current) sessionRef.current = new Token();
+        body.sessionToken = sessionRef.current;
+      }
       const result = await fetchSuggestions(body);
-      if (requestId !== requestRef.current) return;
+      if (requestId !== requestRef.current || textRef.current !== next) return;
       const rows = (result?.suggestions || []).filter((row) => row?.placePrediction?.toPlace);
       setSuggestions(rows);
-      setOpen(rows.length > 0);
+      setOpen(rows.length > 0 && focusRef.current);
       setActive(0);
     } catch {
-      if (requestId !== requestRef.current) return;
+      if (requestId !== requestRef.current || textRef.current !== next) return;
       setSuggestions([]);
       setOpen(false);
+    } finally {
+      flightRef.current = false;
+      const retry = retryRef.current || textRef.current !== next;
+      retryRef.current = false;
+      if (requestId !== requestRef.current) return;
+      if (retry && String(textRef.current || "").trim()) scheduleSuggestions();
     }
   }
+
+  runRef.current = runSuggestions;
 
   async function choose(suggestion) {
     const prediction = suggestion?.placePrediction;
     const place = prediction?.toPlace ? prediction.toPlace() : null;
     if (!place?.fetchFields) return;
+    clearPause();
+    requestRef.current += 1;
     setOpen(false);
     try {
       await place.fetchFields({
@@ -253,6 +305,7 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
       const lng = coord(place.location?.lng);
       if (!street || lat == null || lng == null) return;
       sessionRef.current = null;
+      textRef.current = street;
       setText(street);
       onChangeRef.current?.(street);
       if (!insideValley(lat, lng)) return;
@@ -306,13 +359,27 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
         aria-autocomplete={ready ? "list" : undefined}
         aria-expanded={ready ? shown : undefined}
         aria-controls={ready ? listId : undefined}
+        onFocus={() => {
+          focusRef.current = true;
+        }}
         onChange={(event) => {
           const next = event.target.value;
+          textRef.current = next;
+          editedRef.current = true;
+          focusRef.current = true;
           setText(next);
           onChangeRef.current?.(next);
-          if (readyRef.current) query(next);
+          if (!String(next || "").trim()) {
+            clearPause();
+            requestRef.current += 1;
+            setSuggestions([]);
+            setOpen(false);
+            return;
+          }
+          scheduleSuggestions();
         }}
         onBlur={(event) => {
+          focusRef.current = false;
           setOpen(false);
           onBlurRef.current?.(event.target.value);
         }}

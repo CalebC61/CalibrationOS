@@ -22,6 +22,13 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): Places suggestions keep up with the address being typed.**
+  The booking, signup, and add-shop address fields wait 200ms, then request
+  suggestions for the current text. A keystroke typed before Places has loaded
+  is requested when the library is ready. An older response cannot replace the
+  list. A prefilled shop address still does not suggest until it is edited. A
+  business suggestion still fills the street. No new env var. `BILLING_ENABLED`
+  is unchanged.
 - **Session (2026-11-18): warranty is visible, and a late redo warns before it books.**
   A free warranty redo still confirms immediately. It shows a Warranty banner
   on the owner day board, field job, complete screen, and the shop's own job

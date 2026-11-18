@@ -15,6 +15,30 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — Places suggestions lag one character (2026-11-18)
+The shop booking address, signup, and the owner "add a shop" form share
+`AddressField`. Suggestions sometimes stayed hidden until the next character.
+
+Two races caused it. Characters typed while the Maps script or
+`importLibrary("places")` was still loading were dropped, and loading did not
+ask again for the text already in the field. The next character was the first
+request, so the list appeared one character late. That only happens when typing
+wins the race with the script. Separately, every keystroke started its own
+lookup. Clearing the field did not retire the lookup already in flight, so a
+late response opened the previous list. A second keystroke that joined that
+same in-flight lookup was treated as the answer for the newer text, and nothing
+asked again until another character.
+
+The field now waits 200ms, then asks once for the text in the field at the end
+of that pause. The text is read when the request is sent, not from an older
+render. One lookup runs at a time. If the field changes while it is running,
+that response is ignored and the current text is requested after the next
+pause. A response for an older request cannot open or replace the list. Text
+typed before Places is ready is requested when the library finishes, without
+another keystroke. A prefilled shop address still does not request suggestions
+until it is edited. A business suggestion still fills the street, city, state,
+and ZIP. No new env var. `BILLING_ENABLED` is unchanged.
+
 ### Changed — warranty banners, past-window booking warning, settings, and paid complete (2026-11-18)
 A free warranty redo still confirms with no approval step. The job now shows a
 Warranty banner on the owner day cards, the closed-job list, tomorrow's strip,
