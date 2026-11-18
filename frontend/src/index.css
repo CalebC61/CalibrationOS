@@ -208,6 +208,44 @@ html, body, #root {
   50% { opacity: 0.35; }
 }
 
+.closed-board { overflow-x: auto; }
+.closed-head, .closed-row {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 1.1fr) minmax(8rem, 1.3fr) minmax(9rem, 1.5fr) minmax(7rem, 1.1fr) minmax(6.5rem, 0.8fr) minmax(8rem, 1.2fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  min-width: 44rem;
+  font-size: 14px;
+}
+.closed-head {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.closed-row + .closed-row { border-top: 1px solid var(--border); }
+.closed-k { display: none; }
+@media (max-width: 720px) {
+  .closed-head { display: none; }
+  .closed-row {
+    grid-template-columns: 1fr 1fr;
+    min-width: 0;
+    align-items: start;
+  }
+  .closed-k {
+    display: block;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .closed-action { grid-column: 1 / -1; }
+}
+
 .divider { height: 1px; background: var(--border); border: none; margin: 1rem 0; }
 
 /* Scrollbar */

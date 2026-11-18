@@ -2675,15 +2675,32 @@ def annotate_at_risk(jobs: List[dict]) -> List[dict]:
 async def list_jobs(
     date_str: Optional[str] = None,
     include_cancelled: bool = False,
+    closed: bool = False,
     tech=Depends(get_current_tech),
 ):
     """List jobs for a Phoenix date (default: today in America/Phoenix).
 
     Cancelled and declined jobs stay in the database and are left off the day
     list. Pass include_cancelled=true to put cancelled jobs back in the
-    response for a history view. Declined jobs stay out. Contractors only see
-    their own jobs. The shop portal list is a different route and is unchanged.
+    response for a history view. Declined jobs stay out of that history flag.
+    Pass closed=true for the owner list of cancelled and declined jobs only,
+    across dates, newest update first. That list is owner-only. Contractors
+    only see their own jobs on the day list. The shop portal list is a
+    different route and is unchanged.
     """
+    if closed:
+        if tech["role"] != "owner":
+            raise HTTPException(403, "Owner only")
+        closed_jobs = await owner_documents(
+            db.jobs,
+            query={"status": {"$in": ["cancelled", "declined"]}},
+            limit=1000,
+        )
+        closed_jobs.sort(
+            key=lambda row: str(row.get("updated_at") or row.get("scheduled_start") or ""),
+            reverse=True,
+        )
+        return closed_jobs
     if date_str:
         try:
             d = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -2850,6 +2867,8 @@ async def _decide_requested_job(job_id: str, tech: dict, *, approve: bool) -> di
         "updated_at": now,
     }})
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not approve:
+        await dismiss_new_booking_alert(job_id)
     await notify_booking_approval(fresh, "approved" if approve else "declined")
     return fresh
 
@@ -3733,10 +3752,10 @@ async def dismiss_new_booking_alert(job_id: str) -> None:
 
 
 async def _alerts_for_open_jobs(alerts: list) -> list:
-    """Drop notices for jobs that are already cancelled.
+    """Drop notices for jobs that are already cancelled or declined.
 
-    A cancel that happened before this write still leaves seen_at empty.
-    Those notices are not new bookings anymore. Other unseen alerts stay.
+    A cancel or decline that happened before this write still leaves seen_at
+    empty. Those notices are not new bookings anymore. Other unseen alerts stay.
     """
     if not alerts:
         return []
@@ -3751,7 +3770,10 @@ async def _alerts_for_open_jobs(alerts: list) -> list:
         except Exception as exc:
             logger.warning("could not check jobs for new-booking alerts: %s", exc)
             rows = []
-        closed = {row.get("id") for row in rows if row.get("status") == "cancelled"}
+        closed = {
+            row.get("id") for row in rows
+            if row.get("status") in ("cancelled", "declined")
+        }
     return [alert for alert in alerts if alert.get("job_id") not in closed]
 
 
@@ -6136,6 +6158,7 @@ async def confirm_owner_action(token: str):
         }})
         changed = True
         message = "Declined. The time is free."
+        await dismiss_new_booking_alert(job["id"])
     else:
         message = "This job can no longer be declined."
     fresh = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})

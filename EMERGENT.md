@@ -29,6 +29,14 @@ See `CHANGELOG.md` for the full log. Current state:
   One marker per shop and day blocks a second send. No new env var.
   `BILLING_ENABLED` is unchanged. On `/portal/book`, editing the prefilled shop
   address shows Places suggestions. The Phoenix service-area check is unchanged.
+- **Session (2026-11-18): declined jobs leave the new-booking banner.**
+  `GET /api/notifications/new-bookings` skips `declined` as well as
+  `cancelled`. Decline marks that job's alert seen. Dispatch updates the
+  banner count as soon as the owner declines or cancels. `GET /api/jobs?closed=true`
+  is the owner list of cancelled and declined jobs. Dispatch shows that list
+  with the existing Delete confirmation. The day board and
+  `include_cancelled=true` are unchanged. No new env vars.
+  `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged.
 - **Session (2026-11-18): Xero badges update without a reload.** Connection
   status and draft badges were stuck until a full refresh because API GETs
   were cacheable, Settings did not reopen Integrations after the Xero
