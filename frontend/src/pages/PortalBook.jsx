@@ -52,6 +52,22 @@ export default function PortalBook() {
     });
   }, []);
 
+  useEffect(() => {
+    if (!shop || !address.trim()) return undefined;
+    if (sameAddress(address, shop.address) || sameAddress(address, shop.formatted_address)) return undefined;
+    const handle = setTimeout(() => {
+      portalApi.post("/geocode", { address }).then(({ data }) => {
+        setZoneInfo(data);
+        setAddressError("");
+      }).catch((e) => {
+        setZoneInfo(null);
+        const detail = e.response?.data?.detail;
+        setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
+      });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [address, shop]);
+
   if (!shop || !setup) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
   if (setup.allowed === false) {
     return <PortalShell>
@@ -85,8 +101,8 @@ export default function PortalBook() {
   async function loadSlots(d) {
     setSlots([]); setSlotsMsg(""); setSlotsError(false);
     try {
-      const { data } = await portalApi.post("/public/availability", {
-        booking_token: shop.booking_link_token, job_address: address, date: d,
+      const { data } = await portalApi.post("/portal/availability", {
+        job_address: address, date: d,
       });
       setSlots(data.slots || []);
       if ((data.slots || []).length === 0) setSlotsMsg(data.message || "No slots available.");
@@ -112,7 +128,7 @@ export default function PortalBook() {
     setBookError("");
     try {
       const { data } = await portalApi.post("/portal/book", {
-        booking_token: shop.booking_link_token, job_address: address,
+        job_address: address,
         scheduled_start: chosen.start, customer_last_name: veh.customer_last_name,
         customer_first_name: veh.customer_first_name.trim() || null,
         notes: veh.notes.trim() || null,
@@ -263,7 +279,7 @@ export default function PortalBook() {
             )}
             <Nav onBack={() => setStep(1)} onNext={submit}
               nextLabel={submitting ? "Booking…" : (chosen?.requires_approval ? "Request this time" : "Confirm Booking")}
-              nextDisabled={submitting || !veh.customer_last_name || !veh.year || !veh.make || !veh.model} />
+              nextDisabled={submitting || !veh.customer_last_name.trim() || !String(veh.year).trim() || !veh.make.trim() || !veh.model.trim()} />
           </Card>
         )}
       </div>

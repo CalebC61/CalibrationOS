@@ -248,7 +248,9 @@ def test_suspended_shop_cannot_book(monkeypatch):
         "geocode_source": "google",
     })
     db.shop_users.docs.append({
+        "id": "su-held",
         "shop_id": "shop-1",
+        "is_active": True,
         "agreement_version": AGREEMENT_VERSION,
         "terms_signed_at": "t",
         "terms_signature": "Ada Glass",
@@ -257,7 +259,9 @@ def test_suspended_shop_cannot_book(monkeypatch):
     })
     async def run():
         async with _client() as client:
-            return await client.post("/api/public/book", json={
+            return await client.post("/api/portal/book", headers={
+                "Authorization": f"Bearer {server.make_portal_token('su-held')}",
+            }, json={
                 "booking_token": "tok",
                 "job_address": "1 Main, Gilbert, AZ",
                 "scheduled_start": "2026-11-20T17:00:00+00:00",

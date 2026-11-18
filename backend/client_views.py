@@ -3,7 +3,8 @@
 Staff and shop-user responses are an allowlist. A new column on the Mongo
 document stays on the server until it is added here. Shop documents keep their
 business fields (the owner edits most of them) and drop credential fields.
-The shop booking link stays: the owner and that shop use it as the public URL.
+booking_link_token stays on the shop record the owner and that shop can see.
+It is not a public booking login. Stripe ids, Xero tokens, and password hashes stay off.
 """
 from typing import Optional
 
@@ -71,8 +72,8 @@ class ShopUserPublic(BaseModel):
     updated_at: Optional[str] = None
 
 
-# Names that must never appear on a shop payload. booking_link_token is not in
-# this set: it is the shop's public booking URL.
+# Names that must never appear on a shop payload. booking_link_token stays
+# visible to the owner and that shop. It does not log anyone in.
 SHOP_SECRET_KEYS = frozenset({
     "_id",
     "password",

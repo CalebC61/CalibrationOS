@@ -38,29 +38,28 @@ def contractor_id(owner_token):
 
 
 def _book_today_job(owner_token, shop_match, address, last_name):
-    """Book a job for today using a public token. Returns job_id and date used."""
+    """Book a job for today as the owner. Returns job_id and date used."""
     shops = requests.get(f"{API}/shops", headers=_auth(owner_token), timeout=30).json()
     shop = next(s for s in shops if shop_match in s["name"])
-    tok = shop["booking_link_token"]
     target = datetime.now(timezone.utc).date()
     # Avoid Sunday
     while target.weekday() == 6:
         target += timedelta(days=1)
-    av = requests.post(f"{API}/public/availability",
-        json={"booking_token": tok, "job_address": address, "date": target.isoformat()},
+    av = requests.post(f"{API}/shops/{shop['id']}/availability", headers=_auth(owner_token),
+        json={"job_address": address, "date": target.isoformat()},
         timeout=30).json()
     if not av.get("slots"):
         # Try next day if today is fully booked or past zone window
         target = target + timedelta(days=1)
         while target.weekday() == 6:
             target += timedelta(days=1)
-        av = requests.post(f"{API}/public/availability",
-            json={"booking_token": tok, "job_address": address, "date": target.isoformat()},
+        av = requests.post(f"{API}/shops/{shop['id']}/availability", headers=_auth(owner_token),
+            json={"job_address": address, "date": target.isoformat()},
             timeout=30).json()
     assert av["slots"], f"No slots available for {address} on {target}"
     slot = av["slots"][0]
-    book = requests.post(f"{API}/public/book", json={
-        "booking_token": tok, "job_address": address,
+    book = requests.post(f"{API}/shops/{shop['id']}/book", headers=_auth(owner_token), json={
+        "job_address": address,
         "scheduled_start": slot["start"], "customer_last_name": last_name,
         "year": 2022, "make": "Honda", "model": "Civic",
         "adas_system": "forward_camera", "calibration_type": "static",
@@ -240,28 +239,24 @@ def test_reorder_jobs_recomputes(owner_token):
     glass = next(s for s in shops if "Glass Doctor" in s["name"])
 
     # Book on safelite (Gilbert, east)
-    av = requests.post(f"{API}/public/availability", json={
-        "booking_token": safelite["booking_link_token"],
+    av = requests.post(f"{API}/shops/{safelite['id']}/availability", headers=_auth(owner_token), json={
         "job_address": "300 Reorder St, Gilbert, AZ",
         "date": target.isoformat()}, timeout=30).json()
     if not av["slots"]:
         pytest.skip("No east slots today")
-    b1 = requests.post(f"{API}/public/book", json={
-        "booking_token": safelite["booking_link_token"],
+    b1 = requests.post(f"{API}/shops/{safelite['id']}/book", headers=_auth(owner_token), json={
         "job_address": "300 Reorder St, Gilbert, AZ",
         "scheduled_start": av["slots"][0]["start"],
         "customer_last_name": "REORDER1", "year": 2022, "make": "Honda", "model": "Civic",
         "adas_system": "forward_camera", "calibration_type": "static",
     }, timeout=30).json()
 
-    av = requests.post(f"{API}/public/availability", json={
-        "booking_token": glass["booking_link_token"],
+    av = requests.post(f"{API}/shops/{glass['id']}/availability", headers=_auth(owner_token), json={
         "job_address": "400 Reorder Ave, Mesa, AZ",
         "date": target.isoformat()}, timeout=30).json()
     if not av["slots"]:
         pytest.skip("No east slots today (second)")
-    b2 = requests.post(f"{API}/public/book", json={
-        "booking_token": glass["booking_link_token"],
+    b2 = requests.post(f"{API}/shops/{glass['id']}/book", headers=_auth(owner_token), json={
         "job_address": "400 Reorder Ave, Mesa, AZ",
         "scheduled_start": av["slots"][0]["start"],
         "customer_last_name": "REORDER2", "year": 2023, "make": "Toyota", "model": "Camry",

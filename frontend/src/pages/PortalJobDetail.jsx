@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { jobStatusLabel } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
+import JobEditModal from "../components/JobEditModal";
 
 const fmt = (iso) => new Date(iso).toLocaleString();
 
@@ -10,12 +11,25 @@ export default function PortalJobDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [version, setVersion] = useState(0);
   const [docError, setDocError] = useState("");
 
   useEffect(() => {
     portalApi.get(`/portal/jobs/${id}`).then(r => setData(r.data))
       .catch(e => setErr(e.response?.data?.detail || "Not found"));
-  }, [id]);
+  }, [id, version]);
+
+  async function cancelJob() {
+    if (!window.confirm("Cancel this booking? This does not send a message.")) return;
+    try {
+      await portalApi.post(`/portal/jobs/${id}/cancel`);
+      setVersion(value => value + 1);
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      alert(typeof detail === "string" ? detail : "Could not cancel this booking. Try again.");
+    }
+  }
 
   if (err) return <PortalShell><div className="surface muted" style={{ padding: 24 }}>{err}</div></PortalShell>;
   if (!data) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
@@ -54,6 +68,15 @@ export default function PortalJobDetail() {
         )}
         <span className={`badge badge-${j.zone}`}>{j.zone}</span>
       </div>
+
+      {!["complete", "cancelled", "declined"].includes(j.status) && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <button type="button" className="btn btn-ghost" onClick={() => setEditing(true)} data-testid="portal-edit-job">Edit</button>
+          <button type="button" className="btn btn-ghost" onClick={cancelJob} data-testid="portal-cancel-job">Cancel booking</button>
+        </div>
+      )}
+      <JobEditModal open={editing} job={j} shopEdit client={portalApi}
+        onClose={() => setEditing(false)} onDone={() => setVersion(value => value + 1)} />
 
       <div className="surface" style={{ padding: 20, marginBottom: 16 }}>
         <Row k="Customer" v={[j.customer_first_name, j.customer_last_name].filter(Boolean).join(" ")} />

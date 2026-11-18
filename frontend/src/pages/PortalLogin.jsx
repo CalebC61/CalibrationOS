@@ -1,7 +1,14 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { portalApi, setPortalAuth } from "../lib/portalApi";
 import Brand from "../components/Brand";
+
+function safeNext(value) {
+  if (typeof value !== "string") return "/portal";
+  if (value !== "/portal" && !value.startsWith("/portal/")) return "/portal";
+  if (value.startsWith("//") || value.includes("..")) return "/portal";
+  return value;
+}
 
 export default function PortalLogin() {
   const [email, setEmail] = useState("");
@@ -9,6 +16,8 @@ export default function PortalLogin() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const nav = useNavigate();
+  const location = useLocation();
+  const notice = typeof location.state?.notice === "string" ? location.state.notice : "";
 
   async function submit(e) {
     e.preventDefault();
@@ -16,7 +25,7 @@ export default function PortalLogin() {
     try {
       const { data } = await portalApi.post("/portal/auth/login", { email, password });
       setPortalAuth(data);
-      nav("/portal");
+      nav(safeNext(location.state?.next));
     } catch (err) {
       setError(err.response?.data?.detail || "Login failed");
     } finally { setLoading(false); }
@@ -29,6 +38,11 @@ export default function PortalLogin() {
           <Brand size={28} tag="Shop Portal" />
         </div>
         <form onSubmit={submit} className="surface" style={{ padding: 28 }} data-testid="portal-login-form">
+          {notice && (
+            <p data-testid="portal-login-notice" style={{ marginTop: 0, marginBottom: 16, lineHeight: 1.5 }}>
+              {notice}
+            </p>
+          )}
           <div style={{ marginBottom: 14 }}>
             <label className="label">Email</label>
             <input className="input" type="email" required value={email}

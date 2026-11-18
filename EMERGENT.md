@@ -22,6 +22,13 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): shops book only after they log in.** Public `/book/{token}` and
+  `/scorecard/{token}` no longer show or change jobs. Booking, edits, cancels, and the
+  scorecard go through the shop portal. The owner still books for a shop from the shop
+  page, and can still delete a job. Response allowlists still hide Stripe ids, Xero
+  tokens, and password hashes. The public site Book a job buttons go to signup, or to
+  portal Book when the shop is already logged in. Welcome mail points at the portal
+  login. `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged. Details in `CHANGELOG.md`.
 - **Session (2026-11-18): the owner can delete a job.** `DELETE /api/jobs/{id}`
   is owner-only (shop, technician, and contractor logins are 403). It removes
   the job and its documents, alerts, offers, and action tokens. It does not

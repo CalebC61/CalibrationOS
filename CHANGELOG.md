@@ -15,6 +15,32 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — shops book only after they log in (2026-11-18)
+A booking link is no longer a way to book, change, cancel, or read a shop's jobs.
+`GET /api/public/shop/{token}`, `POST /api/public/availability`, `POST /api/public/book`,
+`GET /api/public/bookings/{token}`, `PATCH /api/public/bookings/{token}/{job_id}`,
+`POST /api/public/bookings/{token}/{job_id}/cancel`, and `GET /api/public/shop-status/{token}`
+are gone. Old `/book/{token}` and `/scorecard/{token}` pages send the visitor to the shop
+portal login and do not show job data.
+
+Shops book, see open times, edit, and cancel through the portal login:
+`POST /api/portal/availability`, `POST /api/portal/book`, `PATCH /api/portal/jobs/{job_id}`,
+`POST /api/portal/jobs/{job_id}/cancel`, and `GET /api/portal/scorecard` (that shop only).
+The card-on-file and charge-terms checks are unchanged. `SHOP_EMAILS_ENABLED` and
+`BILLING_ENABLED` are unchanged. Shop and staff responses still use the allowlists from
+`backend/client_views.py`: no Stripe ids, Xero tokens, or password hashes. The owner
+delete-job action is unchanged.
+
+The owner still books for a shop from the shop page (`POST /api/shops/{shop_id}/book` and
+`POST /api/shops/{shop_id}/availability`). Owner reschedule uses that availability route.
+Welcome mail and the owner "finished signup" mail point at `/portal/login`. The invite
+mail still opens the setup page, and says booking happens in the shop portal.
+
+The public site's Book a job buttons (header, footer, pricing, contact) go to shop
+signup, or to portal Book when that browser is already logged into a shop. They no
+longer open Calendly. The portal booking form checks a changed address while it is
+being typed, so Continue can turn on before the field loses focus.
+
 ### Fixed — session and shop responses no longer include credentials (2026-11-18)
 `GET /api/auth/me` returned the owner Mongo document. That document holds the
 Xero access token, refresh token, token expiry, and tenant id. Password hashes

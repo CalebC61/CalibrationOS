@@ -223,7 +223,10 @@ def test_cancelling_hides_the_job_and_clears_only_its_alert(monkeypatch):
     async def run():
         transport = httpx.ASGITransport(app=server.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-            cancelled = await client.post("/api/public/bookings/tok-shop/job-shop/cancel")
+            cancelled = await client.post(
+                "/api/portal/jobs/job-shop/cancel",
+                headers={"Authorization": f"Bearer {portal}"},
+            )
             assert cancelled.status_code == 200, cancelled.text
             assert cancelled.json()["status"] == "cancelled"
 
