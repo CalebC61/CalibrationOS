@@ -3581,13 +3581,22 @@ async def reschedule_job(job_id: str, body: RescheduleIn, tech=Depends(require_o
         raise HTTPException(400, closed)
     z = ZONES[job["zone"]]
     new_end = new_start + timedelta(minutes=z["slot_minutes"])
-    await db.jobs.update_one({"id": job_id}, {"$set": {
+    fields = {"scheduled_start": iso(new_start)}
+    await _overlay_warranty(job, fields)
+    update = {
         "scheduled_start": iso(new_start),
         "scheduled_end": iso(new_end),
         "reschedule_reason": body.reason,
         "rescheduled_at": iso(now_utc()),
         "updated_at": iso(now_utc()),
-    }})
+    }
+    for key in (
+        "price", "calibration_price", "trip_fee", "trip_fee_kind", "outside_service_area",
+        "warranty_eligible", "warranty_label", "warranty_original_completed_on", "warranty_skip_reason",
+    ):
+        if key in fields:
+            update[key] = fields[key]
+    await db.jobs.update_one({"id": job_id}, {"$set": update})
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     await email_shop_event(fresh, await _shop_for_job(fresh), "rescheduled")
     return fresh
@@ -3720,7 +3729,9 @@ async def portal_scorecard(su=Depends(get_current_shop_user)):
         {"shop_id": shop["id"], "scheduled_start": {"$gte": cutoff}},
         {"_id": 0, "id": 1, "scheduled_start": 1, "scheduled_end": 1, "status": 1,
          "calibration_label": 1, "price": 1, "vehicle_year": 1, "vehicle_make": 1,
-         "vehicle_model": 1, "customer_last_name": 1, "actual_completion": 1, "result": 1}
+         "vehicle_model": 1, "customer_last_name": 1, "actual_completion": 1, "result": 1,
+         "warranty_of_job_id": 1, "warranty_eligible": 1, "warranty_label": 1,
+         "warranty_original_completed_on": 1}
     ).sort("scheduled_start", -1).limit(50).to_list(50)
     completed = [j for j in jobs if j["status"] == "complete"]
     upcoming = [j for j in jobs if j["status"] in ("booked", "driving", "on_site", "dispatched_to_contractor")]

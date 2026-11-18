@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { formatTime, formatDate } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
+import WarrantyBadge from "../components/WarrantyBadge";
 
 export default function PortalScorecard() {
   const [data, setData] = useState(null);
@@ -46,6 +47,7 @@ export default function PortalScorecard() {
                 <div>
                   <div style={{ fontWeight: 600 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
                   <div className="muted" style={{ fontSize: 13 }}>{j.calibration_label}</div>
+                  <WarrantyBadge job={j} />
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div className="font-display" style={{ fontWeight: 700 }}>{formatTime(j.scheduled_start)}</div>
@@ -65,6 +67,7 @@ export default function PortalScorecard() {
                 <div>
                   <div style={{ fontWeight: 600 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
                   <div className="muted" style={{ fontSize: 13 }}>{j.calibration_label}</div>
+                  <WarrantyBadge job={j} />
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div className="font-mono" style={{ fontWeight: 600 }}>${Number(j.price || 0).toFixed(2)}</div>

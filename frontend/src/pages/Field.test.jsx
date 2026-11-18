@@ -127,6 +127,64 @@ test("the complete confirmation says when the charge failed", async () => {
   expect(screen.getByTestId("xero-draft-status")).toHaveTextContent("needs attention");
 });
 
+test("the complete screen keeps Paid when a later list is still unpaid", async () => {
+  const open = {
+    ...attentionJob,
+    status: "on_site",
+    payment_mode: "charge_on_completion",
+    payment_status: "unpaid",
+    xero_draft_status: null,
+    xero_attention_reason: null,
+    price: 185,
+    updated_at: "2026-11-17T16:00:00Z",
+  };
+  const paid = {
+    ...open,
+    status: "complete",
+    payment_status: "paid",
+    invoice_status: "paid",
+    charged_at: "2026-11-17T16:05:00Z",
+    charged_amount: 185,
+    xero_draft_status: "draft",
+    xero_invoice_number: "INV-9",
+    xero_invoice_id: "inv-9",
+    updated_at: "2026-11-17T16:05:00Z",
+  };
+  const laterUnpaid = {
+    ...paid,
+    payment_status: "unpaid",
+    invoice_status: "open",
+    charged_at: null,
+    charged_amount: null,
+    updated_at: "2026-11-17T16:06:00Z",
+  };
+  let jobsGets = 0;
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) {
+      jobsGets += 1;
+      return Promise.resolve({ data: [jobsGets === 1 ? open : laterUnpaid] });
+    }
+    if (path.includes("/documents")) {
+      return Promise.resolve({ data: [{ file_name: "scan.pdf", content_type: "application/pdf", size_bytes: 1200 }] });
+    }
+    return Promise.resolve({ data: [] });
+  });
+  api.post.mockImplementation((url) => {
+    if (String(url).endsWith("/complete")) return Promise.resolve({ data: { job: paid } });
+    return Promise.resolve({ data: {} });
+  });
+
+  render(<Field />);
+  fireEvent.click(await screen.findByTestId("field-job-job-1"));
+  fireEvent.change(await screen.findByTestId("field-cal-type"), { target: { value: "static" } });
+  fireEvent.click(screen.getByTestId("field-pop-none"));
+  fireEvent.click(screen.getByTestId("action-complete"));
+
+  expect(await screen.findByTestId("payment-status-line")).toHaveTextContent("Paid $185.00");
+  expect(screen.getByTestId("job-complete-confirmation")).toHaveTextContent("Job complete");
+});
+
 test("a free warranty redo shows its badge and does not offer a Xero retry", async () => {
   mockList({
     ...attentionJob,

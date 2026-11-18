@@ -1,9 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 jest.mock("../components/PortalShell", () => ({ children }) => children);
 jest.mock("../components/AgreementView", () => () => null);
 jest.mock("../components/CardSetup", () => ({
-  CardSetup: () => null,
+  CardSetup: () => <div data-testid="card-form">Card form</div>,
   ChargeAcceptance: () => null,
   CHARGE_ACCEPTANCE_FALLBACK: "Accept the card charge.",
 }));
@@ -24,7 +24,7 @@ function me(shopUser) {
     return Promise.resolve({
       data: {
         shop_user: shopUser,
-        shop: { name: "Jarvis Glass" },
+        shop: { name: "Jarvis Glass", address: "100 W Main, Gilbert, AZ" },
         setup: { allowed: true },
       },
     });
@@ -49,6 +49,26 @@ test("a card on file shows from has_payment_method, not the Stripe id", async ()
   expect(screen.getByText(/4242/)).toBeInTheDocument();
   expect(screen.getByTestId("update-card-btn")).toBeInTheDocument();
   expect(screen.queryByTestId("add-card-btn")).not.toBeInTheDocument();
+  expect(screen.getByTestId("shop-address")).toHaveTextContent("100 W Main, Gilbert, AZ");
+});
+
+test("cancel closes the card update form without saving", async () => {
+  portalApi.post.mockResolvedValue({ data: { client_secret: "seti_secret" } });
+  me({
+    full_name: "Ada Glass",
+    email: "ada@jarvis.example",
+    shop_name: "Jarvis Glass",
+    has_payment_method: true,
+    card_brand: "visa",
+    card_last4: "4242",
+    card_exp_month: 12,
+    card_exp_year: 2099,
+  });
+  fireEvent.click(await screen.findByTestId("update-card-btn"));
+  expect(await screen.findByTestId("card-form")).toBeInTheDocument();
+  fireEvent.click(screen.getByTestId("cancel-card-update"));
+  expect(screen.queryByTestId("card-form")).not.toBeInTheDocument();
+  expect(portalApi.post).not.toHaveBeenCalledWith("/portal/payment-method", expect.anything());
 });
 
 test("a Stripe payment method id alone does not count as a card on file", async () => {

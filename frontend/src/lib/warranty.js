@@ -24,7 +24,28 @@ export function warrantyOptionLabel(row) {
 }
 
 /** True when the redo's Phoenix day is on or before the original job's warranty_through day. */
-export function redoIsFree(warrantyThrough, redoDay) {
-  if (!warrantyThrough || !redoDay) return false;
-  return redoDay <= warrantyThrough;
+export function redoIsFree(warrantyThroughDay, redoDay) {
+  if (!warrantyThroughDay || !redoDay) return false;
+  return redoDay <= warrantyThroughDay;
+}
+
+/** Phoenix day 30 days after the original completion. That day is still free. */
+export function warrantyThrough(completedOn) {
+  if (!completedOn || !/^\d{4}-\d{2}-\d{2}$/.test(completedOn)) return "";
+  const [year, month, day] = completedOn.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + 30);
+  return date.toISOString().slice(0, 10);
+}
+
+export function isFreeWarranty(job) {
+  return Boolean(job && job.warranty_eligible && (job.warranty_of_job_id || job.warranty_label));
+}
+
+/** A linked redo whose Phoenix day is after the 30-day window. */
+export function redoWouldBeBilled(job, redoDay) {
+  if (!job?.warranty_of_job_id || !redoDay) return false;
+  const through = job.warranty_through || warrantyThrough(job.warranty_original_completed_on);
+  if (!through) return job.warranty_eligible === false;
+  return !redoIsFree(through, redoDay);
 }

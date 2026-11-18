@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { formatTime, isOnDayBoard } from "../lib/api";
+import { isFreeWarranty } from "../lib/warranty";
 import { MapContainer, Marker, Polyline, Tooltip, useMap } from "react-leaflet";
 import DarkBasemap from "./DarkBasemap";
 import L from "leaflet";
@@ -56,6 +57,7 @@ export default function RouteMap({ jobs }) {
                 <b>#{idx + 1} · {j.shop_name}</b><br />
                 {formatTime(j.scheduled_start)}
                 {j.technician_name ? <> · {j.technician_name}</> : null}
+                {isFreeWarranty(j) ? <><br />Warranty — not charged</> : null}
               </div>
             </Tooltip>
           </Marker>

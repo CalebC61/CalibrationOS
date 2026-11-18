@@ -22,6 +22,14 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): warranty is visible, and a late redo warns before it books.**
+  A free warranty redo still confirms immediately. It shows a Warranty banner
+  on the owner day board, field job, complete screen, and the shop's own job
+  views. Booking or moving a redo after 30 Phoenix days asks the shop to
+  continue or cancel. Continue books it at the shop's normal rate. Shop
+  Settings shows the address and Cancel on the card form. The complete screen
+  shows Paid and the amount when the charge succeeded. `BILLING_ENABLED` and
+  `SHOP_EMAILS_ENABLED` are unchanged. No new env vars.
 - **Session (2026-11-18): health check and owner error mail.** `GET /api/health`
   pings Mongo and returns 503 when it is unreachable. Unhandled 500s and
   browser crashes email `ALERT_EMAIL`, then `OWNER_EMAIL`, then `ADMIN_EMAIL`.
