@@ -1,14 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useRefreshOnShow } from "../lib/refreshOnShow";
 import Shell from "../components/Shell";
 
 export default function Invoices() {
   const [invs, setInvs] = useState([]);
   const [fees, setFees] = useState([]);
-  useEffect(() => {
+  const load = useCallback(() => {
     api.get("/invoices").then(r => setInvs(r.data));
     api.get("/billing/late-fees").then(r => setFees(r.data.events || [])).catch(() => {});
   }, []);
+  useEffect(() => { load(); }, [load]);
+  useRefreshOnShow(load);
   return (
     <Shell>
       <h1 className="h1" style={{ marginBottom: 8 }}>Invoices</h1>

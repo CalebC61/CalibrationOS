@@ -1,4 +1,5 @@
 import axios from "axios";
+import { freshParams } from "./freshGet";
 
 export const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -7,6 +8,8 @@ export const api = axios.create({ baseURL: API });
 api.interceptors.request.use((cfg) => {
   const t = localStorage.getItem("cos_token");
   if (t) cfg.headers.Authorization = `Bearer ${t}`;
+  const method = (cfg.method || "get").toLowerCase();
+  if (method === "get") cfg.params = freshParams(cfg.params);
   return cfg;
 });
 

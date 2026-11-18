@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import { api, formatTime, formatDate, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, jobStatusLabel } from "../lib/api";
+import { fresherJob, mergeJobList } from "../lib/jobState";
+import { useRefreshOnShow } from "../lib/refreshOnShow";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
@@ -34,8 +36,10 @@ export default function Dashboard() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const removedJobIds = useRef(new Set());
+  const loadGen = useRef(0);
 
   const load = useCallback(async () => {
+    const gen = ++loadGen.current;
     try {
       const [j, s, a, o] = await Promise.all([
         api.get(`/jobs?date_str=${date}`),
@@ -43,16 +47,25 @@ export default function Dashboard() {
         api.get(`/notifications/new-bookings`),
         api.get(`/contractor-offers`),
       ]);
+      if (gen !== loadGen.current) return;
       const visible = (j.data || []).filter(job => !removedJobIds.current.has(job.id));
       const alertRows = (a.data?.alerts || []).filter(alert => !removedJobIds.current.has(alert.job_id));
-      setJobs(visible); setSummary(s.data); setAlerts({ count: alertRows.length, alerts: alertRows }); setOffers(o.data);
+      setJobs(current => mergeJobList(current, visible)); setSummary(s.data); setAlerts({ count: alertRows.length, alerts: alertRows }); setOffers(o.data);
       try {
         const t = await api.get("/routing-techs");
+        if (gen !== loadGen.current) return;
         setTechs(t.data || []);
       } catch { setTechs([]); }
     } catch (e) { console.error(e); }
   }, [date]);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  useRefreshOnShow(load);
+
+  function showJob(job) {
+    if (!job?.id) return;
+    loadGen.current += 1;
+    setJobs(current => current.map(item => item.id === job.id ? fresherJob(item, job) : item));
+  }
 
   async function markSeen() {
     await api.post("/notifications/mark-seen");
@@ -85,7 +98,8 @@ export default function Dashboard() {
   }
   async function retryXero(jobId) {
     try {
-      await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      const { data } = await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      showJob(data?.job);
       load();
     } catch (err) {
       alert(err.response?.data?.detail || "Could not retry the Xero draft.");
@@ -106,7 +120,8 @@ export default function Dashboard() {
   }
   async function completeJob(jobId, body) {
     try {
-      await api.post(`/jobs/${jobId}/complete`, body);
+      const { data } = await api.post(`/jobs/${jobId}/complete`, body);
+      showJob(data?.job);
     } catch (err) {
       alert(err.response?.data?.detail || "Could not complete the job.");
       return;
