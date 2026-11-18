@@ -45,6 +45,22 @@ An owner invite does not set that, and the page says those rows created their
 own accounts. That is intended. No new env var. `BILLING_ENABLED` and
 `SHOP_EMAILS_ENABLED` are unchanged.
 
+### Fixed — day miles and Done by follow the jobs still on the board (2026-11-18)
+The owner day header (Jobs, Revenue, Est. miles, Done by) was leaving the
+last drive and finish time up after every job on that day was deleted. There
+is no saved route for the day. `GET /api/dashboard/summary` already adds the
+drive minutes and the latest end of the jobs still scheduled that Phoenix
+day, and it already skips cancelled and declined jobs. A delete removes the
+job, so the next summary is 0 miles and no finish time.
+
+The header did not use that. Delete updated the job count and the revenue in
+the browser and left Est. miles and Done by on the previous summary. A slow
+summary response could put those two numbers back while the cards stayed
+gone. The header now uses the jobs still on the board: drive minutes times
+0.5, and the latest end. An empty day shows 0 miles and a dash. Deleting one
+job of several uses the jobs that remain. Cancelled and declined jobs stay
+out. No new env var. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+
 ### Fixed — shop job edits follow the booking rules, and shop cancel names a reason (2026-11-18)
 A shop edit that changes the date, time, address, or service is checked the
 same way as a new booking. The time has to be free, the day has to be open

@@ -33,3 +33,29 @@ export function mergeJobList(current, incoming) {
     job,
   ));
 }
+
+/** Jobs, revenue, drive miles, and finish time for the jobs still on the day.
+
+Miles are drive minutes times 0.5, same as GET /dashboard/summary. Cancelled
+and declined jobs stay out. An empty day is 0 miles and no finish time.
+*/
+export function dayBoardTotals(jobs) {
+  const active = (jobs || []).filter(
+    (job) => job && job.status !== "cancelled" && job.status !== "declined",
+  );
+  let driveMin = 0;
+  let revenue = 0;
+  let doneBy = null;
+  for (const job of active) {
+    driveMin += Number(job.drive_time_minutes) || 0;
+    revenue += Number(job.price) || 0;
+    const end = job.scheduled_end;
+    if (end && (doneBy === null || String(end) > String(doneBy))) doneBy = end;
+  }
+  return {
+    job_count: active.length,
+    revenue,
+    estimated_miles: Math.round(driveMin * 5) / 10,
+    done_by: doneBy,
+  };
+}
