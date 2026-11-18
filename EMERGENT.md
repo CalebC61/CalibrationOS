@@ -22,6 +22,12 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): an empty day no longer keeps Est. miles and Done by.**
+  The day header follows the jobs still on the board. Delete, and a slow
+  summary response, cannot leave the previous drive or finish time up.
+  `GET /api/dashboard/summary` already counted only the jobs still on that
+  day. No saved route document. No new env var. `BILLING_ENABLED` and
+  `SHOP_EMAILS_ENABLED` are unchanged.
 - **Session (2026-11-18): shop edits use the booking rules, and a shop cancel names itself.**
   Changing the date, time, address, or service rechecks the open day, the
   valley, the free slot, before-8:00 AM approval, and same-day drive limits.

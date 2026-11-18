@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 var mockAuth = { role: "owner", name: "Caleb" };
 
@@ -28,7 +28,10 @@ jest.mock("../lib/api", () => {
   }
   return {
     api: { get: jest.fn(), post: jest.fn(), delete: jest.fn() },
-    formatTime: () => "9:00 AM",
+    formatTime: (iso) => {
+      if (typeof iso === "string" && iso.startsWith("2099-")) return `T${iso.slice(11, 16)}`;
+      return "9:00 AM";
+    },
     formatDate: () => "Tue, Nov 17",
     phoenixTodayStr,
     dateStr: () => "2026-11-17",
@@ -184,6 +187,163 @@ test("owner Delete asks before it removes the job, and Cancel sends nothing", as
   await waitFor(() => expect(screen.queryByTestId("job-delete-dialog")).not.toBeInTheDocument());
   expect(api.delete).not.toHaveBeenCalled();
   expect(screen.getByTestId("job-card-job-1")).toBeInTheDocument();
+});
+
+function metricValue(label) {
+  const labelNode = screen.getByText(label);
+  return labelNode.nextElementSibling.textContent;
+}
+
+test("deleting the last job of the day clears est. miles and done by", async () => {
+  const only = {
+    ...job,
+    id: "job-late",
+    drive_time_minutes: 23,
+    price: 125,
+    scheduled_end: "2099-12-08T17:50:00Z",
+  };
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [only] });
+    if (path.includes("/dashboard/summary")) {
+      return Promise.resolve({
+        data: {
+          job_count: 1,
+          revenue: 125,
+          estimated_miles: 11.5,
+          done_by: only.scheduled_end,
+          shop_emails_enabled: true,
+        },
+      });
+    }
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+  api.delete.mockResolvedValue({ data: { deleted: true, id: "job-late" } });
+  render(<Dashboard />);
+
+  expect(await screen.findByText("11.5")).toBeInTheDocument();
+  expect(metricValue("Done By")).toBe("T17:50");
+
+  fireEvent.click(screen.getByTestId("job-delete-job-late"));
+  fireEvent.click(screen.getByTestId("job-delete-confirm"));
+
+  await waitFor(() => expect(screen.queryByTestId("job-card-job-late")).not.toBeInTheDocument());
+  expect(metricValue("Jobs")).toBe("0");
+  expect(metricValue("Revenue")).toBe("$0");
+  expect(metricValue("Est. Miles")).toBe("0");
+  expect(metricValue("Done By")).toBe("—");
+});
+
+test("a stale summary refresh cannot put miles or done by back after the last job is gone", async () => {
+  const only = {
+    ...job,
+    id: "job-late",
+    drive_time_minutes: 23,
+    price: 125,
+    scheduled_end: "2099-12-08T17:50:00Z",
+  };
+  const stale = {
+    job_count: 1,
+    revenue: 125,
+    estimated_miles: 11.5,
+    done_by: only.scheduled_end,
+    shop_emails_enabled: true,
+  };
+  let summaryCalls = 0;
+  let releaseStale = () => {};
+  const staleSummary = new Promise((resolve) => {
+    releaseStale = () => resolve({ data: stale });
+  });
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [only] });
+    if (path.includes("/dashboard/summary")) {
+      summaryCalls += 1;
+      if (summaryCalls > 1) return staleSummary;
+      return Promise.resolve({ data: stale });
+    }
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+  api.delete.mockResolvedValue({ data: { deleted: true, id: "job-late" } });
+  render(<Dashboard />);
+  fireEvent.click(await screen.findByTestId("job-delete-job-late"));
+  fireEvent.click(screen.getByTestId("job-delete-confirm"));
+  await waitFor(() => expect(metricValue("Est. Miles")).toBe("0"));
+
+  window.dispatchEvent(new Event("focus"));
+  await waitFor(() => expect(summaryCalls).toBeGreaterThan(1));
+  await act(async () => {
+    releaseStale();
+  });
+
+  expect(metricValue("Jobs")).toBe("0");
+  expect(metricValue("Revenue")).toBe("$0");
+  expect(metricValue("Est. Miles")).toBe("0");
+  expect(metricValue("Done By")).toBe("—");
+  expect(screen.queryByTestId("job-card-job-late")).not.toBeInTheDocument();
+});
+
+test("deleting one job recomputes est. miles and done by from the jobs still on the day", async () => {
+  const early = {
+    ...job,
+    id: "job-early",
+    drive_time_minutes: 40,
+    price: 125,
+    scheduled_end: "2099-12-08T16:00:00Z",
+  };
+  const late = {
+    ...job,
+    id: "job-late",
+    drive_time_minutes: 23,
+    price: 125,
+    scheduled_end: "2099-12-08T17:50:00Z",
+  };
+  const cancelled = {
+    ...job,
+    id: "job-cancelled",
+    status: "cancelled",
+    drive_time_minutes: 200,
+    price: 999,
+    scheduled_end: "2099-12-08T23:00:00Z",
+  };
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [early, late, cancelled] });
+    if (path.includes("/dashboard/summary")) {
+      return Promise.resolve({
+        data: {
+          job_count: 2,
+          revenue: 250,
+          estimated_miles: 31.5,
+          done_by: late.scheduled_end,
+          shop_emails_enabled: true,
+        },
+      });
+    }
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+  api.delete.mockResolvedValue({ data: { deleted: true, id: "job-late" } });
+  render(<Dashboard />);
+
+  expect(await screen.findByText("31.5")).toBeInTheDocument();
+  expect(metricValue("Done By")).toBe("T17:50");
+  expect(screen.queryByTestId("job-card-job-cancelled")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByTestId("job-delete-job-late"));
+  fireEvent.click(screen.getByTestId("job-delete-confirm"));
+
+  await waitFor(() => expect(screen.queryByTestId("job-card-job-late")).not.toBeInTheDocument());
+  expect(screen.getByTestId("job-card-job-early")).toBeInTheDocument();
+  expect(metricValue("Jobs")).toBe("1");
+  expect(metricValue("Revenue")).toBe("$125");
+  expect(metricValue("Est. Miles")).toBe("20");
+  expect(metricValue("Done By")).toBe("T16:00");
 });
 
 test("Yes, delete removes the card without reloading the day", async () => {

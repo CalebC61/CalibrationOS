@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import { api, formatTime, formatDate, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, isPhoenixToday, jobStatusLabel } from "../lib/api";
-import { fresherJob, jobLooksPaid, mergeJobList } from "../lib/jobState";
+import { dayBoardTotals, fresherJob, jobLooksPaid, mergeJobList } from "../lib/jobState";
 import { useRefreshOnShow } from "../lib/refreshOnShow";
 import Shell from "../components/Shell";
 import RouteMap from "../components/RouteMap";
@@ -193,12 +193,8 @@ export default function Dashboard() {
       });
       setSummary(current => {
         if (!current) return current;
-        const revenue = Number(current.revenue || 0) - Number(removed.price || 0);
-        return {
-          ...current,
-          job_count: Math.max(0, Number(current.job_count || 0) - 1),
-          revenue: revenue < 0 ? 0 : revenue,
-        };
+        const remaining = jobs.filter(job => job.id !== removed.id);
+        return { ...current, ...dayBoardTotals(remaining) };
       });
       setDeleteTarget(null);
     } catch (err) {
@@ -218,6 +214,7 @@ export default function Dashboard() {
   }
   const newJobIds = new Set(alerts.alerts.map(a => a.job_id));
   const dayJobs = jobs.filter(isOnDayBoard);
+  const totals = dayBoardTotals(dayJobs);
 
   const routingTechs = techs.filter(t => t.role !== "contractor" && t.routes_jobs !== false && t.is_active !== false);
   const colorById = Object.fromEntries(routingTechs.map(t => [t.id, t.color || "#FF5F1F"]));
@@ -344,10 +341,10 @@ export default function Dashboard() {
         </div>
         {summary && (
           <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-            <Metric label="Jobs" value={summary.job_count} />
-            <Metric label="Revenue" value={`$${summary.revenue.toFixed(0)}`} />
-            <Metric label="Est. Miles" value={summary.estimated_miles} />
-            <Metric label="Done By" value={summary.done_by ? formatTime(summary.done_by) : "—"} />
+            <Metric label="Jobs" value={totals.job_count} />
+            <Metric label="Revenue" value={`$${Number(totals.revenue || 0).toFixed(0)}`} />
+            <Metric label="Est. Miles" value={totals.estimated_miles} />
+            <Metric label="Done By" value={totals.done_by ? formatTime(totals.done_by) : "—"} />
           </div>
         )}
       </div>

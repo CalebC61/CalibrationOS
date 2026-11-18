@@ -105,6 +105,17 @@
 user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first. Module 9 — build out the Partner Growth Engine (Power Connector 5+50+100 CRM + 3-D introductions) from its inert scaffold into a real, flagged-on v1; reels explicitly deferred (no video-generation capability available). Module 8 — a natural-language AI assistant built into the admin page that can DO anything on the admin surface by plain-English prompting, with reads answering instantly and every real action gated behind an owner confirmation; scoped to in-process Gemini (google-genai) rather than the original Cloud Run/ADK/Postgres concept."
 
 backend:
+  - task: "Dashboard day totals drop deleted jobs and skip cancelled and declined"
+    implemented: true
+    working: true
+    file: "backend/tests/test_dashboard_day_totals.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "GET /api/dashboard/summary has no saved route. It sums drive_time_minutes * 0.5 and the latest scheduled_end for jobs on that Phoenix day whose status is not cancelled or declined. Deleting the last active job returns job_count 0, revenue 0, estimated_miles 0, done_by null. Deleting one of three (53 miles, done 10:50) leaves the other two (41.5 miles and the earlier end). Cancelled, declined, and other-day jobs never count. In-memory pytest, no mail, billing flags untouched."
   - task: "Health check pings Mongo and 500s email the owner"
     implemented: true
     working: true
@@ -283,6 +294,17 @@ backend:
           comment: "Invite register requires charge_accepted and stores the terms text without the booking timestamp. Saving the card writes charge_authorization_accepted_at on the shop and the user. A signed agreement with no charge acceptance does not. POST /portal/book returns 403 for a missing, expired, or removed card, and for missing charge terms. Accepting the terms gets past that 403. Owner invites stay off GET /new-shops."
 
 frontend:
+  - task: "Owner day header recomputes miles and Done by from the jobs still on the board"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/Dashboard.jsx, frontend/src/lib/jobState.js, frontend/src/pages/Dashboard.test.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Delete used to subtract the job count and revenue and leave estimated_miles and done_by on the previous summary. The header now follows the jobs still on the board (drive minutes * 0.5, latest end). The last job clears miles to 0 and Done by to a dash. One of several recomputes from the rest. A cancelled job is not counted. A summary refresh that still reports the deleted job cannot put 11.5 miles or the old finish time back. Jest only; not a browser pass."
   - task: "App error screen reports crashes"
     implemented: true
     working: true
