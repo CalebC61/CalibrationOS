@@ -440,3 +440,55 @@ test("a parent that stores each change still suggests the latest text", async ()
   expect(fetchSuggestions).toHaveBeenLastCalledWith(expect.objectContaining({ input: "123 Main" }));
   expect((await screen.findByRole("option")).textContent).toBe("123 Main");
 });
+
+test("a blur while place details load does not report the typed business name", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  const street = "496 N 5th St, Phoenix, AZ 85004, USA";
+  let release;
+  const fetchSuggestions = jest.fn(async () => ({
+    suggestions: [{
+      placePrediction: {
+        text: { text: "SIXT Rent a Car Phoenix Arizona Center" },
+        toPlace() {
+          return placeResult({
+            formattedAddress: `SIXT Rent a Car, ${street}`,
+            displayName: { text: "SIXT Rent a Car" },
+            id: "ChIJsixt",
+            location: { lat: () => 33.453, lng: () => -112.071 },
+            addressComponents: [
+              { longText: "496", shortText: "496", types: ["street_number"] },
+              { longText: "North 5th Street", shortText: "N 5th St", types: ["route"] },
+              { longText: "Phoenix", shortText: "Phoenix", types: ["locality", "political"] },
+              { longText: "Arizona", shortText: "AZ", types: ["administrative_area_level_1", "political"] },
+              { longText: "85004", shortText: "85004", types: ["postal_code"] },
+              { longText: "United States", shortText: "US", types: ["country", "political"] },
+              { longText: "SIXT Rent a Car", shortText: "SIXT Rent a Car", types: ["establishment", "point_of_interest"] },
+            ],
+            fetchFields: () => new Promise((resolve) => { release = resolve; }),
+          });
+        },
+      },
+    }],
+  }));
+  installPlaces(fetchSuggestions);
+  const onBlur = jest.fn();
+  const { onPlace } = renderField({ onBlur });
+  const input = await screen.findByTestId("address");
+  await waitFor(() => expect(input.getAttribute("data-address-mode")).toBe("places"));
+
+  fireEvent.change(input, { target: { value: "Downtown Phoenix Inc" } });
+  await waitFor(() => expect(fetchSuggestions).toHaveBeenLastCalledWith(expect.objectContaining({
+    input: "Downtown Phoenix Inc",
+  })));
+  fireEvent.click(await screen.findByRole("option"));
+  fireEvent.blur(input);
+  expect(onBlur).not.toHaveBeenCalled();
+
+  await act(async () => { release(); });
+  await waitFor(() => expect(onPlace).toHaveBeenCalledWith(expect.objectContaining({
+    address: street,
+    placeId: "ChIJsixt",
+  })));
+  expect(input).toHaveValue(street);
+  expect(onBlur).not.toHaveBeenCalled();
+});

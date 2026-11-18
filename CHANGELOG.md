@@ -15,6 +15,26 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — a picked business address stays confirmed on booking (2026-11-18)
+Typing a business name on Book a Calibration asks Places for that full text.
+"Downtown Phoenix Inc" is sent whole, not as an earlier prefix. Places can
+still rank other downtown businesses above that name. The street query
+"1 E Washington St Phoenix" is what returns Downtown Phoenix Inc.
+
+Picking one of those businesses fills the street, for example
+`496 N 5th St, Phoenix, AZ 85004, USA`. Booking then geocoded the words that
+were in the box before the pick, or the new street, and a failure replaced the
+service-area check with "We couldn't find that address, please check it". The
+date stayed disabled. Signup does not geocode on each keystroke, which is why
+the same pick showed no error there.
+
+A place picked inside the valley is the confirmed address. The service-area
+line comes from that pick. A geocode still running for the typed name cannot
+apply after the pick, and a failed lookup of the confirmed street cannot clear
+it. Blur during the place-details request does not send the typed business
+name. Signup and add-shop still receive the street and the place id from the
+same field. No new env var. `BILLING_ENABLED` is unchanged.
+
 ### Fixed — Places suggestions lag one character (2026-11-18)
 The shop booking address, signup, and the owner "add a shop" form share
 `AddressField`. Suggestions sometimes stayed hidden until the next character.

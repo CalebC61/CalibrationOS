@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { resetPlacesLoader } from "../components/AddressField";
 
 jest.mock("react-router-dom", () => ({
@@ -206,4 +206,78 @@ test("a redo past 30 days asks before it books and does not book on cancel", asy
   await waitFor(() => expect(portalApi.post).toHaveBeenCalledWith("/portal/book", expect.objectContaining({
     warranty_of_job_id: "old-1",
   })));
+});
+
+test("picking a business suggestion confirms the street when geocoding the typed name fails", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  const street = "496 N 5th St, Phoenix, AZ 85004, USA";
+  const typed = "Downtown Phoenix Inc";
+  const pending = [];
+  portalApi.post.mockImplementation((url, body) => {
+    if (String(url).includes("/geocode")) {
+      return new Promise((resolve, reject) => {
+        pending.push({
+          address: body.address,
+          reject: () => reject({ response: { data: { detail: "We couldn't find that address, please check it" } } }),
+          resolve: () => resolve({ data: { in_metro: true } }),
+        });
+      });
+    }
+    if (String(url).includes("/portal/availability")) {
+      return Promise.resolve({ data: { slots: [{ start: "2026-11-18T16:00:00Z", requires_approval: false }] } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  const fetchSuggestions = jest.fn(async ({ input }) => ({
+    suggestions: [{
+      placePrediction: {
+        text: { text: "SIXT Rent a Car Phoenix Arizona Center" },
+        toPlace() {
+          return {
+            fetchFields: async () => {},
+            formattedAddress: `SIXT Rent a Car, ${street}`,
+            displayName: { text: "SIXT Rent a Car" },
+            id: "ChIJsixt",
+            location: { lat: () => 33.453, lng: () => -112.071 },
+            addressComponents: [
+              { longText: "496", shortText: "496", types: ["street_number"] },
+              { longText: "North 5th Street", shortText: "N 5th St", types: ["route"] },
+              { longText: "Phoenix", shortText: "Phoenix", types: ["locality", "political"] },
+              { longText: "Arizona", shortText: "AZ", types: ["administrative_area_level_1", "political"] },
+              { longText: "85004", shortText: "85004", types: ["postal_code"] },
+              { longText: "United States", shortText: "US", types: ["country", "political"] },
+              { longText: "SIXT Rent a Car", shortText: "SIXT Rent a Car", types: ["establishment", "point_of_interest"] },
+            ],
+          };
+        },
+      },
+    }],
+  }));
+  window.google = {
+    maps: {
+      importLibrary: jest.fn(async () => ({
+        AutocompleteSuggestion: { fetchAutocompleteSuggestions: fetchSuggestions },
+      })),
+    },
+  };
+
+  render(<PortalBook />);
+  const address = await screen.findByTestId("b-addr");
+  await waitFor(() => expect(address.getAttribute("data-address-mode")).toBe("places"));
+  fireEvent.change(address, { target: { value: "Dow" } });
+  await waitFor(() => expect(fetchSuggestions).toHaveBeenCalledWith(expect.objectContaining({ input: "Dow" })));
+  fireEvent.change(address, { target: { value: typed } });
+  await waitFor(() => expect(fetchSuggestions).toHaveBeenLastCalledWith(expect.objectContaining({ input: typed })));
+  await waitFor(() => expect(pending.some((call) => call.address === typed)).toBe(true));
+
+  fireEvent.click(await screen.findByRole("option"));
+  await waitFor(() => expect(address).toHaveValue(street));
+  await act(async () => {
+    pending.splice(0).forEach((call) => call.reject());
+  });
+
+  expect(screen.queryByText("We couldn't find that address, please check it")).not.toBeInTheDocument();
+  expect(screen.getByText("In our Phoenix service area.")).toBeInTheDocument();
+  expect(screen.getByTestId("b-date")).not.toBeDisabled();
+  expect(address).toHaveValue(street);
 });

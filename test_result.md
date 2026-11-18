@@ -294,6 +294,17 @@ frontend:
         - working: true
           agent: "main"
           comment: "The portal book address uses AddressField. A prefilled shop address does not request suggestions until the user edits it. The edit requests Places suggestions for the full new text. In our Phoenix service area still follows the shop-address shortcut and the geocode check. Covered by AddressField.test.jsx and PortalBook.test.jsx."
+  - task: "A picked business confirms the street on booking"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/PortalBook.jsx, frontend/src/components/AddressField.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Typing Downtown Phoenix Inc requests that full string. Picking SIXT fills 496 N 5th St and shows In our Phoenix service area even when geocoding the typed name fails. Blur during place details does not report the business name. Covered by PortalBook.test.jsx and AddressField.test.jsx."
   - task: "Places suggestions match the current address after the pause"
     implemented: true
     working: true

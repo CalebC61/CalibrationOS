@@ -146,6 +146,7 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
   const pauseRef = useRef(null);
   const flightRef = useRef(false);
   const retryRef = useRef(false);
+  const pickingRef = useRef(false);
   const runRef = useRef(async () => {});
   const [ready, setReady] = useState(false);
   const [text, setText] = useState(value || "");
@@ -292,6 +293,7 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
     const prediction = suggestion?.placePrediction;
     const place = prediction?.toPlace ? prediction.toPlace() : null;
     if (!place?.fetchFields) return;
+    pickingRef.current = true;
     clearPause();
     requestRef.current += 1;
     setOpen(false);
@@ -318,6 +320,8 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
     } catch {
       setSuggestions([]);
       setOpen(false);
+    } finally {
+      pickingRef.current = false;
     }
   }
 
@@ -381,6 +385,7 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, onBlu
         onBlur={(event) => {
           focusRef.current = false;
           setOpen(false);
+          if (pickingRef.current) return;
           onBlurRef.current?.(event.target.value);
         }}
         onKeyDown={onKeyDown}
