@@ -22,6 +22,13 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): Xero badges update without a reload.** Connection
+  status and draft badges were stuck until a full refresh because API GETs
+  were cacheable, Settings did not reopen Integrations after the Xero
+  redirect, and Complete/Retry ignored the job in the response. `/api`
+  responses are `Cache-Control: private, no-store`. The owner UI refetches
+  on focus and after the OAuth return. No new env vars. Tokens stay off the
+  client. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
 - **Session (2026-11-18): shops book only after they log in.** Public `/book/{token}` and
   `/scorecard/{token}` no longer show or change jobs. Booking, edits, cancels, and the
   scorecard go through the shop portal. The owner still books for a shop from the shop

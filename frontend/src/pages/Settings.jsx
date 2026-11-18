@@ -1,11 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { useRefreshOnShow } from "../lib/refreshOnShow";
 import Shell from "../components/Shell";
 
 const TABS = ["pricing", "technicians", "schedule", "contractor", "integrations"];
 
+function xeroReturnTab() {
+  const flag = new URLSearchParams(window.location.search).get("xero");
+  return flag === "connected" || flag === "error" ? "integrations" : "pricing";
+}
+
 export default function Settings() {
-  const [tab, setTab] = useState("pricing");
+  const [tab, setTab] = useState(xeroReturnTab);
   return (
     <Shell>
       <h1 className="h1" style={{ marginBottom: 16 }}>Settings</h1>
@@ -461,13 +467,18 @@ function IntegrationsTab() {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState(null);
+  const readGen = useRef(0);
 
-  async function load() {
+  const load = useCallback(async () => {
+    const gen = ++readGen.current;
     try {
       const { data } = await api.get("/integrations/status");
+      if (gen !== readGen.current) return;
       setStatus(data);
-    } catch { /* leave status null → shows "Loading…" */ }
-  }
+    } catch { /* keep the status already on screen */ }
+  }, []);
+
+  useRefreshOnShow(load);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -476,7 +487,7 @@ function IntegrationsTab() {
     else if (x === "error") setBanner({ ok: false, msg: "Xero connection failed. Please try connecting again." });
     if (x) window.history.replaceState({}, "", window.location.pathname);
     load();
-  }, []);
+  }, [load]);
 
   async function connectXero() {
     setBusy(true);
@@ -492,8 +503,23 @@ function IntegrationsTab() {
   async function disconnectXero() {
     if (!window.confirm("Disconnect Xero? Completed jobs will be marked needs attention until Xero is connected again.")) return;
     setBusy(true);
-    try { await api.post("/auth/xero/disconnect"); await load(); }
-    catch (e) { setBanner({ ok: false, msg: "Disconnect failed." }); }
+    try {
+      await api.post("/auth/xero/disconnect");
+      readGen.current += 1;
+      setStatus(current => {
+        if (!current?.xero) return current;
+        return {
+          ...current,
+          xero: {
+            ...current.xero,
+            connected: false,
+            org_name: null,
+            mode: current.xero.configured ? "ready" : "mock",
+          },
+        };
+      });
+      await load();
+    } catch (e) { setBanner({ ok: false, msg: "Disconnect failed." }); }
     finally { setBusy(false); }
   }
 

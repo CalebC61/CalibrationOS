@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatTime, formatDate, getStoredAuth, setStoredAuth, todayStr, isOnDayBoard, jobStatusLabel } from "../lib/api";
+import { fresherJob, mergeJobList } from "../lib/jobState";
+import { useRefreshOnShow } from "../lib/refreshOnShow";
 import JobEditModal from "../components/JobEditModal";
 
 const CAL_TYPES = [
@@ -33,17 +35,28 @@ export default function Field() {
 
   const [offers, setOffers] = useState([]);
 
+  const loadGen = useRef(0);
   const load = useCallback(async () => {
+    const gen = ++loadGen.current;
     try {
       const [j, o] = await Promise.all([
         api.get(`/jobs?date_str=${todayStr()}`),
         api.get(`/contractor-offers`),
       ]);
-      setJobs((j.data || []).filter(isOnDayBoard));
+      if (gen !== loadGen.current) return;
+      const visible = (j.data || []).filter(isOnDayBoard);
+      setJobs(current => mergeJobList(current, visible));
       setOffers(o.data.filter(x => x.status === "pending"));
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  useRefreshOnShow(load);
+
+  function showJob(job) {
+    if (!job?.id) return;
+    loadGen.current += 1;
+    setJobs(current => current.map(item => item.id === job.id ? fresherJob(item, job) : item));
+  }
 
   function logout() { setStoredAuth(null); nav("/login"); }
 
@@ -99,12 +112,13 @@ export default function Field() {
   async function complete(jobId) {
     setCompleting(true);
     try {
-      await api.post(`/jobs/${jobId}/complete`, {
+      const { data } = await api.post(`/jobs/${jobId}/complete`, {
         result,
         notes: notes || null,
         calibration_type: calType,
         pop: popChoice === "none" ? "none" : String(popAmount).trim(),
       });
+      showJob(data?.job);
       await load();
     } catch (e) {
       alert(e.response?.data?.detail || "Could not complete the job.");
@@ -114,7 +128,8 @@ export default function Field() {
   async function retryXero(jobId) {
     setRetrying(true);
     try {
-      await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      const { data } = await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      showJob(data?.job);
       await load();
     } catch (e) {
       alert(e.response?.data?.detail || "Could not retry the Xero draft.");

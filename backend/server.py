@@ -6319,8 +6319,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+class _PrivateNoStore:
+    """Do not let a browser or CDN store /api responses.
+
+    Safari reuses a GET that has no Cache-Control. The owner then keeps the
+    previous Xero connection and the previous draft badge until a full reload.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or not str(scope.get("path") or "").startswith("/api"):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_private(message):
+            if message["type"] == "http.response.start":
+                headers = [
+                    (key, value)
+                    for key, value in (message.get("headers") or [])
+                    if key.lower() != b"cache-control"
+                ]
+                headers.append((b"cache-control", b"private, no-store"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_private)
+
+
 # Outermost: production (and ENABLE_API_DOCS=false) never serves /docs, /redoc, or /openapi.json.
 app.add_middleware(_DocsGuard)
+app.add_middleware(_PrivateNoStore)
 
 @app.on_event("shutdown")
 async def shutdown():

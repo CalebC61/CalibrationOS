@@ -15,6 +15,33 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — Xero status updates without a browser reload (2026-11-18)
+The owner app kept the previous Xero connection and the previous draft badge
+until a full reload. Three things stacked:
+
+- `GET /api/integrations/status`, `GET /api/jobs`, and the other owner reads
+  sent no `Cache-Control`. Safari (and any cache in front of the API) can reuse
+  that GET, so Disconnect, Retry, and the 5-second poll painted the old JSON.
+- Settings → Integrations loaded the connection once. Coming back from Xero
+  landed on `/settings?xero=connected` while the page still opened on Pricing,
+  so the connected org and the banner never mounted. A page restored from the
+  back-forward cache did not run that load again. Focusing the window did not
+  refetch.
+- Complete and Retry ignored the job in the POST response and waited on the
+  job list. A list read that had already started could finish last and put the
+  old badge back.
+
+`/api` responses now send `Cache-Control: private, no-store`. Each owner GET
+also uses a new query value so a response already sitting in the browser is
+not reused. Settings opens Integrations when the URL is `?xero=connected` or
+`?xero=error`, refetches on focus and on `pageshow`, and shows Disconnected
+as soon as Disconnect succeeds. Dispatch, the field job, and Invoices refetch
+on focus. Complete and Retry paint the returned job immediately, and a slower
+list read cannot replace it with an older `updated_at`. No new env vars.
+`BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged. The browser still
+receives `xero_connected`, `xero_org_name`, and `/api/integrations/status`
+only — not Xero tokens.
+
 ### Changed — shops book only after they log in (2026-11-18)
 A booking link is no longer a way to book, change, cancel, or read a shop's jobs.
 `GET /api/public/shop/{token}`, `POST /api/public/availability`, `POST /api/public/book`,

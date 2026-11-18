@@ -211,3 +211,115 @@ test("a non-owner dispatch login does not get Delete", async () => {
   expect(screen.queryByTestId("job-delete-job-1")).not.toBeInTheDocument();
   expect(screen.queryByTestId("job-edit-job-1")).not.toBeInTheDocument();
 });
+
+const attentionJob = {
+  ...job,
+  status: "complete",
+  xero_draft_status: "needs_attention",
+  xero_attention_reason: "Xero is not connected.",
+  updated_at: "2026-11-17T16:00:00Z",
+};
+
+const draftedJob = {
+  ...attentionJob,
+  xero_draft_status: "draft",
+  xero_invoice_number: "INV-9",
+  xero_invoice_id: "inv-9",
+  xero_attention_reason: null,
+  updated_at: "2026-11-17T16:05:00Z",
+};
+
+test("Retry shows the new Xero draft even when the job list is still the old one", async () => {
+  let jobsCalls = 0;
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) {
+      jobsCalls += 1;
+      if (jobsCalls === 1) return Promise.resolve({ data: [attentionJob] });
+      return Promise.resolve({ data: [attentionJob] });
+    }
+    if (path.includes("/documents")) return Promise.resolve({ data: [] });
+    if (path.includes("/dashboard/summary")) {
+      return Promise.resolve({ data: { job_count: 1, revenue: 125, estimated_miles: 6, done_by: null, shop_emails_enabled: true } });
+    }
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/contractor-offers")) return Promise.resolve({ data: [] });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+  api.post.mockResolvedValue({ data: { job: draftedJob } });
+
+  render(<Dashboard />);
+  fireEvent.click(await screen.findByTestId("xero-retry-job-1"));
+
+  expect(await screen.findByTestId("xero-draft-job-1")).toHaveTextContent("Xero draft INV-9");
+  expect(screen.queryByTestId("xero-attention-job-1")).not.toBeInTheDocument();
+});
+
+test("Complete shows the Xero draft from the response without waiting on a reload", async () => {
+  mockGets([{ file_name: "scan.pdf", content_type: "application/pdf", size_bytes: 100 }]);
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [{ ...job, updated_at: "2026-11-17T16:00:00Z" }] });
+    if (path.includes("/documents")) {
+      return Promise.resolve({ data: [{ file_name: "scan.pdf", content_type: "application/pdf", size_bytes: 100 }] });
+    }
+    if (path.includes("/dashboard/summary")) {
+      return Promise.resolve({ data: { job_count: 1, revenue: 125, estimated_miles: 6, done_by: null, shop_emails_enabled: true } });
+    }
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/contractor-offers")) return Promise.resolve({ data: [] });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+  api.post.mockImplementation((url) => {
+    if (String(url).endsWith("/complete")) {
+      return Promise.resolve({
+        data: {
+          job: {
+            ...job,
+            status: "complete",
+            xero_draft_status: "draft",
+            xero_invoice_number: "INV-9",
+            xero_invoice_id: "inv-9",
+            updated_at: "2026-11-17T16:05:00Z",
+          },
+        },
+      });
+    }
+    return Promise.resolve({ data: {} });
+  });
+
+  render(<Dashboard />);
+  fireEvent.click(await screen.findByTestId("job-action-job-1"));
+  expect(await screen.findByTestId("doc-uploaded")).toHaveTextContent("scan.pdf");
+  fireEvent.change(screen.getByTestId("dash-cal-type-job-1"), { target: { value: "static" } });
+  fireEvent.click(screen.getByTestId("dash-pop-none-job-1"));
+  fireEvent.click(screen.getByTestId("dash-complete-job-1"));
+
+  expect(await screen.findByTestId("xero-draft-job-1")).toHaveTextContent("Xero draft INV-9");
+});
+
+test("focusing the window refreshes a job's Xero badge", async () => {
+  let listed = attentionJob;
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [listed] });
+    if (path.includes("/documents")) return Promise.resolve({ data: [] });
+    if (path.includes("/dashboard/summary")) {
+      return Promise.resolve({ data: { job_count: 1, revenue: 125, estimated_miles: 6, done_by: null, shop_emails_enabled: true } });
+    }
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/contractor-offers")) return Promise.resolve({ data: [] });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+
+  render(<Dashboard />);
+  expect(await screen.findByTestId("xero-attention-job-1")).toBeInTheDocument();
+
+  listed = draftedJob;
+  fireEvent(window, new Event("focus"));
+
+  expect(await screen.findByTestId("xero-draft-job-1")).toHaveTextContent("Xero draft INV-9");
+});
