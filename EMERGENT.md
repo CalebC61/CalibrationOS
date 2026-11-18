@@ -31,6 +31,43 @@ See `CHANGELOG.md` for the full log. Current state:
   on a job scheduled for today in America/Phoenix. Cancel, Complete, Xero
   drafts, billing, and the shop portal are unchanged. `BILLING_ENABLED` and
   `SHOP_EMAILS_ENABLED` are unchanged. No new env vars.
+- **Session (2026-11-18): day-before shop reminder, and booking address suggestions.**
+  At 5:00 PM America/Phoenix the existing background loop emails each shop that
+  has jobs tomorrow. Cancelled and declined jobs are skipped. The mail uses the
+  shop path, so it stays in Email preview while `SHOP_EMAILS_ENABLED` is false.
+  One marker per shop and day blocks a second send. No new env var.
+  `BILLING_ENABLED` is unchanged. On `/portal/book`, editing the prefilled shop
+  address shows Places suggestions. The Phoenix service-area check is unchanged.
+- **Session (2026-11-18): 30-day warranty redos.** A job can be a redo of one
+  of that shop's completed jobs. Within 30 Phoenix days of the original
+  completion the redo is $0, and Complete skips the Xero draft and the card
+  charge and records why. Day 31 is billed normally. The shop picks the
+  original job while booking. The owner can set or clear the link on edit.
+  Another shop's job, or a job that is not completed, is rejected. Badges show
+  on Dispatch, the field job, and My Jobs. No new env vars. `BILLING_ENABLED`
+  and `SHOP_EMAILS_ENABLED` are unchanged. A free redo sends no email or text.
+- **Session (2026-11-18): declined jobs leave the new-booking banner.**
+  `GET /api/notifications/new-bookings` skips `declined` as well as
+  `cancelled`. Decline marks that job's alert seen. Dispatch updates the
+  banner count as soon as the owner declines or cancels. `GET /api/jobs?closed=true`
+  is the owner list of cancelled and declined jobs. Dispatch shows that list
+  with the existing Delete confirmation. The day board and
+  `include_cancelled=true` are unchanged. No new env vars.
+  `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged.
+- **Session (2026-11-18): Xero badges update without a reload.** Connection
+  status and draft badges were stuck until a full refresh because API GETs
+  were cacheable, Settings did not reopen Integrations after the Xero
+  redirect, and Complete/Retry ignored the job in the response. `/api`
+  responses are `Cache-Control: private, no-store`. The owner UI refetches
+  on focus and after the OAuth return. No new env vars. Tokens stay off the
+  client. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+- **Session (2026-11-18): shops book only after they log in.** Public `/book/{token}` and
+  `/scorecard/{token}` no longer show or change jobs. Booking, edits, cancels, and the
+  scorecard go through the shop portal. The owner still books for a shop from the shop
+  page, and can still delete a job. Response allowlists still hide Stripe ids, Xero
+  tokens, and password hashes. The public site Book a job buttons go to signup, or to
+  portal Book when the shop is already logged in. Welcome mail points at the portal
+  login. `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged. Details in `CHANGELOG.md`.
 - **Session (2026-11-18): the owner can delete a job.** `DELETE /api/jobs/{id}`
   is owner-only (shop and technician logins are 403). It removes the job and
   its documents, alerts, and action tokens. Offer rows are left in place.

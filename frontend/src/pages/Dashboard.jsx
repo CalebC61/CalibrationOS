@@ -1,11 +1,14 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import { api, formatTime, formatDate, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, isPhoenixToday, jobStatusLabel } from "../lib/api";
+import { fresherJob, mergeJobList } from "../lib/jobState";
+import { useRefreshOnShow } from "../lib/refreshOnShow";
 import Shell from "../components/Shell";
 import RouteMap from "../components/RouteMap";
 import RescheduleCancelModal from "../components/RescheduleCancelModal";
 import TomorrowStrip from "../components/TomorrowStrip";
 import JobEditModal from "../components/JobEditModal";
+import WarrantyBadge from "../components/WarrantyBadge";
 
 const STATUS_FLOW = {
   booked: { next: "driving", label: "Start Driving" },
@@ -30,25 +33,43 @@ export default function Dashboard() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [closedOpen, setClosedOpen] = useState(false);
+  const [closedJobs, setClosedJobs] = useState([]);
+  const [closedStatus, setClosedStatus] = useState("idle");
+  const [closedError, setClosedError] = useState("");
   const removedJobIds = useRef(new Set());
+  const silencedAlertJobs = useRef(new Set());
+  const loadGen = useRef(0);
 
   const load = useCallback(async () => {
+    const gen = ++loadGen.current;
     try {
       const [j, s, a] = await Promise.all([
         api.get(`/jobs?date_str=${date}`),
         api.get(`/dashboard/summary?date_str=${date}`),
         api.get(`/notifications/new-bookings`),
       ]);
+      if (gen !== loadGen.current) return;
       const visible = (j.data || []).filter(job => !removedJobIds.current.has(job.id));
-      const alertRows = (a.data?.alerts || []).filter(alert => !removedJobIds.current.has(alert.job_id));
-      setJobs(visible); setSummary(s.data); setAlerts({ count: alertRows.length, alerts: alertRows });
+      const alertRows = (a.data?.alerts || []).filter(alert =>
+        !removedJobIds.current.has(alert.job_id) && !silencedAlertJobs.current.has(alert.job_id)
+      );
+      setJobs(current => mergeJobList(current, visible)); setSummary(s.data); setAlerts({ count: alertRows.length, alerts: alertRows });
       try {
         const t = await api.get("/routing-techs");
+        if (gen !== loadGen.current) return;
         setTechs(t.data || []);
       } catch { setTechs([]); }
     } catch (e) { console.error(e); }
   }, [date]);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  useRefreshOnShow(load);
+
+  function showJob(job) {
+    if (!job?.id) return;
+    loadGen.current += 1;
+    setJobs(current => current.map(item => item.id === job.id ? fresherJob(item, job) : item));
+  }
 
   async function markSeen() {
     await api.post("/notifications/mark-seen");
@@ -81,7 +102,8 @@ export default function Dashboard() {
   }
   async function retryXero(jobId) {
     try {
-      await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      const { data } = await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      showJob(data?.job);
       load();
     } catch (err) {
       alert(err.response?.data?.detail || "Could not retry the Xero draft.");
@@ -106,11 +128,48 @@ export default function Dashboard() {
   }
   async function completeJob(jobId, body) {
     try {
-      await api.post(`/jobs/${jobId}/complete`, body);
+      const { data } = await api.post(`/jobs/${jobId}/complete`, body);
+      showJob(data?.job);
     } catch (err) {
       alert(err.response?.data?.detail || "Could not complete the job.");
       return;
     }
+    load();
+  }
+  function silenceBookingAlert(jobId) {
+    if (!jobId) return;
+    silencedAlertJobs.current.add(jobId);
+    setAlerts(current => {
+      const next = (current.alerts || []).filter(alert => alert.job_id !== jobId);
+      return { count: next.length, alerts: next };
+    });
+  }
+  async function loadClosed() {
+    setClosedStatus("loading");
+    setClosedError("");
+    try {
+      const { data } = await api.get("/jobs?closed=true");
+      if (!Array.isArray(data)) throw new Error("not a list");
+      setClosedJobs(data.filter(row =>
+        !removedJobIds.current.has(row.id)
+        && (row.status === "cancelled" || row.status === "declined")
+      ));
+      setClosedStatus("ready");
+    } catch {
+      setClosedStatus("error");
+      setClosedError("Couldn't load cancelled and declined jobs.");
+    }
+  }
+  function toggleClosed() {
+    if (closedOpen) {
+      setClosedOpen(false);
+      return;
+    }
+    setClosedOpen(true);
+    loadClosed();
+  }
+  function finishScheduleChange() {
+    if (rescheduleTarget?.mode === "cancel") silenceBookingAlert(rescheduleTarget.job?.id);
     load();
   }
   function askDelete(job) {
@@ -126,6 +185,7 @@ export default function Dashboard() {
       const removed = deleteTarget;
       removedJobIds.current.add(removed.id);
       setJobs(current => current.filter(job => job.id !== removed.id));
+      setClosedJobs(current => current.filter(job => job.id !== removed.id));
       setAlerts(current => {
         const next = (current.alerts || []).filter(alert => alert.job_id !== removed.id);
         return { count: next.length, alerts: next };
@@ -149,6 +209,7 @@ export default function Dashboard() {
   async function decideApproval(jobId, approve) {
     try {
       await api.post(`/jobs/${jobId}/${approve ? "approve" : "decline"}`);
+      if (!approve) silenceBookingAlert(jobId);
       load();
     } catch (e) {
       alert(e.response?.data?.detail || "Could not update that request.");
@@ -268,10 +329,16 @@ export default function Dashboard() {
           <h1 className="h1" style={{ margin: "4px 0" }}>
             {new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
           </h1>
-          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
             <button className="btn btn-ghost" onClick={() => shiftDate(-1)} data-testid="prev-day">← Prev</button>
             <button className="btn btn-ghost" onClick={() => setDate(phoenixTodayStr())} data-testid="today-btn">Today</button>
             <button className="btn btn-ghost" onClick={() => shiftDate(1)} data-testid="next-day">Next →</button>
+            {isOwner && (
+              <button type="button" className={closedOpen ? "btn btn-primary" : "btn btn-ghost"}
+                aria-pressed={closedOpen} onClick={toggleClosed} data-testid="closed-jobs-toggle">
+                Cancelled & declined
+              </button>
+            )}
           </div>
         </div>
         {summary && (
@@ -284,6 +351,11 @@ export default function Dashboard() {
         )}
       </div>
 
+      {closedOpen ? (
+        <ClosedJobs jobs={closedJobs} status={closedStatus} error={closedError}
+          onRetry={loadClosed} onDelete={askDelete} />
+      ) : (
+      <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 16, marginBottom: 20 }}>
         {panels.map(({ tech, jobs: techJobs }) => (
           <ZonePanel key={tech.id}
@@ -340,6 +412,8 @@ export default function Dashboard() {
           <div className="surface muted" style={{ padding: 16, textAlign: "center" }}>No jobs on this day.</div>
         )}
       </section>
+      </>
+      )}
 
       <JobEditModal open={!!editTarget} job={editTarget}
         onClose={() => setEditTarget(null)} onDone={load} />
@@ -348,9 +422,99 @@ export default function Dashboard() {
         onConfirm={confirmDelete} />
       <RescheduleCancelModal open={!!rescheduleTarget} job={rescheduleTarget?.job}
         mode={rescheduleTarget?.mode}
-        onClose={() => setRescheduleTarget(null)} onDone={load} />
+        onClose={() => setRescheduleTarget(null)} onDone={finishScheduleChange} />
       <TomorrowStrip baseDate={date} />
     </Shell>
+  );
+}
+
+function closedText(value) {
+  const text = value === null || value === undefined ? "" : String(value).trim();
+  return text || "—";
+}
+
+function closedCustomer(job) {
+  return closedText([job.customer_first_name, job.customer_last_name].filter(Boolean).join(" "));
+}
+
+function closedVehicle(job) {
+  return closedText([job.vehicle_year, job.vehicle_make, job.vehicle_model].filter(part => part !== null && part !== undefined && String(part).trim() !== "").join(" "));
+}
+
+function closedStatusLabel(status) {
+  if (status === "cancelled") return "Cancelled";
+  if (status === "declined") return "Declined";
+  return jobStatusLabel(status);
+}
+
+function ClosedJobs({ jobs, status, error, onRetry, onDelete }) {
+  return (
+    <section aria-labelledby="closed-jobs-title" data-testid="closed-jobs" style={{ marginBottom: 20 }}>
+      <h2 id="closed-jobs-title" className="h3" style={{ margin: "0 0 4px" }}>Cancelled & declined</h2>
+      <p className="muted" style={{ fontSize: 14, margin: "0 0 12px" }}>
+        Jobs taken off the day board. The date is when the job was scheduled.
+      </p>
+      {status === "loading" && jobs.length === 0 && (
+        <div className="muted" style={{ fontSize: 14 }} data-testid="closed-jobs-loading">Loading cancelled and declined jobs.</div>
+      )}
+      {status === "error" && (
+        <div className="surface" style={{ padding: 16 }} role="alert">
+          <div style={{ color: "var(--red)", fontSize: 14, marginBottom: 10 }}>{error}</div>
+          <button type="button" className="btn btn-ghost" onClick={onRetry} data-testid="closed-jobs-retry">Try again</button>
+        </div>
+      )}
+      {status === "ready" && jobs.length === 0 && (
+        <div className="surface muted" style={{ padding: 16 }} data-testid="closed-jobs-empty">No cancelled or declined jobs.</div>
+      )}
+      {jobs.length > 0 && (
+        <div className="surface closed-board">
+          <div className="closed-head">
+            <span>Date</span>
+            <span>Shop</span>
+            <span>Vehicle</span>
+            <span>Customer</span>
+            <span>Status</span>
+            <span>Reason</span>
+            <span />
+          </div>
+          {jobs.map(row => (
+            <div key={row.id} className="closed-row" data-testid={`closed-job-${row.id}`}>
+              <div>
+                <span className="closed-k">Date</span>
+                <span>{row.scheduled_start ? formatDate(row.scheduled_start) : "—"}</span>
+              </div>
+              <div>
+                <span className="closed-k">Shop</span>
+                <span>{closedText(row.shop_name)}</span>
+              </div>
+              <div>
+                <span className="closed-k">Vehicle</span>
+                <span>{closedVehicle(row)}</span>
+              </div>
+              <div>
+                <span className="closed-k">Customer</span>
+                <span>{closedCustomer(row)}</span>
+              </div>
+              <div>
+                <span className="closed-k">Status</span>
+                <span className={`badge badge-${row.status}`}>{closedStatusLabel(row.status)}</span>
+              </div>
+              <div>
+                <span className="closed-k">Reason</span>
+                <span data-testid={`closed-reason-${row.id}`}>{closedText(row.cancellation_reason)}</span>
+              </div>
+              <div className="closed-action">
+                <button type="button" className="btn btn-danger" onClick={() => onDelete(row)}
+                  data-testid={`job-delete-${row.id}`}
+                  style={{ color: "#FCA5A5", borderColor: "rgba(252, 165, 165, 0.45)" }}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -540,6 +704,7 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
               fontSize: 12, fontWeight: 600,
             }}>#{index}</span>
             <span className={`badge badge-${job.status}`}>{jobStatusLabel(job.status)}</span>
+            <WarrantyBadge job={job} />
             {isNew && <span className="badge" style={{ background: "var(--accent)", color: "#0a0a0a", border: "1px solid var(--accent)" }} data-testid="badge-new">NEW</span>}
             {job.outside_service_area && !job.calibration_not_performed && <span className="badge badge-draft">Outside area +$30</span>}
             {job.calibration_not_performed && <span className="badge badge-draft">Trip fee only</span>}
@@ -586,6 +751,11 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
           <div className="font-mono" style={{ fontSize: 13, marginTop: 4 }}>${job.price.toFixed(2)}</div>
         </div>
       </div>
+      {job.warranty_skip_reason && (
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }} data-testid={`warranty-reason-${job.id}`}>
+          {job.warranty_skip_reason}
+        </div>
+      )}
       {job.status === "complete" && job.xero_draft_status === "needs_attention" && job.xero_attention_reason && (
         <div className="muted" style={{ fontSize: 13, marginTop: 8 }} data-testid={`xero-reason-${job.id}`}>
           {job.xero_attention_reason}
@@ -609,14 +779,14 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
               data-testid={`job-decline-${job.id}`}>Decline</button>
           </>
         )}
-        {!job.invoice_id && !job.charged_at && job.payment_status !== "paid" && job.status !== "cancelled" && job.status !== "declined" && (
+        {!job.warranty_eligible && !job.invoice_id && !job.charged_at && job.payment_status !== "paid" && job.status !== "cancelled" && job.status !== "declined" && (
           <TripFeeControls job={job} onOutside={onOutside} onTripFee={onTripFee} />
         )}
-        {job.payment_mode !== "invoice_hold" && !job.charged_at && job.payment_status !== "paid" && (
+        {!job.warranty_eligible && job.payment_mode !== "invoice_hold" && !job.charged_at && job.payment_status !== "paid" && (
           <button className="btn btn-ghost" onClick={() => onPayment(job.id, "invoice_hold")}>Invoice this job</button>
         )}
-        {job.status === "complete" && job.payment_status !== "paid" && !job.charged_at && (
-          <button className="btn btn-primary" onClick={() => onCharge(job.id)}>Charge card now</button>
+        {!job.warranty_eligible && job.status === "complete" && job.payment_status !== "paid" && !job.charged_at && (
+          <button className="btn btn-primary" onClick={() => onCharge(job.id)} data-testid={`job-charge-${job.id}`}>Charge card now</button>
         )}
         {job.status === "complete" && job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id) && (
           <span className="badge badge-draft" data-testid={`xero-draft-${job.id}`}>

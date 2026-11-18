@@ -100,6 +100,10 @@ class _DB:
         self.drive_time_cache = _Store()
 
 
+def _office():
+    return {"Authorization": f"Bearer {server.make_token('caleb', 'owner')}"}
+
+
 def _db():
     db = _DB()
     db.technicians.docs.append({
@@ -194,7 +198,7 @@ def test_early_arrival_is_held_until_the_owner_decides(monkeypatch):
 
     async def run():
         async with _client() as client:
-            avail = await client.post("/api/public/availability", json={
+            avail = await client.post("/api/shops/shop-1/availability", headers=_office(), json={
                 "booking_token": "tok", "job_address": "Surprise, AZ", "date": day.isoformat(),
             })
             assert avail.status_code == 200, avail.text
@@ -212,7 +216,7 @@ def test_early_arrival_is_held_until_the_owner_decides(monkeypatch):
                 instant, _ = zone_window(day, time(hour, minute), time(17, 0))
                 assert instant.isoformat() in starts
                 assert starts[instant.isoformat()]["requires_approval"] is False
-            booked = await client.post("/api/public/book", json={
+            booked = await client.post("/api/shops/shop-1/book", headers=_office(), json={
                 **PAYLOAD, "job_address": "Surprise, AZ", "scheduled_start": seven_thirty.isoformat(),
             })
             assert booked.status_code == 200, booked.text
@@ -221,7 +225,7 @@ def test_early_arrival_is_held_until_the_owner_decides(monkeypatch):
             assert body["requires_approval"] is True
             assert texts == []
             assert emails
-            again = await client.post("/api/public/book", json={
+            again = await client.post("/api/shops/shop-1/book", headers=_office(), json={
                 **PAYLOAD, "job_address": "Surprise, AZ", "scheduled_start": seven_thirty.isoformat(),
             })
             assert again.status_code == 400
@@ -241,7 +245,7 @@ def test_early_arrival_is_held_until_the_owner_decides(monkeypatch):
             assert texts == []
             # A normal late-morning time on a future day is still confirmed.
             # This shop has no email, and 10:00 is not an owner alert, so nothing is texted.
-            standard = await client.post("/api/public/book", json={
+            standard = await client.post("/api/shops/shop-1/book", headers=_office(), json={
                 **PAYLOAD, "job_address": "Mesa, AZ", "scheduled_start": ten.isoformat(),
             })
             assert standard.status_code == 200, standard.text
@@ -268,7 +272,7 @@ def test_goodyear_after_east_valley_is_not_auto_accepted(monkeypatch):
 
     async def run():
         async with _client() as client:
-            avail = await client.post("/api/public/availability", json={
+            avail = await client.post("/api/shops/shop-1/availability", headers=_office(), json={
                 "booking_token": "tok", "job_address": "Goodyear, AZ", "date": NOW.date().isoformat(),
             })
             assert avail.status_code == 200, avail.text
@@ -277,7 +281,7 @@ def test_goodyear_after_east_valley_is_not_auto_accepted(monkeypatch):
             assert all(slot["requires_approval"] for slot in slots)
             assert "add-on" not in avail.text.lower()
             chosen = slots[0]["start"]
-            booked = await client.post("/api/public/book", json={
+            booked = await client.post("/api/shops/shop-1/book", headers=_office(), json={
                 **PAYLOAD, "job_address": "Goodyear, AZ", "scheduled_start": chosen,
             })
             assert booked.status_code == 200, booked.text
@@ -309,19 +313,19 @@ def test_over_limit_can_be_hidden_and_today_closes_at_the_cutoff(monkeypatch):
 
     async def run():
         async with _client() as client:
-            hidden = await client.post("/api/public/availability", json={
+            hidden = await client.post("/api/shops/shop-1/availability", headers=_office(), json={
                 "booking_token": "tok", "job_address": "Goodyear, AZ", "date": NOW.date().isoformat(),
             })
             assert hidden.status_code == 200, hidden.text
             assert hidden.json()["slots"] == []
-            forced = await client.post("/api/public/book", json={
+            forced = await client.post("/api/shops/shop-1/book", headers=_office(), json={
                 **PAYLOAD, "job_address": "Goodyear, AZ", "scheduled_start": eleven.isoformat(),
             })
             assert forced.status_code == 400
             assert "today" in forced.json()["detail"].lower()
             monkeypatch.setattr(server, "now_utc", lambda: AFTER_CUTOFF)
             db.technicians.docs[0]["same_day_over_limit"] = "pending"
-            closed = await client.post("/api/public/availability", json={
+            closed = await client.post("/api/shops/shop-1/availability", headers=_office(), json={
                 "booking_token": "tok", "job_address": "Goodyear, AZ", "date": NOW.date().isoformat(),
             })
             assert closed.json()["slots"] == []

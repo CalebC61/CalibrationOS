@@ -49,6 +49,130 @@ the next day. On any other day the buttons are disabled and the screen says
 no text. Cancel and Complete still work on a job that is not today. A 6:30 PM
 Phoenix job is still today.
 
+### Added — day-before reminder for shops (2026-11-18)
+Each evening at 5:00 PM America/Phoenix, every shop with jobs the next Phoenix
+day gets one email. It lists each job's vehicle, customer, address, calibration
+type, and estimated arrival (the scheduled start through the scheduled end,
+Phoenix time), and a link to the shop portal. Cancelled and declined jobs are
+left out. A shop with only those jobs gets no email.
+
+The note goes through the same shop mail path as a booking confirmation. While
+`SHOP_EMAILS_ENABLED` is false, which is still the default, it is stored for
+Email preview and Resend is not called. `day_before_reminders` keeps one marker
+per shop and Phoenix day, so a second pass does not send again. If the send
+throws, that shop's marker is removed and the loop retries in five minutes.
+
+The pass uses the in-process loop that already runs the late-fee sweep. It
+sleeps until 5:00 PM Phoenix. If the process is down at 5:00 and comes back
+later that evening, it still sends, until midnight. No new environment
+variable. `BILLING_ENABLED` is unchanged.
+
+### Fixed — address suggestions when the booking address is already filled (2026-11-18)
+`/portal/book` starts with the shop's address. That box was plain text, so
+editing it never offered a Google suggestion. The Places widget also hides its
+list after a value is written onto it. The field now asks the Places
+autocomplete data for suggestions on every edit, whether or not the shop
+address was already there. A picked suggestion still fills the street. "In our
+Phoenix service area" still follows the shop-address shortcut and the geocode
+check, including while the address is being typed. Without
+`REACT_APP_GOOGLE_MAPS_API_KEY`, it stays a typed address.
+
+### Added — 30-day warranty redos (2026-11-18)
+Every recalibration can be tied to an earlier completed job (`warranty_of_job_id`).
+The shop portal booking form has an optional "This is a redo of a past job"
+choice. It lists that shop's own completed jobs from the last 90 days, by
+vehicle, customer, and completion date. The owner can set or clear the same
+link while editing a job. A shop login cannot change the link after booking,
+and the server rejects another shop's job or a job that is not completed.
+
+Eligibility is Phoenix calendar days: the redo date minus the original
+completion date. 30 days is free. 31 days is billed. A free redo is priced at
+$0 and labeled "Warranty redo (free)". On Complete, that job does not get a
+Xero draft and the card is not charged. The job records why
+(`warranty_skip_reason`, `charge_skipped`, `xero_skipped_reason`). A redo past
+30 days keeps the shop's normal rate, the normal Xero draft, and the normal
+charge flow, and is labeled "Past 30-day warranty — billed normally".
+
+The badge shows on the owner Dispatch card, the field job page, and the shop's
+My Jobs. No new env vars. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are
+unchanged. A free redo does not send the completion text or the invoice email.
+
+### Fixed — declined jobs leave the new-booking banner, and the owner can delete them (2026-11-18)
+Declining a pending job took it off the dispatch day, but its unseen
+new-booking alert stayed. The banner and its count still included that job
+until a full reload, and a reload did not help, because
+`GET /api/notifications/new-bookings` only dropped alerts whose job was
+`cancelled`. Decline never set `seen_at`.
+
+The banner now drops alerts for `declined` jobs as well as `cancelled` jobs,
+including ones declined before this change. Decline (the dispatch button and
+the owner email link) sets `seen_at` on that job's alerts only. After Decline
+or Cancel, the dispatch banner count updates immediately. A later poll cannot
+put that job's alert back.
+
+Cancelled and declined jobs are still off the day board, so Delete was
+unreachable. `GET /api/jobs?closed=true` is owner-only and returns those jobs
+across dates, newest update first, up to 1,000. The day list and `include_cancelled=true`
+are unchanged: declined jobs stay out of the day and out of that history flag.
+Dispatch has a Cancelled & declined control. The list shows date, shop,
+vehicle, customer, status, and reason. Each row uses the existing Delete
+action and its Yes, delete confirmation. Delete is still
+`DELETE /api/jobs/{job_id}`: owner-only, no email, no text, and invoice rows
+stay. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+
+### Fixed — Xero status updates without a browser reload (2026-11-18)
+The owner app kept the previous Xero connection and the previous draft badge
+until a full reload. Three things stacked:
+
+- `GET /api/integrations/status`, `GET /api/jobs`, and the other owner reads
+  sent no `Cache-Control`. Safari (and any cache in front of the API) can reuse
+  that GET, so Disconnect, Retry, and the 5-second poll painted the old JSON.
+- Settings → Integrations loaded the connection once. Coming back from Xero
+  landed on `/settings?xero=connected` while the page still opened on Pricing,
+  so the connected org and the banner never mounted. A page restored from the
+  back-forward cache did not run that load again. Focusing the window did not
+  refetch.
+- Complete and Retry ignored the job in the POST response and waited on the
+  job list. A list read that had already started could finish last and put the
+  old badge back.
+
+`/api` responses now send `Cache-Control: private, no-store`. Each owner GET
+also uses a new query value so a response already sitting in the browser is
+not reused. Settings opens Integrations when the URL is `?xero=connected` or
+`?xero=error`, refetches on focus and on `pageshow`, and shows Disconnected
+as soon as Disconnect succeeds. Dispatch, the field job, and Invoices refetch
+on focus. Complete and Retry paint the returned job immediately, and a slower
+list read cannot replace it with an older `updated_at`. No new env vars.
+`BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged. The browser still
+receives `xero_connected`, `xero_org_name`, and `/api/integrations/status`
+only — not Xero tokens.
+
+### Changed — shops book only after they log in (2026-11-18)
+A booking link is no longer a way to book, change, cancel, or read a shop's jobs.
+`GET /api/public/shop/{token}`, `POST /api/public/availability`, `POST /api/public/book`,
+`GET /api/public/bookings/{token}`, `PATCH /api/public/bookings/{token}/{job_id}`,
+`POST /api/public/bookings/{token}/{job_id}/cancel`, and `GET /api/public/shop-status/{token}`
+are gone. Old `/book/{token}` and `/scorecard/{token}` pages send the visitor to the shop
+portal login and do not show job data.
+
+Shops book, see open times, edit, and cancel through the portal login:
+`POST /api/portal/availability`, `POST /api/portal/book`, `PATCH /api/portal/jobs/{job_id}`,
+`POST /api/portal/jobs/{job_id}/cancel`, and `GET /api/portal/scorecard` (that shop only).
+The card-on-file and charge-terms checks are unchanged. `SHOP_EMAILS_ENABLED` and
+`BILLING_ENABLED` are unchanged. Shop and staff responses still use the allowlists from
+`backend/client_views.py`: no Stripe ids, Xero tokens, or password hashes. The owner
+delete-job action is unchanged.
+
+The owner still books for a shop from the shop page (`POST /api/shops/{shop_id}/book` and
+`POST /api/shops/{shop_id}/availability`). Owner reschedule uses that availability route.
+Welcome mail and the owner "finished signup" mail point at `/portal/login`. The invite
+mail still opens the setup page, and says booking happens in the shop portal.
+
+The public site's Book a job buttons (header, footer, pricing, contact) go to shop
+signup, or to portal Book when that browser is already logged into a shop. They no
+longer open Calendly. The portal booking form checks a changed address while it is
+being typed, so Continue can turn on before the field loses focus.
+
 ### Fixed — session and shop responses no longer include credentials (2026-11-18)
 `GET /api/auth/me` returned the owner Mongo document. That document holds the
 Xero access token, refresh token, token expiry, and tenant id. Password hashes

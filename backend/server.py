@@ -113,11 +113,15 @@ from onboarding import (
 )
 from owner_reads import owner_documents, public_invite
 from client_views import public_shop as client_shop, public_shop_user, public_staff
-# Invite, reset, and booking links. A blank FRONTEND_URL uses the public site.
+# Invite, reset, and portal links. A blank FRONTEND_URL uses the public site.
 FRONTEND_URL = resolve_frontend_url(_env("FRONTEND_URL"), PUBLIC_SITE_URL)
 from billing import (
     CHARGE_MODE, INVOICE_MODE, TRIP_FEE_REASONS, amount_due, apply_late_fee, apply_trip_fee_only,
     billing_plan, payment_mode, set_outside_service_area, treat_decline_as_invoice,
+)
+from warranty import (
+    SKIP_REASON, WarrantyError, completion_skip_fields, list_warranty_candidates,
+    priced_warranty, validate_original,
 )
 from payments import (
     CardSetupError,
@@ -146,6 +150,7 @@ from booking_mail import (
     booking_confirmation_email, mail_route, normalize_us_phone, owner_alert_email,
     owner_needs_alert, shop_emails_enabled, shop_event_email,
 )
+from day_before import next_reminder_delay, run_reminders
 from days_off import closure_message, holiday_records, jobs_to_flag, parse_range
 from owner_links import assess_owner_link, mark_used, mint_owner_link, token_claims
 from business_time import (
@@ -153,7 +158,7 @@ from business_time import (
     offered_slot_starts, zone_window,
 )
 from booking_fields import completion_notes, job_customer_fields
-from job_edits import changed_keys, is_upcoming, prepare_edit, shift_scheduled_end
+from job_edits import changed_keys, prepare_edit, shift_scheduled_end
 from regeocode import (
     detect_zone, jobs_on_phoenix_day, location_set, regeocode_records,
     regeocode_scope, zone_for_geocode,
@@ -1133,6 +1138,19 @@ async def create_invoice_for_job(job_id: str) -> dict:
     job = await db.jobs.find_one({"id": job_id})
     if not job:
         raise HTTPException(404, "Job not found")
+    if job.get("warranty_eligible"):
+        reason = job.get("warranty_skip_reason") or job.get("xero_skipped_reason") or SKIP_REASON
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "xero_draft_status": "skipped",
+            "xero_skipped_reason": reason,
+        }})
+        return {
+            "status": "skipped",
+            "reason": reason,
+            "invoice_id": None,
+            "invoice_number": None,
+            "url": None,
+        }
     state = state_from_job(job)
     shop = await db.shops.find_one({"id": job.get("shop_id")}) or {
         "id": job.get("shop_id"), "name": job.get("shop_name") or "",
@@ -1306,13 +1324,13 @@ class ShopIn(BaseModel):
 class ShopUpdate(ShopIn):
     status: Optional[Literal["active", "paused", "inactive", "suspended"]] = None
 
-class SlotQuery(BaseModel):
-    booking_token: str
+class AvailabilityIn(BaseModel):
     job_address: str
     date: str  # YYYY-MM-DD
 
 class BookingIn(BaseModel):
-    booking_token: str
+    # Older portal screens sent this. It is ignored. The shop comes from the login.
+    booking_token: Optional[str] = None
     job_address: str
     scheduled_start: str  # ISO datetime
     customer_last_name: str
@@ -1328,6 +1346,7 @@ class BookingIn(BaseModel):
     notification_phone: Optional[str] = None
     notification_email: Optional[str] = None
     invoice_instead: bool = False
+    warranty_of_job_id: Optional[str] = None
 
 class JobEditIn(BaseModel):
     job_address: Optional[str] = None
@@ -1344,6 +1363,7 @@ class JobEditIn(BaseModel):
     scheduled_start: Optional[str] = None
     zone: Optional[Literal["west", "east"]] = None
     notes: Optional[str] = None
+    warranty_of_job_id: Optional[str] = None
 
 class JobStatusUpdate(BaseModel):
     status: Literal["driving", "on_site", "complete", "cancelled"]
@@ -1717,7 +1737,13 @@ async def get_shop(shop_id: str, tech=Depends(require_owner)):
     shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
     if not shop:
         raise HTTPException(404, "Shop not found")
-    return client_shop(shop)
+    gate = await _booking_gate_for_shop(shop)
+    return client_shop({
+        **shop,
+        "prices": quoted_prices(shop),
+        "booking_open": gate["allowed"],
+        "booking_message": gate["message"],
+    })
 
 @api.put("/shops/{shop_id}")
 async def update_shop(shop_id: str, data: ShopUpdate, tech=Depends(require_owner)):
@@ -1772,33 +1798,11 @@ async def regenerate_link(shop_id: str, tech=Depends(require_owner)):
     await db.shops.update_one({"id": shop_id}, {"$set": {"booking_link_token": token, "updated_at": iso(now_utc())}})
     return {"booking_link_token": token}
 
-# ---------- Public booking by token ----------
+# ---------- Booking (portal login, or the owner booking for a shop) ----------
 async def _booking_gate_for_shop(shop: dict) -> dict:
     user = await _billing_user_for(shop.get("id"))
     return booking_gate(shop, user)
 
-
-_PUBLIC_SHOP_KEYS = (
-    "custom_rate_static", "custom_rate_dynamic", "custom_rate_dual", "custom_rate_triple",
-    "custom_rate_tesla", "pricing_tier", "name", "address", "contact_phone", "contact_email",
-    "id", "booking_link_token", "zone", "requires_billing_setup", "status", "lat", "lng",
-    "formatted_address", "geocode_source",
-)
-
-
-@api.get("/public/shop/{token}")
-async def public_shop(token: str):
-    shop = await db.shops.find_one({"booking_link_token": token}, {"_id": 0})
-    if not shop or shop.get("status") not in ("active", "suspended"):
-        raise HTTPException(404, "This booking link is not active. Contact The Calibration Crew.")
-    gate = await _booking_gate_for_shop(shop)
-    public = {key: shop.get(key) for key in _PUBLIC_SHOP_KEYS if key in shop}
-    return {
-        **public,
-        "prices": quoted_prices(shop),
-        "booking_open": gate["allowed"],
-        "booking_message": gate["message"],
-    }
 
 def shop_price_for(shop: dict, cal_type: str) -> float:
     """This shop's wholesale rate for the calibration. The $30 trip fee is not included.
@@ -2395,16 +2399,6 @@ async def _arrival_plan(tech, day, start: datetime, new_point: tuple, jobs: list
     decided["duration_minutes"] = ctx["duration"]
     return decided
 
-async def _shop_for_booking_token(token: str) -> dict:
-    """Active shop for a booking link. A suspended shop is a 403, not a missing link."""
-    shop = await db.shops.find_one({"booking_link_token": token})
-    if shop and shop.get("status") == "suspended":
-        raise HTTPException(403, "This shop is suspended and cannot book.")
-    if not shop or shop.get("status") != "active":
-        raise HTTPException(404, "Invalid booking link")
-    return shop
-
-
 async def _pin_for_job(shop: dict, address: str) -> dict:
     """Reuse the shop's signup pin when the job is still at that address."""
     saved = reused_shop_pin(shop, address)
@@ -2416,15 +2410,14 @@ async def _pin_for_job(shop: dict, address: str) -> dict:
         raise HTTPException(400, str(exc))
 
 
-@api.post("/public/availability")
-async def public_availability(query: SlotQuery):
-    try:
-        shop = await _shop_for_booking_token(query.booking_token)
-    except HTTPException as exc:
-        if exc.status_code == 403:
-            return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
-                    "message": exc.detail if isinstance(exc.detail, str) else "This shop is suspended and cannot book."}
-        raise
+async def _availability_for_shop(shop: dict | None, query: AvailabilityIn):
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    if shop.get("status") == "suspended":
+        return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
+                "message": "This shop is suspended and cannot book."}
+    if shop.get("status") != "active":
+        raise HTTPException(400, "Your shop is not active")
     gate = await _booking_gate_for_shop(shop)
     if not gate["allowed"]:
         return {"zone": None, "in_metro": True, "slots": [], "booking_open": False,
@@ -2466,16 +2459,29 @@ async def public_availability(query: SlotQuery):
         payload["message"] = closed_message
     return payload
 
-@api.post("/public/book")
-async def public_book(data: BookingIn):
+async def _book_job(shop: dict | None, data: BookingIn):
+    """Create a job for this shop. The caller has already proved who they are."""
     try:
         data.notification_phone = normalize_us_phone(data.notification_phone)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    shop = await _shop_for_booking_token(data.booking_token)
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    if shop.get("status") == "suspended":
+        raise HTTPException(403, "This shop is suspended and cannot book.")
+    if shop.get("status") != "active":
+        raise HTTPException(400, "Your shop is not active")
     gate = await _booking_gate_for_shop(shop)
     if not gate["allowed"]:
         raise HTTPException(403, gate["message"])
+    warranty_link = (data.warranty_of_job_id or "").strip()
+    warranty_original = None
+    if warranty_link:
+        warranty_original = await db.jobs.find_one({"id": warranty_link}, {"_id": 0})
+        try:
+            validate_original(warranty_original, shop["id"])
+        except WarrantyError as exc:
+            raise HTTPException(400, exc.message) from exc
     geo = await _pin_for_job(shop, data.job_address)
     if not geo["in_metro"] or pin_refusal(geo):
         raise HTTPException(400, OUTSIDE_VALLEY)
@@ -2520,7 +2526,12 @@ async def public_book(data: BookingIn):
     await db.vehicles.insert_one(vehicle.copy())
 
     # Wholesale for this shop and calibration. The $30 trip fee is added later, on its own.
+    # A warranty redo inside 30 Phoenix days replaces that price with $0.
     price = shop_price_for(shop, data.calibration_type)
+    warranty_fields = {}
+    if warranty_original:
+        warranty_fields = priced_warranty(warranty_original, start_dt, price)
+        price = warranty_fields["price"]
 
     # Sequence is this technician's jobs that Phoenix day, on either side of the valley.
     seq_query = {
@@ -2569,6 +2580,7 @@ async def public_book(data: BookingIn):
         "vehicle_year": data.year, "vehicle_make": data.make, "vehicle_model": data.model, "vehicle_vin": data.vin,
         "created_at": iso(now_utc()), "updated_at": iso(now_utc()),
     }
+    job.update(warranty_fields)
     await db.jobs.insert_one(job.copy())
 
     pending = job["status"] == "requested"
@@ -2597,40 +2609,54 @@ async def public_book(data: BookingIn):
         "status": job["status"],
         "requires_approval": pending,
         "shop_email_delivered": bool(shop_mail and shop_mail.get("delivered")),
+        "warranty_of_job_id": job.get("warranty_of_job_id"),
+        "warranty_eligible": job.get("warranty_eligible"),
+        "warranty_label": job.get("warranty_label"),
     }
 
-async def _job_for_shop_token(token: str, job_id: str) -> tuple:
-    shop = await _shop_for_booking_token(token)
-    job = await db.jobs.find_one({"id": job_id, "shop_id": shop["id"]}, {"_id": 0})
-    if not job:
+async def _job_for_portal_shop(su: dict, job_id: str) -> tuple:
+    shop = await db.shops.find_one({"id": su["shop_id"]})
+    job = await db.jobs.find_one({"id": job_id, "shop_id": su["shop_id"]}, {"_id": 0})
+    if not shop or not job:
         raise HTTPException(404, "Booking not found")
     return shop, job
 
-@api.get("/public/bookings/{token}")
-async def public_booking_list(token: str):
-    """Upcoming jobs for this booking link only. Other shops' jobs are not included."""
-    shop = await _shop_for_booking_token(token)
-    jobs = await db.jobs.find({"shop_id": shop["id"]}, {"_id": 0}).to_list(500)
-    upcoming = [job for job in jobs if is_upcoming(job)]
-    upcoming.sort(key=lambda job: job.get("scheduled_start") or "")
-    return upcoming
+@api.post("/portal/availability")
+async def portal_availability(query: AvailabilityIn, su=Depends(get_current_shop_user)):
+    shop = await db.shops.find_one({"id": su["shop_id"]})
+    return await _availability_for_shop(shop, query)
 
-@api.patch("/public/bookings/{token}/{job_id}")
-async def public_booking_edit(token: str, job_id: str, body: JobEditIn):
-    """Shop edit via its booking token. Price and zone stay owner-only. No messages."""
-    shop, job = await _job_for_shop_token(token, job_id)
+@api.post("/shops/{shop_id}/availability")
+async def owner_availability(shop_id: str, query: AvailabilityIn, tech=Depends(require_owner)):
+    """Times the owner can offer while booking for this shop. No public token."""
+    shop = await db.shops.find_one({"id": shop_id})
+    return await _availability_for_shop(shop, query)
+
+@api.post("/shops/{shop_id}/book")
+async def owner_book_for_shop(shop_id: str, data: BookingIn, tech=Depends(require_owner)):
+    """Owner books a job for a shop. The card and terms checks still apply."""
+    shop = await db.shops.find_one({"id": shop_id})
+    return await _book_job(shop, data)
+
+@api.patch("/portal/jobs/{job_id}")
+async def portal_job_edit(job_id: str, body: JobEditIn, su=Depends(get_current_shop_user)):
+    """This shop edits its own job. Price and zone stay owner-only. No messages."""
+    shop, job = await _job_for_portal_shop(su, job_id)
+    raw = body.model_dump(exclude_unset=True)
+    if "warranty_of_job_id" in raw:
+        raise HTTPException(400, "Only the owner can change the warranty link.")
     try:
-        fields = prepare_edit(body.model_dump(exclude_unset=True), allow_price=False, allow_zone=False)
+        fields = prepare_edit(raw, allow_price=False, allow_zone=False)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return await _apply_job_edit(
         job, fields, {"kind": "shop", "id": shop["id"], "name": shop["name"]},
     )
 
-@api.post("/public/bookings/{token}/{job_id}/cancel")
-async def public_booking_cancel(token: str, job_id: str):
+@api.post("/portal/jobs/{job_id}/cancel")
+async def portal_job_cancel(job_id: str, su=Depends(get_current_shop_user)):
     """Cancel one of this shop's jobs. Does not send SMS or email."""
-    shop, job = await _job_for_shop_token(token, job_id)
+    shop, job = await _job_for_portal_shop(su, job_id)
     if job.get("status") == "cancelled":
         raise HTTPException(400, "Job is already cancelled")
     if job.get("status") == "complete":
@@ -2677,15 +2703,31 @@ def annotate_at_risk(jobs: List[dict]) -> List[dict]:
 async def list_jobs(
     date_str: Optional[str] = None,
     include_cancelled: bool = False,
+    closed: bool = False,
     tech=Depends(get_current_tech),
 ):
     """List jobs for a Phoenix date (default: today in America/Phoenix).
 
     Cancelled and declined jobs stay in the database and are left off the day
     list. Pass include_cancelled=true to put cancelled jobs back in the
-    response for a history view. Declined jobs stay out. The shop portal list
-    is a different route and is unchanged.
+    response for a history view. Declined jobs stay out of that history flag.
+    Pass closed=true for the owner list of cancelled and declined jobs only,
+    across dates, newest update first. That list is owner-only. The shop portal
+    list is a different route and is unchanged.
     """
+    if closed:
+        if tech["role"] != "owner":
+            raise HTTPException(403, "Owner only")
+        closed_jobs = await owner_documents(
+            db.jobs,
+            query={"status": {"$in": ["cancelled", "declined"]}},
+            limit=1000,
+        )
+        closed_jobs.sort(
+            key=lambda row: str(row.get("updated_at") or row.get("scheduled_start") or ""),
+            reverse=True,
+        )
+        return closed_jobs
     if date_str:
         try:
             d = datetime.strptime(date_str, "%Y-%m-%d").date()
@@ -2717,6 +2759,76 @@ _VEHICLE_FIELD_MAP = {
     "customer_last_name": "customer_last_name",
     "customer_first_name": "customer_first_name",
 }
+
+async def _overlay_warranty(job: dict, fields: dict) -> None:
+    """Apply or clear a warranty link. The server sets the price."""
+    sent = "warranty_of_job_id" in fields
+    if sent:
+        raw_link = fields.get("warranty_of_job_id")
+        link = str(raw_link).strip() if raw_link else None
+        fields["warranty_of_job_id"] = link or None
+    else:
+        link = job.get("warranty_of_job_id") or None
+    if not link:
+        if not sent:
+            return
+        had_warranty = bool(job.get("warranty_of_job_id"))
+        fields["warranty_eligible"] = None
+        fields["warranty_label"] = None
+        fields["warranty_skip_reason"] = None
+        fields["warranty_original_completed_on"] = None
+        explicit = fields.get("price") if "price" in fields else None
+        # A cleared free redo still has $0 in the form. Put the shop rate back
+        # unless the owner typed a different price.
+        unchanged = "price" not in fields or explicit == job.get("price") or explicit in (0, 0.0)
+        if had_warranty and unchanged:
+            shop = await db.shops.find_one({"id": job.get("shop_id")}) or {}
+            cal = fields.get("calibration_type") or job.get("calibration_type")
+            if cal in STANDARD_PRICING:
+                price = shop_price_for(shop, cal)
+            else:
+                price = float(job.get("price") or 0)
+            fields["price"] = price
+            fields["calibration_price"] = price
+        return
+    relevant = sent or any(key in fields for key in ("scheduled_start", "calibration_type", "price"))
+    if not relevant:
+        return
+    original = await db.jobs.find_one({"id": link}, {"_id": 0})
+    try:
+        validate_original(original, job.get("shop_id"), redo_job_id=job.get("id"))
+    except WarrantyError as exc:
+        raise HTTPException(400, exc.message) from exc
+    redo_when = fields.get("scheduled_start") or job.get("scheduled_start")
+    shop = await db.shops.find_one({"id": job.get("shop_id")}) or {}
+    cal = fields.get("calibration_type") or job.get("calibration_type")
+    base = shop_price_for(shop, cal) if cal in STANDARD_PRICING else float(job.get("price") or 0)
+    fields.update(priced_warranty(original, redo_when, base))
+
+
+async def _warranty_completion_updates(job: dict, merged: dict, shop: dict, redo_when: str) -> dict:
+    link = merged.get("warranty_of_job_id")
+    if not link:
+        return {}
+    original = await db.jobs.find_one({"id": link}, {"_id": 0})
+    try:
+        validate_original(original, job.get("shop_id"), redo_job_id=job.get("id"))
+    except WarrantyError as exc:
+        raise HTTPException(400, exc.message) from exc
+    cal = merged.get("calibration_type") or job.get("calibration_type")
+    base = shop_price_for(shop, cal) if cal in STANDARD_PRICING else float(job.get("price") or 0)
+    decided = priced_warranty(original, redo_when, base)
+    if not decided["warranty_eligible"] and job.get("xero_draft_status") == "skipped":
+        decided["xero_draft_status"] = None
+        decided["xero_skipped_reason"] = None
+        decided["charge_skipped"] = None
+    return decided
+
+
+def _reject_free_warranty(job: dict) -> None:
+    if job.get("warranty_eligible"):
+        raise HTTPException(400, "A free warranty redo is not billed.")
+
 
 async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
     """Write a job edit. Does not send SMS or email.
@@ -2760,6 +2872,7 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
             closed = await closed_day_message(business_date(new_start))
             if closed:
                 raise HTTPException(400, closed)
+    await _overlay_warranty(job, fields)
     changed = changed_keys(job, fields)
     if not changed:
         return job
@@ -2814,10 +2927,15 @@ async def patch_job(job_id: str, body: JobEditIn, tech=Depends(require_owner)):
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
+    raw = body.model_dump(exclude_unset=True)
+    warranty_sent = "warranty_of_job_id" in raw
+    warranty_id = raw.pop("warranty_of_job_id", None)
     try:
-        fields = prepare_edit(body.model_dump(exclude_unset=True), allow_price=True, allow_zone=True)
+        fields = prepare_edit(raw, allow_price=True, allow_zone=True)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    if warranty_sent:
+        fields["warranty_of_job_id"] = (warranty_id or "").strip() or None
     return await _apply_job_edit(
         job, fields, {"kind": tech["role"], "id": tech["id"], "name": tech["name"]},
     )
@@ -2848,6 +2966,8 @@ async def _decide_requested_job(job_id: str, tech: dict, *, approve: bool) -> di
         "updated_at": now,
     }})
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not approve:
+        await dismiss_new_booking_alert(job_id)
     await notify_booking_approval(fresh, "approved" if approve else "declined")
     return fresh
 
@@ -3134,8 +3254,18 @@ async def _charge_saved_card(job, shop) -> dict:
 
 
 async def _settle_completed_job(job_id: str) -> dict:
-    """Create at most one invoice, then charge only in charge-on-completion mode."""
+    """Create at most one invoice, then charge only in charge-on-completion mode.
+
+    A free warranty redo records why the card was not charged and stops there.
+    """
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if job and job.get("warranty_eligible"):
+        reason = job.get("warranty_skip_reason") or job.get("charge_skipped") or SKIP_REASON
+        await db.jobs.update_one({"id": job_id}, {"$set": {
+            "charge_skipped": reason,
+            "payment_status": "not_charged",
+        }})
+        return await db.jobs.find_one({"id": job_id}, {"_id": 0})
     shop = await db.shops.find_one({"id": job["shop_id"]}) or {"name": job.get("shop_name"), "id": job.get("shop_id")}
     plan = billing_plan(job)
     description = job.get("billing_description") or job.get("calibration_label") or "ADAS calibration"
@@ -3208,6 +3338,7 @@ async def set_job_outside_service_area(job_id: str, body: OutsideAreaIn, tech=De
         raise HTTPException(404, "Job not found")
     if job.get("status") in ("cancelled", "declined"):
         raise HTTPException(400, "That job is closed.")
+    _reject_free_warranty(job)
     if _job_already_billed(job):
         raise HTTPException(400, "This job already has an invoice.")
     updated = set_outside_service_area(job, body.enabled)
@@ -3232,6 +3363,7 @@ async def charge_trip_fee_only(job_id: str, body: TripFeeIn, tech=Depends(requir
         raise HTTPException(404, "Job not found")
     if job.get("status") in ("cancelled", "declined"):
         raise HTTPException(400, "That job is closed.")
+    _reject_free_warranty(job)
     if _job_already_billed(job):
         raise HTTPException(400, "This job already has an invoice.")
     priced = apply_trip_fee_only(job, body.reason)
@@ -3264,6 +3396,7 @@ async def charge_card_now(job_id: str, tech=Depends(require_owner)):
         raise HTTPException(404, "Job not found")
     if job.get("status") != "complete":
         raise HTTPException(400, "Complete the job before charging the card.")
+    _reject_free_warranty(job)
     if job.get("charged_at") or job.get("payment_status") in ("paid", "succeeded"):
         raise HTTPException(400, "This job is already paid.")
     shop = await db.shops.find_one({"id": job["shop_id"]}) or {"name": job.get("shop_name"), "id": job.get("shop_id")}
@@ -3292,38 +3425,44 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
 
     already_complete = job.get("status") == "complete"
     updates = {"updated_at": iso(now_utc())}
+    redo_when = job.get("actual_completion") if already_complete and job.get("actual_completion") else iso(now_utc())
     # Wholesale price is stored before the local invoice, the admin email,
-    # and any card charge. Xero runs after those.
+    # and any card charge. A free warranty redo skips both. Xero runs after those.
     if not job.get("xero_invoice_id"):
         final_type = body.calibration_type or job.get("calibration_type")
         if body.calibration_type:
             updates["calibration_type"] = body.calibration_type
             updates["calibration_label"] = STANDARD_PRICING[body.calibration_type]["label"]
-        if final_type:
-            shop = await db.shops.find_one({"id": job.get("shop_id")}) if job.get("shop_id") else None
-            if not shop:
-                shop = {"name": job.get("shop_name") or ""}
+        shop = await db.shops.find_one({"id": job.get("shop_id")}) if job.get("shop_id") else None
+        if not shop:
+            shop = {"name": job.get("shop_name") or ""}
+        if job.get("warranty_of_job_id"):
+            updates.update(await _warranty_completion_updates(job, {**job, **updates}, shop, redo_when))
+        if not updates.get("warranty_eligible") and final_type:
             standard = {key: float(value["price"]) for key, value in STANDARD_PRICING.items()}
+            priced_job = {**job, **updates} if job.get("warranty_of_job_id") else job
             try:
                 updates.update(price_updates_for_calibration_change(
-                    job, shop, final_type, standard, SPECIAL_WHOLESALE,
+                    priced_job, shop, final_type, standard, SPECIAL_WHOLESALE,
                 ))
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
+        if updates.get("warranty_eligible"):
+            updates.update(completion_skip_fields())
     if body.pop is not None and not job.get("xero_invoice_id"):
         updates["pop_approved"] = str(body.pop)
     if not already_complete:
         # The uploaded PDF is the post-scan file. Do not insert a second row with no bytes.
         updates.update({
             "status": "complete",
-            "actual_completion": job.get("actual_completion") or iso(now_utc()),
+            "actual_completion": job.get("actual_completion") or redo_when,
             "result": body.result,
             "notes": completion_notes(job.get("notes"), body.notes),
             "payment_mode": job.get("payment_mode") or CHARGE_MODE,
         })
     if len(updates) > 1 or not already_complete:
         await db.jobs.update_one({"id": job_id}, {"$set": updates})
-    if not already_complete and job.get("notification_phone"):
+    if not already_complete and job.get("notification_phone") and not updates.get("warranty_eligible"):
         msg = (f"ADAS calibration complete on your {job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}. "
                f"Your invoice is the proof of purchase. — The Calibration Crew")
         await mock_send_sms(job["notification_phone"], msg, kind="completed", job_id=job_id)
@@ -3527,13 +3666,12 @@ async def download_document(doc_id: str, tech=Depends(get_current_tech)):
     return Response(content=binary, media_type=doc.get("content_type", "application/octet-stream"),
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"})
 
-# ---------- Public shop status page ----------
-@api.get("/public/shop-status/{token}")
-async def public_shop_status(token: str):
-    shop = await db.shops.find_one({"booking_link_token": token, "status": "active"}, {"_id": 0})
+# ---------- Shop scorecard (portal login; this shop only) ----------
+@api.get("/portal/scorecard")
+async def portal_scorecard(su=Depends(get_current_shop_user)):
+    shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
     if not shop:
-        raise HTTPException(404, "Shop not found or link inactive")
-    # Last 30 days of jobs for this shop
+        raise HTTPException(404, "Shop not found")
     cutoff = iso(now_utc() - timedelta(days=30))
     jobs = await db.jobs.find(
         {"shop_id": shop["id"], "scheduled_start": {"$gte": cutoff}},
@@ -3546,9 +3684,8 @@ async def public_shop_status(token: str):
     total_spent = sum(j["price"] for j in completed)
     return {
         "shop_name": shop["name"],
-        "shop_address": shop["address"],
-        "zone": shop["zone"],
-        "booking_link": shop["booking_link_token"],
+        "shop_address": shop.get("address"),
+        "zone": shop.get("zone"),
         "stats": {
             "jobs_last_30_days": len(jobs),
             "completed_count": len(completed),
@@ -3737,10 +3874,10 @@ async def dismiss_new_booking_alert(job_id: str) -> None:
 
 
 async def _alerts_for_open_jobs(alerts: list) -> list:
-    """Drop notices for jobs that are already cancelled.
+    """Drop notices for jobs that are already cancelled or declined.
 
-    A cancel that happened before this write still leaves seen_at empty.
-    Those notices are not new bookings anymore. Other unseen alerts stay.
+    A cancel or decline that happened before this write still leaves seen_at
+    empty. Those notices are not new bookings anymore. Other unseen alerts stay.
     """
     if not alerts:
         return []
@@ -3755,7 +3892,10 @@ async def _alerts_for_open_jobs(alerts: list) -> list:
         except Exception as exc:
             logger.warning("could not check jobs for new-booking alerts: %s", exc)
             rows = []
-        closed = {row.get("id") for row in rows if row.get("status") == "cancelled"}
+        closed = {
+            row.get("id") for row in rows
+            if row.get("status") in ("cancelled", "declined")
+        }
     return [alert for alert in alerts if alert.get("job_id") not in closed]
 
 
@@ -4525,7 +4665,7 @@ async def portal_accept_charge(body: AcceptChargeIn, request: Request, su=Depend
     fresh = await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
     if shop and not su.get("charge_authorization_accepted_at"):
         await _send_signup_finished(shop, fresh["email"])
-    return {"shop_user": public_shop_user(fresh), "booking_link_token": (shop or {}).get("booking_link_token")}
+    return {"shop_user": public_shop_user(fresh)}
 
 
 @api.get("/portal/stripe-setup-status")
@@ -4576,11 +4716,18 @@ async def portal_login(body: ShopUserLoginIn, request: Request):
 @api.get("/portal/me")
 async def portal_me(su=Depends(get_current_shop_user)):
     shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0})
+    shown = None
     if shop is not None:
-        shop = {**shop, "prices": quoted_prices(shop)}
+        gate = await _booking_gate_for_shop(shop)
+        shown = client_shop({
+            **shop,
+            "prices": quoted_prices(shop),
+            "booking_open": gate["allowed"],
+            "booking_message": gate["message"],
+        })
     return {
         "shop_user": public_shop_user(su),
-        "shop": client_shop(shop),
+        "shop": shown,
         "setup": booking_gate(shop or {}, su),
         "site_url": FRONTEND_URL,
     }
@@ -4672,14 +4819,14 @@ def _signup_limited(request: Request, kind: str, limit: int) -> None:
 async def _send_signup_finished(shop: dict, email: str) -> None:
     """Welcome the shop and tell the owner. Shop mail still follows SHOP_EMAILS_ENABLED."""
     try:
-        booking_url = app_link(FRONTEND_URL, f"/book/{shop['booking_link_token']}")
+        portal_url = app_link(FRONTEND_URL, "/portal/login")
     except ValueError:
-        booking_url = f"/book/{shop['booking_link_token']}"
-        logger.error("[EMAIL] FRONTEND_URL is not set, welcome email has a relative booking link.")
+        portal_url = "/portal/login"
+        logger.error("[EMAIL] FRONTEND_URL is not set, welcome email has a relative portal link.")
     await _send_booking_message({
         "to": email,
         "subject": f"You're set — {shop['name']}",
-        "html": welcome_email_html(shop["name"], booking_url),
+        "html": welcome_email_html(shop["name"], portal_url),
         "kind": "welcome",
         "reply_to": owner_notify_email(),
         "meta": {"shop_id": shop["id"]},
@@ -4687,7 +4834,7 @@ async def _send_signup_finished(shop: dict, email: str) -> None:
     await send_email(
         owner_notify_email(),
         f"{shop['name']} finished signup",
-        f"<p>{shop['name']} finished signup. Booking link: {booking_url}</p>",
+        f"<p>{shop['name']} finished signup. They book from the shop portal after they log in: {portal_url}</p>",
         kind="signup_finished",
         meta={"shop_id": shop["id"]},
     )
@@ -5301,17 +5448,33 @@ async def portal_day_map(date_str: Optional[str] = None, su=Depends(get_current_
             others.append(_other_stop(job, route_order))
     return {"own": annotate_at_risk(own), "others": others, "date": d.isoformat()}
 
+async def _warranty_candidates_for(shop_id: str) -> list:
+    found = await db.jobs.find(
+        {"shop_id": shop_id, "status": "complete"}, {"_id": 0},
+    ).sort("actual_completion", -1).to_list(500)
+    return list_warranty_candidates(found, business_date())
+
+
+@api.get("/portal/warranty-jobs")
+async def portal_warranty_jobs(su=Depends(get_current_shop_user)):
+    """This shop's completed jobs from the last 90 Phoenix days, for a warranty redo."""
+    return await _warranty_candidates_for(su["shop_id"])
+
+
+@api.get("/shops/{shop_id}/warranty-jobs")
+async def owner_warranty_jobs(shop_id: str, tech=Depends(require_owner)):
+    """Completed jobs the owner can link while editing one of this shop's jobs."""
+    shop = await db.shops.find_one({"id": shop_id}, {"_id": 0, "password_hash": 0})
+    if not shop:
+        raise HTTPException(404, "Shop not found")
+    return await _warranty_candidates_for(shop_id)
+
+
 @api.post("/portal/book")
 async def portal_book(data: BookingIn, su=Depends(get_current_shop_user)):
-    """Booking through the portal — uses authenticated shop_user instead of token."""
+    """Booking through the portal. A booking-link token in the body is ignored."""
     shop = await db.shops.find_one({"id": su["shop_id"]})
-    if shop and shop.get("status") == "suspended":
-        raise HTTPException(403, "This shop is suspended and cannot book.")
-    if not shop or shop.get("status") != "active":
-        raise HTTPException(400, "Your shop is not active")
-    # Override booking_token to the shop's current token internally
-    data.booking_token = shop["booking_link_token"]
-    return await public_book(data)
+    return await _book_job(shop, data)
 
 # ---------- Owner: charge queue ----------
 @api.get("/charge-queue")
@@ -5335,6 +5498,8 @@ async def charge_queue(tech=Depends(require_owner)):
     }, {"_id": 0}).sort("actual_completion", -1).to_list(200)
     enriched = []
     for j in jobs:
+        if j.get("warranty_eligible"):
+            continue
         view = ready.get(j["shop_id"], {})
         enriched.append({
             **j,
@@ -5620,7 +5785,7 @@ def security_self_check():
         warnings.append(sender_problem)
     if not _env("FRONTEND_URL"):
         logger.info(
-            "[EMAIL] FRONTEND_URL is not set. Invite, reset, and booking links use %s.",
+            "[EMAIL] FRONTEND_URL is not set. Invite, reset, and portal links use %s.",
             FRONTEND_URL,
         )
     if cors_allow_origins() == ["*"]:
@@ -5821,6 +5986,31 @@ async def _late_fee_loop():
         await asyncio.sleep(60 * 60)
 
 
+async def run_day_before_reminders(now: datetime | None = None) -> dict:
+    """Email each shop tomorrow's jobs. Shop mail is held while SHOP_EMAILS_ENABLED is off."""
+    return await run_reminders(
+        db,
+        now=now or now_utc(),
+        send=lambda message: _send_booking_message(message, "shop"),
+        portal_url=app_link(FRONTEND_URL, "/portal"),
+        reply_to=owner_notify_email(),
+    )
+
+
+async def _day_before_loop():
+    """Same in-process loop as the late-fee sweep. Wakes at 5:00 PM Phoenix."""
+    await asyncio.sleep(30)
+    while True:
+        delay = 300.0
+        try:
+            result = await run_day_before_reminders()
+            delay = next_reminder_delay(now_utc(), failed=int(result.get("failed") or 0))
+        except Exception:
+            logger.exception("[REMIND] day-before reminder failed")
+            delay = 300.0
+        await asyncio.sleep(delay)
+
+
 async def backfill_shop_cards() -> int:
     """Copy each billing user's card onto the shop once. Safe to run on every boot."""
     shops_col = getattr(db, "shops", None)
@@ -5852,6 +6042,7 @@ async def startup():
     except Exception:
         logger.exception("[BILLING] card backfill failed")
     asyncio.create_task(_late_fee_loop())
+    asyncio.create_task(_day_before_loop())
     # Essentials rows live up to 7 days. Pro rows set expires_at two hours out and the
     # reader ignores them after that. Drop the old 2-day cached_at TTL if it is still there,
     # because it would delete a 7-day row early. A conflicting drop is not fatal.
@@ -5956,6 +6147,7 @@ async def confirm_owner_action(token: str):
         }})
         changed = True
         message = "Declined. The time is free."
+        await dismiss_new_booking_alert(job["id"])
     else:
         message = "This job can no longer be declined."
     fresh = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
@@ -6166,8 +6358,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+class _PrivateNoStore:
+    """Do not let a browser or CDN store /api responses.
+
+    Safari reuses a GET that has no Cache-Control. The owner then keeps the
+    previous Xero connection and the previous draft badge until a full reload.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http" or not str(scope.get("path") or "").startswith("/api"):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_private(message):
+            if message["type"] == "http.response.start":
+                headers = [
+                    (key, value)
+                    for key, value in (message.get("headers") or [])
+                    if key.lower() != b"cache-control"
+                ]
+                headers.append((b"cache-control", b"private, no-store"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_private)
+
+
 # Outermost: production (and ENABLE_API_DOCS=false) never serves /docs, /redoc, or /openapi.json.
 app.add_middleware(_DocsGuard)
+app.add_middleware(_PrivateNoStore)
 
 @app.on_event("shutdown")
 async def shutdown():

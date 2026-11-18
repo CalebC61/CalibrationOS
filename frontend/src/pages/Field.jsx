@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatTime, getStoredAuth, setStoredAuth, phoenixTodayStr, isPhoenixToday, isOnDayBoard, jobStatusLabel } from "../lib/api";
+import { fresherJob, mergeJobList } from "../lib/jobState";
+import { useRefreshOnShow } from "../lib/refreshOnShow";
 import JobEditModal from "../components/JobEditModal";
+import WarrantyBadge from "../components/WarrantyBadge";
 
 const CAL_TYPES = [
   ["static", "Static"],
@@ -31,13 +34,24 @@ export default function Field() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
 
+  const loadGen = useRef(0);
   const load = useCallback(async () => {
+    const gen = ++loadGen.current;
     try {
       const j = await api.get(`/jobs?date_str=${phoenixTodayStr()}`);
-      setJobs((j.data || []).filter(isOnDayBoard));
+      if (gen !== loadGen.current) return;
+      const visible = (j.data || []).filter(isOnDayBoard);
+      setJobs(current => mergeJobList(current, visible));
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  useRefreshOnShow(load);
+
+  function showJob(job) {
+    if (!job?.id) return;
+    loadGen.current += 1;
+    setJobs(current => current.map(item => item.id === job.id ? fresherJob(item, job) : item));
+  }
 
   function logout() { setStoredAuth(null); nav("/login"); }
 
@@ -92,12 +106,13 @@ export default function Field() {
   async function complete(jobId) {
     setCompleting(true);
     try {
-      await api.post(`/jobs/${jobId}/complete`, {
+      const { data } = await api.post(`/jobs/${jobId}/complete`, {
         result,
         notes: notes || null,
         calibration_type: calType,
         pop: popChoice === "none" ? "none" : String(popAmount).trim(),
       });
+      showJob(data?.job);
       await load();
     } catch (e) {
       alert(e.response?.data?.detail || "Could not complete the job.");
@@ -107,7 +122,8 @@ export default function Field() {
   async function retryXero(jobId) {
     setRetrying(true);
     try {
-      await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      const { data } = await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      showJob(data?.job);
       await load();
     } catch (e) {
       alert(e.response?.data?.detail || "Could not retry the Xero draft.");
@@ -141,7 +157,13 @@ export default function Field() {
             )}
             <div><b>Service:</b> {j.calibration_label}</div>
             <div><b>Price:</b> ${j.price.toFixed(2)}</div>
-            <div><b>Status:</b> <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span></div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <b>Status:</b> <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
+              <WarrantyBadge job={j} />
+            </div>
+            {j.warranty_skip_reason && (
+              <div style={{ marginTop: 8 }} data-testid={`warranty-reason-${j.id}`}>{j.warranty_skip_reason}</div>
+            )}
             {j.notes && (
               <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }} data-testid="job-booking-notes">
                 <b>Booking notes:</b> {j.notes}
@@ -206,7 +228,9 @@ export default function Field() {
                 <ScanPicker uploadedDoc={uploadedDoc} uploading={uploading}
                   onFile={file => uploadDoc(j.id, file)} onReplace={() => setUploadedDoc(null)} />
                 <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                  This PDF is attached to the Xero draft when that draft is filed.
+                  {j.warranty_eligible
+                    ? "This redo is free. Completing it does not file a Xero draft or charge the card."
+                    : "This PDF is attached to the Xero draft when that draft is filed."}
                 </div>
               </div>
               {!canFileDraft(uploadedDoc, calType, popChoice, popAmount) && (
@@ -221,7 +245,7 @@ export default function Field() {
               </button>
             </div>
           )}
-          {auth?.role === "owner" && !j.invoice_id && !j.charged_at && j.payment_status !== "paid"
+          {auth?.role === "owner" && !j.warranty_eligible && !j.invoice_id && !j.charged_at && j.payment_status !== "paid"
             && j.status !== "cancelled" && j.status !== "declined" && (
             <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
               <button className="btn btn-ghost" type="button" style={{ width: "100%", padding: 12 }}
@@ -337,6 +361,16 @@ function ScanPicker({ uploadedDoc, uploading, onFile, onReplace }) {
 function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace, onRetry }) {
   const draft = job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id);
   const number = job.xero_invoice_number || job.xero_invoice_id;
+  if (job.xero_draft_status === "skipped" || job.warranty_eligible) {
+    return (
+      <div style={{ marginTop: 16, padding: 14 }} data-testid="job-complete-confirmation">
+        <div className="h3">Job complete</div>
+        <div style={{ marginTop: 8, fontSize: 14 }} data-testid="xero-draft-status">
+          {job.xero_skipped_reason || job.warranty_skip_reason || "Warranty redo (free). No Xero draft was filed."}
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ marginTop: 16, padding: 14 }} data-testid="job-complete-confirmation">
       <div className="h3">Job complete</div>

@@ -130,7 +130,7 @@ The code also has a Triple / Subaru price of $185 (`STANDARD_PRICING` in `backen
 
 **Code.** `POST /api/portal/accept-charge` with `{accepted: true}`. The server rejects the call if no card is saved or `accepted` is false. It stores the time, the text, the IP, and the user agent. The first acceptance sends the welcome mail and the owner mail.
 
-**Email.** Shop welcome, kind `welcome`, subject `You're set — {shop}`. It includes the booking link when `FRONTEND_URL` is set, otherwise a relative `/book/{token}` and an error log. Held while `SHOP_EMAILS_ENABLED` is false (unless that path is shop audience, which it is, so it is held). Owner mail, kind `signup_finished`, subject `{shop} finished signup`, sent through `send_email` (not held). Reply-To on the welcome is the owner.
+**Email.** Shop welcome, kind `welcome`, subject `You're set — {shop}`. It points at `/portal/login` when `FRONTEND_URL` is set, otherwise a relative `/portal/login` and an error log. It does not include a booking token. Held while `SHOP_EMAILS_ENABLED` is false (unless that path is shop audience, which it is, so it is held). Owner mail, kind `signup_finished`, subject `{shop} finished signup`, sent through `send_email` (not held). Reply-To on the welcome is the owner.
 
 **Failure.** Dismissing the modal is not offered. Reloading the invite URL will not bring it back (the invite is used). Settings shows the same modal after a card is saved if `charge_authorization_accepted_at` is empty. Until they accept, `booking_gate` blocks a new shop. Closing the tab after "I understand" is safe: the timestamp is stored and `/portal/ready` is only a confirmation.
 
@@ -146,7 +146,7 @@ The code also has a Triple / Subaru price of $185 (`STANDARD_PRICING` in `backen
 
 **Email.** None from opening the portal.
 
-**Friction.** The ready screen's booking link uses the current origin, while emails use `FRONTEND_URL`. Those can differ. The dashboard is a dispatch map, which is a lot of chrome for a shop that has zero jobs. The banner and the book page both block booking until signature, card, and acceptance are all present.
+**Friction.** The ready screen sends the shop into the portal to book. The dashboard is a dispatch map, which is a lot of chrome for a shop that has zero jobs. The banner and the book page both block booking until signature, card, and acceptance are all present.
 
 **Rating: 3.** The ready screen tells them the next action. The home of the portal is an empty map.
 
@@ -155,13 +155,13 @@ The code also has a Triple / Subaru price of $185 (`STANDARD_PRICING` in `backen
 **Who sees what.** `/portal/book` (`frontend/src/pages/PortalBook.jsx`) is four steps. If `booking_gate` says no, the page is "Finish setup to book" and a button to Settings. Otherwise:
 
 1. Address, defaulting to the shop address. Blur calls `POST /api/geocode`. Outside the valley, or a failed lookup, cannot continue.
-2. A date from today through 21 days. `POST /api/public/availability` with the shop's booking token. Slots show a time. Some are labeled "Pending approval". Sundays and blocked days are not offered. A failure says "Couldn't load times, try again" with a retry.
+2. A date from today through 21 days. `POST /api/portal/availability` for the logged-in shop. Slots show a time. Some are labeled "Pending approval". Sundays and blocked days are not offered. A failure says "Couldn't load times, try again" with a retry.
 3. Customer first and last name, year, make, model, trim, VIN, ADAS system (forward camera, surround view, radar, multi-camera, Tesla). ADAS picks a default calibration type.
 4. Calibration type with a price: Static $125, Dynamic $125, Dual $175, Triple $185, Tesla $225, or the shop's custom rate when `pricing_tier` is `custom`. A line says the card is charged when the job is completed unless they ask to be invoiced. Checkbox "Please invoice me instead". Phone (prefilled from the shop) and optional notes. Confirm Booking, or "Request this time" when the slot needs approval.
 
 **Do.** Walk the four steps and confirm. The result is "Booking Confirmed" or "Pending owner approval", with a short reference, and a button to My Jobs.
 
-**Code.** `POST /api/portal/book` sets the booking token from the logged-in shop and calls `public_book`. That checks the gate, geocodes again, refuses a point outside the valley, rejects a closed day, prices the job, and inserts `jobs` plus a `vehicles` row. `payment_mode` is invoice when the checkbox is set, otherwise charge on completion. Status is `booked` or `requested` when the slot needs approval. Same-day work and arrivals before 8:00 AM Phoenix email the owner with one-time Approve and Decline links (`/owner-action/{token}`, 48 hours, confirm page before the job changes). A new-booking alert is written for the owner dashboard.
+**Code.** `POST /api/portal/book` uses the logged-in shop and calls `_book_job`. That checks the gate, geocodes again, refuses a point outside the valley, rejects a closed day, prices the job, and inserts `jobs` plus a `vehicles` row. `payment_mode` is invoice when the checkbox is set, otherwise charge on completion. Status is `booked` or `requested` when the slot needs approval. Same-day work and arrivals before 8:00 AM Phoenix email the owner with one-time Approve and Decline links (`/owner-action/{token}`, 48 hours, confirm page before the job changes). A new-booking alert is written for the owner dashboard.
 
 **Email.** Shop confirmation (held while shop mail is off): Phoenix time, vehicle, address, calibration, price, and either confirmed or pending. Owner alert when `owner_needs_alert` is true (same-day, before 8:00 AM, or an add-on). Owner alerts send when `OWNER_EMAILS_ENABLED` is on, which is the default, independent of shop mail.
 

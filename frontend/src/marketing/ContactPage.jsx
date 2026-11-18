@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
+import BookJobLink from "./BookJobLink";
 import { SiteChrome } from "./SiteChrome";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -51,8 +52,8 @@ export default function ContactPage() {
             </article>
             <article className="card fact">
               <h3>Book a job</h3>
-              <p><Link to="/signup">Request a CalibrationOS account</Link></p>
-              <p><a href="https://calendly.com/calcrew/adas-calibration-appointment" target="_blank" rel="noopener noreferrer">Or use the online scheduler</a></p>
+              <p><BookJobLink>Book a job</BookJobLink></p>
+              <p><Link to="/portal/login">Shop login</Link></p>
             </article>
             <article className="card fact">
               <h3>Hours and area</h3>

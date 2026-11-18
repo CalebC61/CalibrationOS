@@ -26,12 +26,6 @@ export default function ShopsList() {
   }
   useEffect(() => { load(); }, []);
 
-  function copyLink(token) {
-    const url = `${window.location.origin}/book/${token}`;
-    navigator.clipboard.writeText(url);
-    alert(`Booking link copied:\n${url}`);
-  }
-
   const filtered = shops.filter(s => String(s.name || "").toLowerCase().includes(q.toLowerCase()));
 
   return (
@@ -66,9 +60,7 @@ export default function ShopsList() {
                 <Td>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <Link to={`/shops/${s.id}`} className="btn btn-ghost" data-testid={`edit-shop-${s.id}`}>Edit</Link>
-                    <button className="btn btn-ghost" onClick={() => copyLink(s.booking_link_token)} data-testid={`copy-link-${s.id}`}>
-                      Copy Link
-                    </button>
+                    <Link to={`/shops/${s.id}/book`} className="btn btn-ghost" data-testid={`book-shop-${s.id}`}>Book</Link>
                   </div>
                 </Td>
               </tr>

@@ -81,7 +81,6 @@ export default function ShopNew() {
   }
 
   if (created) {
-    const url = `${window.location.origin}/book/${created.booking_link_token}`;
     return (
       <Shell>
         <div className="page-fade" style={{ maxWidth: 640 }}>
@@ -111,9 +110,9 @@ export default function ShopNew() {
               </div>
             )}
           </div>
-          <div className="surface" style={{ padding: 16, marginBottom: 16 }}>
-            <div className="label">Booking link (opens after they sign and save a card)</div>
-            <div className="font-mono" style={{ fontSize: 13, wordBreak: "break-all" }} data-testid="booking-link">{url}</div>
+          <div className="surface" style={{ padding: 16, marginBottom: 16 }} data-testid="booking-link">
+            <div className="label">How this shop books</div>
+            <p style={{ marginBottom: 0 }}>They book from the shop portal after they log in. There is no public booking link.</p>
           </div>
           <button className="btn btn-ghost" onClick={() => nav("/shops")}>Back to Shops</button>
         </div>

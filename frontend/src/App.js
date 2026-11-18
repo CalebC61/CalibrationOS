@@ -11,8 +11,8 @@ import Dashboard from "@/pages/Dashboard";
 import ShopsList from "@/pages/ShopsList";
 import ShopNew from "@/pages/ShopNew";
 import ShopDetail from "@/pages/ShopDetail";
-import PublicShopStatus from "@/pages/PublicShopStatus";
-import PublicBooking from "@/pages/PublicBooking";
+import OwnerBook from "@/pages/PublicBooking";
+import PortalScorecard from "@/pages/PortalScorecard";
 import OwnerAction from "@/pages/OwnerAction";
 import Field from "@/pages/Field";
 import Invoices from "@/pages/Invoices";
@@ -57,6 +57,10 @@ function RoleRedirect() {
   return <Navigate to={auth.role === "owner" ? "/dashboard" : "/field"} replace />;
 }
 
+function OldShopLink({ notice, next }) {
+  return <Navigate to="/portal/login" replace state={{ notice, next }} />;
+}
+
 function App() {
   return (
     <div className="App">
@@ -71,8 +75,12 @@ function App() {
           <Route path="/contact" element={<ContactPage />} />
           <Route path="/signup" element={<SignupPage />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/scorecard/:token" element={<PublicShopStatus />} />
-          <Route path="/book/:token" element={<PublicBooking />} />
+          <Route path="/scorecard/:token" element={
+            <OldShopLink notice="Your scorecard is in your shop portal. Log in to see it." next="/portal/scorecard" />
+          } />
+          <Route path="/book/:token" element={
+            <OldShopLink notice="Booking now happens in your shop portal. Log in to book." next="/portal/book" />
+          } />
           <Route path="/owner-action/:token" element={<OwnerAction />} />
 
           {/* Portal (shop user) */}
@@ -86,6 +94,7 @@ function App() {
           <Route path="/portal/jobs" element={<PortalProtected><PortalJobsList /></PortalProtected>} />
           <Route path="/portal/jobs/:id" element={<PortalProtected><PortalJobDetail /></PortalProtected>} />
           <Route path="/portal/book" element={<PortalProtected><PortalBook /></PortalProtected>} />
+          <Route path="/portal/scorecard" element={<PortalProtected><PortalScorecard /></PortalProtected>} />
           <Route path="/portal/settings" element={<PortalProtected><PortalSettings /></PortalProtected>} />
 
           {/* Owner dashboard */}
@@ -94,6 +103,7 @@ function App() {
           <Route path="/email-preview" element={<Protected ownerOnly><EmailPreview /></Protected>} />
           <Route path="/shops" element={<Protected ownerOnly><ShopsList /></Protected>} />
           <Route path="/shops/new" element={<Protected ownerOnly><ShopNew /></Protected>} />
+          <Route path="/shops/:id/book" element={<Protected ownerOnly><OwnerBook /></Protected>} />
           <Route path="/shops/:id" element={<Protected ownerOnly><ShopDetail /></Protected>} />
           <Route path="/invites" element={<Protected ownerOnly><Invites /></Protected>} />
           <Route path="/charges" element={<Protected ownerOnly><ChargeQueue /></Protected>} />

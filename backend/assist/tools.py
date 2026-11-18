@@ -185,7 +185,7 @@ TOOLS: list[Tool] = [
     # ---------------- Shops ----------------
     Tool(
         name="list_shops", tier="safe", method="GET", path_template="/shops",
-        description="List all glass-shop clients with contact info, pricing tier, zone, and booking link.",
+        description="List all glass-shop clients with contact info, pricing tier, and zone. Shops book from the portal after they log in.",
         parameters=_params({}),
     ),
     Tool(
@@ -200,7 +200,7 @@ TOOLS: list[Tool] = [
                      "custom_rate_dual", "custom_rate_triple", "custom_rate_tesla", "notes"],
         description=(
             "Create a new glass-shop client. The address is geocoded and zone-assigned "
-            "automatically, and a booking link is generated."),
+            "automatically. The shop books from the portal after they log in."),
         parameters=_params({
             "name": _str("Shop name."),
             "address": _str("Street address (city matters — it drives zone assignment)."),
@@ -244,15 +244,6 @@ TOOLS: list[Tool] = [
             "status": {"type": "string", "enum": ["active", "paused", "inactive"], "description": "Shop status."},
         }, ["shop_id"]),
         summary_template="Update shop {shop_id}",
-    ),
-    Tool(
-        name="regenerate_booking_link", tier="risky", method="POST",
-        path_template="/shops/{shop_id}/regenerate-link",
-        description=(
-            "Generate a new booking-link token for a shop. The OLD LINK STOPS WORKING immediately "
-            "— anyone holding it can no longer book."),
-        parameters=_params({"shop_id": _str("The shop's id.")}, ["shop_id"]),
-        summary_template="Regenerate booking link for shop {shop_id} (old link stops working)",
     ),
     # ---------------- Settings ----------------
     Tool(

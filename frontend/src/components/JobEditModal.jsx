@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { redoIsFree, warrantyOptionLabel, WARRANTY_BILLED, WARRANTY_FREE } from "../lib/warranty";
 
 const CAL_TYPES = [
   ["static", "Static ADAS Calibration"],
@@ -39,11 +40,32 @@ const emptyForm = {
   calibration_type: "static", price: "", date: "", time: "", zone: "east", notes: "",
 };
 
-export default function JobEditModal({ open, job, onClose, onDone, token }) {
-  const ownerFields = !token;
+export default function JobEditModal({ open, job, onClose, onDone, shopEdit = false, client }) {
+  const http = client || api;
+  const ownerFields = !shopEdit;
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [pastJobs, setPastJobs] = useState([]);
+  const [warrantyOf, setWarrantyOf] = useState("");
+
+  useEffect(() => {
+    if (!open || !job) return;
+    setWarrantyOf(job.warranty_of_job_id || "");
+    if (!ownerFields || !job.shop_id) {
+      setPastJobs([]);
+      return undefined;
+    }
+    let cancel = false;
+    http.get(`/shops/${job.shop_id}/warranty-jobs`).then((response) => {
+      if (cancel) return;
+      const rows = Array.isArray(response.data) ? response.data : [];
+      setPastJobs(rows.filter(row => row.id !== job.id));
+    }).catch(() => {
+      if (!cancel) setPastJobs([]);
+    });
+    return () => { cancel = true; };
+  }, [open, job, ownerFields, http]);
 
   useEffect(() => {
     if (!open || !job) return;
@@ -74,6 +96,14 @@ export default function JobEditModal({ open, job, onClose, onDone, token }) {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
+  function chooseWarranty(id) {
+    setWarrantyOf(id);
+    const row = pastJobs.find(item => item.id === id);
+    if (row && form.date && redoIsFree(row.warranty_through, form.date)) {
+      set("price", "0");
+    }
+  }
+
   async function save() {
     if (!form.job_address.trim() || !form.customer_last_name.trim() || !form.vehicle_make.trim()
       || !form.vehicle_model.trim() || !form.date || !form.time) {
@@ -95,16 +125,15 @@ export default function JobEditModal({ open, job, onClose, onDone, token }) {
       notes: form.notes.trim() || null,
     };
     if (ownerFields) {
-      payload.price = Number(form.price);
       payload.zone = form.zone;
+      payload.warranty_of_job_id = warrantyOf || null;
+      if (!warrantyOf) payload.price = Number(form.price);
     }
     setSaving(true);
     setError(null);
     try {
-      const url = token
-        ? `/public/bookings/${token}/${job.id}`
-        : `/jobs/${job.id}`;
-      await api.patch(url, payload);
+      const url = shopEdit ? `/portal/jobs/${job.id}` : `/jobs/${job.id}`;
+      await http.patch(url, payload);
       onDone?.();
       onClose();
     } catch (e) {
@@ -188,6 +217,22 @@ export default function JobEditModal({ open, job, onClose, onDone, token }) {
             </Field>
           </Row>
         )}
+        {ownerFields && (
+          <Field label="Warranty redo">
+            <select className="input" value={warrantyOf} onChange={(e) => chooseWarranty(e.target.value)} data-testid="edit-warranty">
+              <option value="">Not a warranty redo</option>
+              {warrantyOf && !pastJobs.some(row => row.id === warrantyOf) && (
+                <option value={warrantyOf}>Current linked job</option>
+              )}
+              {pastJobs.map(row => (
+                <option key={row.id} value={row.id}>{warrantyOptionLabel(row)}</option>
+              ))}
+            </select>
+            <div className="muted" style={{ fontSize: 13, marginTop: 6 }} data-testid="edit-warranty-note">
+              {warrantyPreview(pastJobs, warrantyOf, form.date)}
+            </div>
+          </Field>
+        )}
         <Field label="Notes">
           <textarea className="input" rows={3} value={form.notes} onChange={(e) => set("notes", e.target.value)} data-testid="edit-notes" />
         </Field>
@@ -201,6 +246,14 @@ export default function JobEditModal({ open, job, onClose, onDone, token }) {
       </div>
     </div>
   );
+}
+
+function warrantyPreview(pastJobs, warrantyOf, redoDay) {
+  if (!warrantyOf) return "Link a completed job from this shop. Within 30 days the redo is free.";
+  const row = pastJobs.find(item => item.id === warrantyOf);
+  if (row && redoDay && redoIsFree(row.warranty_through, redoDay)) return WARRANTY_FREE;
+  if (row && redoDay) return WARRANTY_BILLED;
+  return "The server sets the price from the original completion date.";
 }
 
 const Row = ({ children }) => <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>{children}</div>;

@@ -195,13 +195,19 @@ BOOK = {
 }
 
 
+def _portal_headers():
+    return {"Authorization": f"Bearer {server.make_portal_token('user-1')}"}
+
+
 def _book(monkeypatch, shop):
     db = _db()
     db.shops.docs.append(shop)
+    if not any(user.get("id") == "user-1" for user in db.shop_users.docs):
+        db.shop_users.docs.append(_user(shop_id=shop.get("id") or "shop-1"))
 
     async def run():
         async with _client() as client:
-            return await client.post("/api/public/book", json=BOOK)
+            return await client.post("/api/portal/book", json=BOOK, headers=_portal_headers())
 
     return db, asyncio.run(run())
 
@@ -307,7 +313,7 @@ def test_a_user_card_does_not_let_a_cleared_shop_book(monkeypatch):
     db.shop_users.docs.append(_user(stripe_payment_method_id="pm_user"))
     async def run():
         async with _client() as client:
-            return await client.post("/api/public/book", json=BOOK)
+            return await client.post("/api/portal/book", json=BOOK, headers=_portal_headers())
     response = asyncio.run(run())
     assert response.status_code == 403
     assert "removed" in response.json()["detail"].lower()
@@ -574,7 +580,7 @@ def test_webhook_signature_is_required_and_a_detach_blocks_booking(monkeypatch):
             stale = await client.post("/api/stripe/webhook", content=json.dumps(old).encode(), headers={"stripe-signature": "good"})
             still = db.shops.docs[0]["stripe_payment_method_id"]
             gone = await client.post("/api/stripe/webhook", content=json.dumps(detach).encode(), headers={"stripe-signature": "good"})
-            booked = await client.post("/api/public/book", json=BOOK)
+            booked = await client.post("/api/portal/book", json=BOOK, headers=_portal_headers())
             return missing, bad, stale, still, gone, booked
 
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
@@ -600,6 +606,7 @@ def test_webhook_signature_is_required_and_a_detach_blocks_booking(monkeypatch):
 def test_a_failed_charge_webhook_blocks_the_next_booking(monkeypatch):
     db = _db()
     db.shops.docs.append(_shop())
+    db.shop_users.docs.append(_user())
     db.jobs.docs.append({"id": "job-1", "shop_id": "shop-1", "shop_name": "Jarvis Glass", "payment_status": "open"})
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
     monkeypatch.setattr(server.stripe_sdk.Webhook, "construct_event", lambda payload, sig, secret: json.loads(payload))
@@ -621,7 +628,7 @@ def test_a_failed_charge_webhook_blocks_the_next_booking(monkeypatch):
     async def run():
         async with _client() as client:
             hooked = await client.post("/api/stripe/webhook", content=json.dumps(event).encode(), headers={"stripe-signature": "good"})
-            booked = await client.post("/api/public/book", json=BOOK)
+            booked = await client.post("/api/portal/book", json=BOOK, headers=_portal_headers())
             return hooked, booked
 
     hooked, booked = asyncio.run(run())

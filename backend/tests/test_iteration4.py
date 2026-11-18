@@ -39,26 +39,24 @@ def shop_info(owner_token):
 
 
 def _book_job(owner_token, shop, address, last_name, target_date=None):
-    tok = shop["booking_link_token"]
     target = target_date or datetime.now(timezone.utc).date()
     while target.weekday() == 6:
         target += timedelta(days=1)
-    av = requests.post(f"{API}/public/availability",
-        json={"booking_token": tok, "job_address": address, "date": target.isoformat()},
+    av = requests.post(f"{API}/shops/{shop['id']}/availability", headers=_auth(owner_token),
+        json={"job_address": address, "date": target.isoformat()},
         timeout=30).json()
     tries = 0
     while not av.get("slots") and tries < 5:
         target = target + timedelta(days=1)
         while target.weekday() == 6:
             target += timedelta(days=1)
-        av = requests.post(f"{API}/public/availability",
-            json={"booking_token": tok, "job_address": address, "date": target.isoformat()},
+        av = requests.post(f"{API}/shops/{shop['id']}/availability", headers=_auth(owner_token),
+            json={"job_address": address, "date": target.isoformat()},
             timeout=30).json()
         tries += 1
     assert av.get("slots"), f"No slots: {av}"
     slot = av["slots"][0]
     payload = {
-        "booking_token": tok,
         "scheduled_start": slot["start"],
         "customer_last_name": last_name,
         "year": 2022, "make": "Toyota", "model": "Camry",
@@ -67,10 +65,10 @@ def _book_job(owner_token, shop, address, last_name, target_date=None):
         "job_address": address,
         "notification_phone": "+15555550101",
     }
-    r = requests.post(f"{API}/public/book", json=payload, timeout=30)
+    r = requests.post(f"{API}/shops/{shop['id']}/book", headers=_auth(owner_token), json=payload, timeout=30)
     assert r.status_code == 200, r.text
     data = r.json()
-    # public/book returns {"job_id": ..., ...}
+    # owner book returns {"job_id": ..., ...}
     return {"id": data["job_id"], **data}
 
 
@@ -130,8 +128,9 @@ class TestReschedule:
             target = (datetime.now(timezone.utc) + timedelta(days=delta)).date()
             if target.weekday() == 6:
                 continue
-            av = requests.post(f"{API}/public/availability",
-                json={"booking_token": shop_info["booking_link_token"],
+            av = requests.post(f"{API}/shops/{shop_info['id']}/availability",
+                headers=_auth(owner_token),
+                json={
                       "job_address": "TEST 101 Reschedule St, Phoenix AZ",
                       "date": target.isoformat()}, timeout=30).json()
             if av.get("slots"):
@@ -240,22 +239,9 @@ class TestDocumentUpload:
                           headers=_auth(owner_token), timeout=60)
         assert r.status_code == 400
 
-# ---------------- 6. Public shop-status ----------------
+# ---------------- 6. Scorecard is not public ----------------
 class TestPublicShopStatus:
-    def test_public_shop_status_ok(self, shop_info):
-        tok = shop_info["booking_link_token"]
-        r = requests.get(f"{API}/public/shop-status/{tok}", timeout=30)
-        assert r.status_code == 200, r.text
-        data = r.json()
-        assert data["shop_name"] == shop_info["name"]
-        assert "stats" in data
-        stats = data["stats"]
-        for key in ("jobs_last_30_days", "completed_count", "upcoming_count",
-                    "total_spent_last_30_days", "last_completion"):
-            assert key in stats
-        assert isinstance(data["upcoming"], list)
-        assert isinstance(data["completed"], list)
-
-    def test_public_shop_status_invalid_token_404(self):
+    def test_public_scorecard_is_gone(self):
         r = requests.get(f"{API}/public/shop-status/totallyfake-token-12345", timeout=30)
         assert r.status_code == 404
+        assert "customer" not in r.text.lower()

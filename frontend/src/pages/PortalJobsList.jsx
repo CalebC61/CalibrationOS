@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { jobStatusLabel } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
+import WarrantyBadge from "../components/WarrantyBadge";
 
 const fmtTime = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 const fmtDate = (iso) => new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -37,8 +38,9 @@ export default function PortalJobsList() {
           <Link to={`/portal/jobs/${j.id}`} key={j.id} className="card-job" data-testid={`pj-${j.id}`}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
               <div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4, flexWrap: "wrap" }}>
                   <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
+                  <WarrantyBadge job={j} />
                 </div>
                 <div className="h3">{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
                 <div className="muted" style={{ fontSize: 13 }}>{j.calibration_label} · {j.customer_last_name}</div>

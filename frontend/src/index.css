@@ -128,6 +128,38 @@ html, body, #root {
   border-radius: 8px;
   color: var(--text-primary);
 }
+.address-suggestions {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  max-height: 240px;
+  overflow: auto;
+}
+.address-suggestions button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text-primary);
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.address-suggestions button:hover,
+.address-suggestions button[aria-selected="true"] {
+  background: var(--accent-dim);
+}
+.address-suggestions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
 .label { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--text-muted); margin-bottom: 0.375rem; font-weight: 600; }
@@ -173,6 +205,44 @@ html, body, #root {
 @keyframes pulseDot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+.closed-board { overflow-x: auto; }
+.closed-head, .closed-row {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 1.1fr) minmax(8rem, 1.3fr) minmax(9rem, 1.5fr) minmax(7rem, 1.1fr) minmax(6.5rem, 0.8fr) minmax(8rem, 1.2fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  min-width: 44rem;
+  font-size: 14px;
+}
+.closed-head {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.closed-row + .closed-row { border-top: 1px solid var(--border); }
+.closed-k { display: none; }
+@media (max-width: 720px) {
+  .closed-head { display: none; }
+  .closed-row {
+    grid-template-columns: 1fr 1fr;
+    min-width: 0;
+    align-items: start;
+  }
+  .closed-k {
+    display: block;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .closed-action { grid-column: 1 / -1; }
 }
 
 .divider { height: 1px; background: var(--border); border: none; margin: 1rem 0; }

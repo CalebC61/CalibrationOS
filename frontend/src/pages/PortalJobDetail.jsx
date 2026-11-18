@@ -3,6 +3,8 @@ import { useParams, Link } from "react-router-dom";
 import { jobStatusLabel } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
+import JobEditModal from "../components/JobEditModal";
+import WarrantyBadge from "../components/WarrantyBadge";
 
 const fmt = (iso) => new Date(iso).toLocaleString();
 
@@ -10,12 +12,25 @@ export default function PortalJobDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
+  const [editing, setEditing] = useState(false);
+  const [version, setVersion] = useState(0);
   const [docError, setDocError] = useState("");
 
   useEffect(() => {
     portalApi.get(`/portal/jobs/${id}`).then(r => setData(r.data))
       .catch(e => setErr(e.response?.data?.detail || "Not found"));
-  }, [id]);
+  }, [id, version]);
+
+  async function cancelJob() {
+    if (!window.confirm("Cancel this booking? This does not send a message.")) return;
+    try {
+      await portalApi.post(`/portal/jobs/${id}/cancel`);
+      setVersion(value => value + 1);
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      alert(typeof detail === "string" ? detail : "Could not cancel this booking. Try again.");
+    }
+  }
 
   if (err) return <PortalShell><div className="surface muted" style={{ padding: 24 }}>{err}</div></PortalShell>;
   if (!data) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
@@ -49,16 +64,29 @@ export default function PortalJobDetail() {
       <h1 className="h1" style={{ marginTop: 8, marginBottom: 8 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</h1>
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
+        <WarrantyBadge job={j} />
         {j.status === "requested" && (
           <span className="muted" style={{ fontSize: 13 }}>This time is held until the owner approves it.</span>
         )}
         <span className={`badge badge-${j.zone}`}>{j.zone}</span>
       </div>
 
+      {!["complete", "cancelled", "declined"].includes(j.status) && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <button type="button" className="btn btn-ghost" onClick={() => setEditing(true)} data-testid="portal-edit-job">Edit</button>
+          <button type="button" className="btn btn-ghost" onClick={cancelJob} data-testid="portal-cancel-job">Cancel booking</button>
+        </div>
+      )}
+      <JobEditModal open={editing} job={j} shopEdit client={portalApi}
+        onClose={() => setEditing(false)} onDone={() => setVersion(value => value + 1)} />
+
       <div className="surface" style={{ padding: 20, marginBottom: 16 }}>
         <Row k="Customer" v={[j.customer_first_name, j.customer_last_name].filter(Boolean).join(" ")} />
         <Row k="Service" v={j.calibration_label} />
         <Row k="Price" v={`$${j.price.toFixed(2)}`} />
+        {j.warranty_skip_reason && (
+          <div style={{ padding: "8px 0", fontSize: 14 }} data-testid={`warranty-reason-${j.id}`}>{j.warranty_skip_reason}</div>
+        )}
         <Row k="Scheduled" v={fmt(j.scheduled_start)} />
         {j.actual_completion && <Row k="Completed" v={fmt(j.actual_completion)} />}
         {j.result && <Row k="Result" v={j.result.toUpperCase()} />}

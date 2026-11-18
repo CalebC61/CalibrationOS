@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, formatDate } from "../lib/api";
+import { api } from "../lib/api";
 import Shell from "../components/Shell";
 
 export default function ShopDetail() {
@@ -9,11 +9,13 @@ export default function ShopDetail() {
   const [edit, setEdit] = useState({});
   const [saving, setSaving] = useState(false);
 
-  async function load() {
-    const { data } = await api.get(`/shops/${id}`);
-    setShop(data); setEdit(data);
-  }
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    let gone = false;
+    api.get(`/shops/${id}`).then(({ data }) => {
+      if (!gone) { setShop(data); setEdit(data); }
+    });
+    return () => { gone = true; };
+  }, [id]);
 
   async function save() {
     setSaving(true);
@@ -38,16 +40,7 @@ export default function ShopDetail() {
     } finally { setSaving(false); }
   }
 
-  async function regen() {
-    if (!window.confirm("Generate a new booking link? The old one will stop working.")) return;
-    const { data } = await api.post(`/shops/${id}/regenerate-link`);
-    setShop(s => ({ ...s, booking_link_token: data.booking_link_token }));
-  }
-
   if (!shop) return <Shell><div className="muted">Loading…</div></Shell>;
-
-  const url = `${window.location.origin}/book/${shop.booking_link_token}`;
-  const scorecardUrl = `${window.location.origin}/scorecard/${shop.booking_link_token}`;
 
   return (
     <Shell>
@@ -59,21 +52,11 @@ export default function ShopDetail() {
         </div>
 
         <div className="surface" style={{ padding: 20, marginBottom: 16 }}>
-          <div className="h3" style={{ marginBottom: 12 }}>Public Links</div>
-          <div className="label">Booking link</div>
-          <div className="font-mono" style={{ background: "var(--bg-elevated)", padding: 10, borderRadius: 6, fontSize: 13, wordBreak: "break-all" }} data-testid="shop-booking-link">{url}</div>
-          <div style={{ display: "flex", gap: 8, marginTop: 12, marginBottom: 16, flexWrap: "wrap" }}>
-            <Link to={`/book/${shop.booking_link_token}`} className="btn btn-primary" data-testid="book-job">Book a job</Link>
-            <button className="btn btn-ghost" onClick={() => { navigator.clipboard.writeText(url); alert("Copied!"); }}>Copy</button>
-            <a className="btn btn-ghost" href={url} target="_blank" rel="noreferrer">Open</a>
-            <button className="btn btn-ghost" onClick={regen} data-testid="regen-link">Regenerate</button>
-          </div>
-          <div className="label">Scorecard (share with shop)</div>
-          <div className="font-mono" style={{ background: "var(--bg-elevated)", padding: 10, borderRadius: 6, fontSize: 13, wordBreak: "break-all" }} data-testid="shop-scorecard-link">{scorecardUrl}</div>
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <button className="btn btn-primary" onClick={() => { navigator.clipboard.writeText(scorecardUrl); alert("Copied!"); }} data-testid="copy-scorecard">Copy</button>
-            <a className="btn btn-ghost" href={scorecardUrl} target="_blank" rel="noreferrer">Open</a>
-          </div>
+          <div className="h3" style={{ marginBottom: 8 }}>Booking</div>
+          <p className="muted" style={{ fontSize: 14, marginTop: 0, marginBottom: 14 }}>
+            This shop books from the shop portal after they log in. There is no public booking link.
+          </p>
+          <Link to={`/shops/${shop.id}/book`} className="btn btn-primary" data-testid="book-job">Book a job</Link>
         </div>
 
         <div className="surface" style={{ padding: 20 }}>
