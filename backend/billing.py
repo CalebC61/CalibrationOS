@@ -6,6 +6,8 @@ job must not create a second invoice or a second successful charge.
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from business_time import business_date
+
 CHARGE_MODE = "charge_on_completion"
 INVOICE_MODE = "invoice_hold"
 LATE_FEE_DOLLARS = 25
@@ -132,6 +134,22 @@ def invoice_idempotency_key(job_id: str) -> str:
 
 def late_fee_invoice_key(job_id: str) -> str:
     return f"late-fee-invoice-{job_id}"
+
+
+def invoice_due_on(job: Optional[dict], now: Optional[datetime] = None) -> str:
+    """Phoenix calendar date 7 days after completion.
+
+    Matches days_until_due=7 on the Stripe invoice. 11:30pm Phoenix is still
+    that Phoenix day when UTC has already moved to the next date.
+    """
+    raw = (job or {}).get("actual_completion")
+    if raw:
+        moment = _aware(raw)
+    elif now is not None:
+        moment = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    else:
+        moment = datetime.now(timezone.utc)
+    return (business_date(moment) + timedelta(days=LATE_FEE_GRACE_DAYS)).isoformat()
 
 
 def _aware(value) -> datetime:

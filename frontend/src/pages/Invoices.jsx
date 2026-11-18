@@ -32,7 +32,7 @@ export default function Invoices() {
       <div className="surface" style={{ overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr style={{ background: "var(--bg-elevated)", textAlign: "left" }}>
-            <Th>Invoice ID</Th><Th>Shop</Th><Th>Status</Th><Th>Total</Th><Th>Created</Th>
+            <Th>Invoice ID</Th><Th>Shop</Th><Th>Status</Th><Th>Total</Th><Th>Due</Th><Th>Created</Th>
           </tr></thead>
           <tbody>
             {invs.map(i => (
@@ -43,17 +43,42 @@ export default function Invoices() {
                   ) : i.invoice_id}
                 </Td>
                 <Td>{i.contact_name}</Td>
-                <Td><span className="badge badge-draft">{i.status}</span></Td>
+                <Td><span className={`badge ${String(i.status || "").toLowerCase() === "paid" ? "badge-complete" : "badge-draft"}`}>{invoiceStatusLabel(i.status)}</span></Td>
                 <Td className="font-mono">${i.total.toFixed(2)}</Td>
+                <Td>{formatDue(i.due_at)}</Td>
                 <Td>{new Date(i.created_at).toLocaleString()}</Td>
               </tr>
             ))}
-            {invs.length === 0 && <tr><Td colSpan="5" style={{ textAlign: "center", padding: 28 }} className="muted">No invoices yet — complete a job to generate one.</Td></tr>}
+            {invs.length === 0 && <tr><Td colSpan="6" style={{ textAlign: "center", padding: 28 }} className="muted">No invoices yet — complete a job to generate one.</Td></tr>}
           </tbody>
         </table>
       </div>
     </Shell>
   );
 }
+function invoiceStatusLabel(status) {
+  const value = String(status || "");
+  const lower = value.toLowerCase();
+  if (lower === "paid") return "Paid";
+  if (lower === "open") return "Open";
+  return value;
+}
+
+function formatDue(value) {
+  if (!value) return "—";
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "—";
+    return parsed.toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix",
+    });
+  }
+  const noon = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
+  return noon.toLocaleDateString("en-US", {
+    month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+  });
+}
+
 const Th = ({ children }) => <th style={{ padding: "10px 14px", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", fontWeight: 600 }}>{children}</th>;
 const Td = ({ children, colSpan, style, className }) => <td colSpan={colSpan} className={className} style={{ padding: "12px 14px", fontSize: 14, ...(style || {}) }}>{children}</td>;

@@ -111,7 +111,8 @@ export default function Dashboard() {
   }
   async function chargeNow(jobId) {
     try {
-      await api.post(`/jobs/${jobId}/charge-card`);
+      const { data } = await api.post(`/jobs/${jobId}/charge-card`);
+      showJob(data?.job);
       load();
     } catch (err) {
       alert(err.response?.data?.detail || "The card was not charged.");
@@ -679,6 +680,17 @@ function TripFeeControls({ job, onOutside, onTripFee }) {
   );
 }
 
+function jobIsPaid(job) {
+  return Boolean(job?.charged_at) || job?.payment_status === "paid" || job?.payment_status === "succeeded";
+}
+
+function paidAmount(job) {
+  const amount = job?.charged_amount != null && job.charged_amount !== ""
+    ? Number(job.charged_amount)
+    : Number(job?.price || 0) + Number(job?.late_fee || 0);
+  return Number.isFinite(amount) ? amount.toFixed(2) : "0.00";
+}
+
 function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, onReschedule, onEdit, onDelete, onDecide,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
@@ -708,8 +720,13 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
             {isNew && <span className="badge" style={{ background: "var(--accent)", color: "#0a0a0a", border: "1px solid var(--accent)" }} data-testid="badge-new">NEW</span>}
             {job.outside_service_area && !job.calibration_not_performed && <span className="badge badge-draft">Outside area +$30</span>}
             {job.calibration_not_performed && <span className="badge badge-draft">Trip fee only</span>}
-            {job.payment_mode === "invoice_hold" && <span className="badge badge-draft">Invoice — hold charge</span>}
-            {job.payment_status === "payment_failed" && <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)" }}>Payment failed</span>}
+            {job.payment_mode === "invoice_hold" && !jobIsPaid(job) && <span className="badge badge-draft">Invoice — hold charge</span>}
+            {jobIsPaid(job) && (
+              <span className="badge badge-complete" data-testid={`job-paid-${job.id}`}>
+                Paid ${paidAmount(job)}{job.charged_at ? ` · ${formatTime(job.charged_at)}` : ""}
+              </span>
+            )}
+            {job.payment_status === "payment_failed" && !jobIsPaid(job) && <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)" }}>Payment failed</span>}
             {job.late_fee ? <span className="badge badge-draft">Late fee ${job.late_fee}</span> : null}
             {job.is_at_risk && (
               <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)", border: "1px solid rgba(239,68,68,0.3)" }}
@@ -782,10 +799,10 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
         {!job.warranty_eligible && !job.invoice_id && !job.charged_at && job.payment_status !== "paid" && job.status !== "cancelled" && job.status !== "declined" && (
           <TripFeeControls job={job} onOutside={onOutside} onTripFee={onTripFee} />
         )}
-        {!job.warranty_eligible && job.payment_mode !== "invoice_hold" && !job.charged_at && job.payment_status !== "paid" && (
+        {!job.warranty_eligible && job.payment_mode !== "invoice_hold" && !jobIsPaid(job) && (
           <button className="btn btn-ghost" onClick={() => onPayment(job.id, "invoice_hold")}>Invoice this job</button>
         )}
-        {!job.warranty_eligible && job.status === "complete" && job.payment_status !== "paid" && !job.charged_at && (
+        {!job.warranty_eligible && job.status === "complete" && !jobIsPaid(job) && (
           <button className="btn btn-primary" onClick={() => onCharge(job.id)} data-testid={`job-charge-${job.id}`}>Charge card now</button>
         )}
         {job.status === "complete" && job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id) && (

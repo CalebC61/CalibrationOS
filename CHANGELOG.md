@@ -15,6 +15,36 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — paid card charges still looked unpaid (2026-11-18)
+A live Stripe test-mode charge was succeeding: the PaymentIntent succeeded,
+the Stripe invoice was marked paid, and `invoice.paid` was received. Dispatch,
+the phone confirmation, and the Invoices page still showed the job as unpaid.
+
+The local `job_invoices` row was inserted once as `open` and never updated.
+`_charge_saved_card` set `payment_status` to `paid` but left `invoice_status`
+alone and did not bump `updated_at`, so a slower day-list response could keep
+the old card. `invoice.finalized` could then write `invoice_status` back to
+`open` after the job was already paid.
+
+A successful charge now sets `jobs.invoice_status` to `paid`, sets
+`updated_at`, and sets the matching `job_invoices` row to `paid` with
+`paid_at`. `invoice.paid` and `invoice.payment_succeeded` do the same row
+update. `invoice.finalized` still stores the Stripe invoice id and hosted URL,
+and it does not change `invoice_status` once the job is paid. The first insert
+stays the only insert, and its opening `open` status is not copied back onto
+a job that has already been paid.
+
+`job_invoices.due_at` is the America/Phoenix date 7 days after completion,
+the same window as `days_until_due=7` on the Stripe invoice. `GET /api/invoices`
+returns that date and the updated status. The Invoices page shows Paid or Open
+and a Due column. Dispatch hides "Invoice — hold charge" and "Charge card now"
+once `charged_at` is set or `payment_status` is `paid`, and shows a Paid badge
+with the amount and Phoenix time for both charge-on-completion and invoice-hold
+jobs. Charge card now applies the job in the response immediately. The field
+completion card adds one line: Paid $X, Invoiced with the due date, or Charge
+failed, next to the Xero message. The Stripe webhook log includes the event
+type. `BILLING_ENABLED`, shop-email gating, and amounts are unchanged.
+
 ### Removed — contractor dispatch; travel steps are today-only (2026-11-18)
 The business does not use contractors. The product no longer offers that path.
 

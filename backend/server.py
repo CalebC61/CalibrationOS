@@ -117,7 +117,8 @@ from client_views import public_shop as client_shop, public_shop_user, public_st
 FRONTEND_URL = resolve_frontend_url(_env("FRONTEND_URL"), PUBLIC_SITE_URL)
 from billing import (
     CHARGE_MODE, INVOICE_MODE, TRIP_FEE_REASONS, amount_due, apply_late_fee, apply_trip_fee_only,
-    billing_plan, payment_mode, set_outside_service_area, treat_decline_as_invoice,
+    billing_plan, invoice_due_on, is_paid, payment_mode, set_outside_service_area,
+    treat_decline_as_invoice,
 )
 from warranty import (
     SKIP_REASON, WarrantyError, completion_skip_fields, list_warranty_candidates,
@@ -3062,10 +3063,26 @@ async def _set_unresolved_charge(shop_id: Optional[str], failed: bool) -> None:
     await db.shops.update_one({"id": shop_id}, {"$set": {"unresolved_charge_failure": failed}})
 
 
+async def _mark_job_invoice_paid(job_id: str, when: str) -> None:
+    """The inserted row starts open. A later payment updates that same row."""
+    col = getattr(db, "job_invoices", None)
+    if col is None or not job_id or not when:
+        return
+    await col.update_one({"job_id": job_id}, {"$set": {"status": "paid", "paid_at": when}})
+
+
 async def _record_local_invoice(job, shop, description: str, provider: str, stripe_invoice_id=None, hosted_url=None, total=None) -> dict:
-    """One invoice row per job. A second complete updates nothing new."""
+    """One invoice row per job. A second complete does not insert another row.
+
+    The first status is open. That is not the final payment state: a charge or
+    invoice.paid webhook updates this same row to paid.
+    """
+    due = invoice_due_on(job)
     existing = await db.job_invoices.find_one({"job_id": job["id"]}, {"_id": 0})
     if existing:
+        if due and not existing.get("due_at"):
+            await db.job_invoices.update_one({"job_id": job["id"]}, {"$set": {"due_at": due}})
+            existing["due_at"] = due
         return existing
     row = {
         "invoice_id": stripe_invoice_id or f"local-{job['id']}",
@@ -3077,6 +3094,7 @@ async def _record_local_invoice(job, shop, description: str, provider: str, stri
         "hosted_url": hosted_url,
         "description": description,
         "created_at": iso(now_utc()),
+        "due_at": due,
         "job_id": job["id"],
     }
     await db.job_invoices.update_one({"job_id": job["id"]}, {"$setOnInsert": row}, upsert=True)
@@ -3223,14 +3241,18 @@ async def _charge_saved_card(job, shop) -> dict:
         await _notify_payment_failed(failed, shop, message)
         return failed
     await _set_unresolved_charge(job.get("shop_id"), False)
+    paid_at = iso(now_utc())
     await db.jobs.update_one({"id": job["id"]}, {"$set": {
-        "charged_at": iso(now_utc()),
+        "charged_at": paid_at,
         "charge_method": "stripe",
         "payment_status": "paid",
+        "invoice_status": "paid",
         "stripe_payment_intent_id": result.get("payment_intent_id"),
         "charged_amount": amount_due(job),
         "charge_error": None,
+        "updated_at": paid_at,
     }})
+    await _mark_job_invoice_paid(job["id"], paid_at)
     paid = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
     for invoice_id in (paid.get("stripe_invoice_id"), paid.get("stripe_late_fee_invoice_id")):
         if not invoice_id:
@@ -3291,12 +3313,20 @@ async def _settle_completed_job(job_id: str) -> dict:
                 logger.error("[BILLING] Stripe invoice failed for %s: %s", job_id, exc)
         if invoice is None:
             invoice = await _record_local_invoice(job, shop, description, "local")
+        current = await db.jobs.find_one({"id": job_id}, {"_id": 0}) or job
+        status = invoice.get("status") or "open"
+        # The row is inserted as open. Do not copy that back over a job already paid.
+        if status != "paid" and (is_paid(current) or current.get("invoice_status") == "paid"):
+            status = "paid"
+            await _mark_job_invoice_paid(job_id, current.get("charged_at") or iso(now_utc()))
+        due = invoice.get("due_at") or invoice_due_on(current)
         await db.jobs.update_one({"id": job_id}, {"$set": {
             "invoice_id": invoice["invoice_id"],
             "stripe_invoice_id": invoice.get("stripe_invoice_id"),
-            "invoice_status": invoice.get("status") or "open",
+            "invoice_status": status,
             "invoice_url": invoice.get("hosted_url"),
             "invoice_provider": invoice.get("provider"),
+            "invoice_due_at": due,
         }})
         job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
         await _email_proof(job, shop, invoice)
@@ -3308,6 +3338,14 @@ async def _settle_completed_job(job_id: str) -> dict:
             kind="invoice_notification",
             meta={"job_id": job_id, "invoice_id": invoice["invoice_id"], "provider": invoice.get("provider")},
         )
+    else:
+        due = invoice_due_on(job)
+        row = await db.job_invoices.find_one({"job_id": job_id}, {"_id": 0})
+        if row is not None and due and not row.get("due_at"):
+            await db.job_invoices.update_one({"job_id": job_id}, {"$set": {"due_at": due}})
+        if row is not None and due and not job.get("invoice_due_at"):
+            await db.jobs.update_one({"id": job_id}, {"$set": {"invoice_due_at": due}})
+            job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if billing_plan(job)["charge"]:
         if not billing_enabled():
             await db.jobs.update_one({"id": job_id}, {"$set": {
@@ -5296,6 +5334,7 @@ async def stripe_webhook(request: Request):
         raise HTTPException(400, "Invalid webhook signature.")
     data = event["data"]["object"]
     kind = event["type"]
+    logger.info("[STRIPE] webhook %s", kind)
     if kind.startswith("payment_intent."):
         await _apply_payment_intent_event(kind, data)
     elif kind.startswith("invoice."):
@@ -5867,12 +5906,15 @@ async def _apply_invoice_event(kind: str, raw) -> None:
             await db.jobs.update_one({"id": job_id}, {"$set": {"late_fee_paid_at": iso(now_utc())}})
         return
     if kind in ("invoice.paid", "invoice.payment_succeeded"):
+        paid_at = iso(now_utc())
         await db.jobs.update_one({"id": job_id}, {"$set": {
             "payment_status": "paid",
-            "charged_at": iso(now_utc()),
+            "charged_at": paid_at,
             "invoice_status": "paid",
             "stripe_invoice_id": data.get("id") or None,
+            "updated_at": paid_at,
         }})
+        await _mark_job_invoice_paid(job_id, paid_at)
         await _set_unresolved_charge((await db.jobs.find_one({"id": job_id}, {"_id": 0, "shop_id": 1}) or {}).get("shop_id"), False)
         logger.info("[STRIPE] invoice paid for job %s", job_id)
     elif kind == "invoice.payment_failed":
@@ -5888,11 +5930,17 @@ async def _apply_invoice_event(kind: str, raw) -> None:
             await _set_unresolved_charge(job.get("shop_id"), True)
             await _notify_payment_failed(job, shop, "Invoice payment failed.")
     elif kind == "invoice.finalized":
-        await db.jobs.update_one({"id": job_id}, {"$set": {
+        updates = {
             "stripe_invoice_id": data.get("id"),
             "invoice_url": data.get("hosted_invoice_url"),
-            "invoice_status": data.get("status") or "open",
-        }})
+        }
+        current = await db.jobs.find_one(
+            {"id": job_id},
+            {"_id": 0, "invoice_status": 1, "payment_status": 1, "charged_at": 1},
+        ) or {}
+        if not (is_paid(current) or current.get("invoice_status") == "paid"):
+            updates["invoice_status"] = data.get("status") or "open"
+        await db.jobs.update_one({"id": job_id}, {"$set": updates})
 
 
 async def run_late_fee_sweep() -> dict:
