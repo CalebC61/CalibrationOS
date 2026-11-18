@@ -354,7 +354,7 @@ def price_updates_for_calibration_change(job, shop, calibration_type, standard_p
     job = job or {}
     if not calibration_type or job.get("xero_invoice_id"):
         return {}
-    if job.get("calibration_not_performed"):
+    if job.get("calibration_not_performed") or job.get("warranty_eligible"):
         return {}
     amount = wholesale_amount(shop, calibration_type, standard_prices, special_rates)
     if job.get("outside_service_area"):

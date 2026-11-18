@@ -9,6 +9,7 @@ import RouteMap from "../components/RouteMap";
 import RescheduleCancelModal from "../components/RescheduleCancelModal";
 import TomorrowStrip from "../components/TomorrowStrip";
 import JobEditModal from "../components/JobEditModal";
+import WarrantyBadge from "../components/WarrantyBadge";
 
 const STATUS_FLOW = {
   booked: { next: "driving", label: "Start Driving" },
@@ -720,6 +721,7 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
               fontSize: 12, fontWeight: 600,
             }}>#{index}</span>
             <span className={`badge badge-${job.status}`}>{jobStatusLabel(job.status)}</span>
+            <WarrantyBadge job={job} />
             {isNew && <span className="badge" style={{ background: "var(--accent)", color: "#0a0a0a", border: "1px solid var(--accent)" }} data-testid="badge-new">NEW</span>}
             {job.outside_service_area && !job.calibration_not_performed && <span className="badge badge-draft">Outside area +$30</span>}
             {job.calibration_not_performed && <span className="badge badge-draft">Trip fee only</span>}
@@ -771,6 +773,11 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
           <div className="font-mono" style={{ fontSize: 13, marginTop: 4 }}>${job.price.toFixed(2)}</div>
         </div>
       </div>
+      {job.warranty_skip_reason && (
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }} data-testid={`warranty-reason-${job.id}`}>
+          {job.warranty_skip_reason}
+        </div>
+      )}
       {job.status === "complete" && job.xero_draft_status === "needs_attention" && job.xero_attention_reason && (
         <div className="muted" style={{ fontSize: 13, marginTop: 8 }} data-testid={`xero-reason-${job.id}`}>
           {job.xero_attention_reason}
@@ -794,14 +801,14 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
               data-testid={`job-decline-${job.id}`}>Decline</button>
           </>
         )}
-        {!job.invoice_id && !job.charged_at && job.payment_status !== "paid" && job.status !== "cancelled" && job.status !== "declined" && (
+        {!job.warranty_eligible && !job.invoice_id && !job.charged_at && job.payment_status !== "paid" && job.status !== "cancelled" && job.status !== "declined" && (
           <TripFeeControls job={job} onOutside={onOutside} onTripFee={onTripFee} />
         )}
-        {job.payment_mode !== "invoice_hold" && !job.charged_at && job.payment_status !== "paid" && (
+        {!job.warranty_eligible && job.payment_mode !== "invoice_hold" && !job.charged_at && job.payment_status !== "paid" && (
           <button className="btn btn-ghost" onClick={() => onPayment(job.id, "invoice_hold")}>Invoice this job</button>
         )}
-        {job.status === "complete" && job.payment_status !== "paid" && !job.charged_at && (
-          <button className="btn btn-primary" onClick={() => onCharge(job.id)}>Charge card now</button>
+        {!job.warranty_eligible && job.status === "complete" && job.payment_status !== "paid" && !job.charged_at && (
+          <button className="btn btn-primary" onClick={() => onCharge(job.id)} data-testid={`job-charge-${job.id}`}>Charge card now</button>
         )}
         {job.status === "complete" && job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id) && (
           <span className="badge badge-draft" data-testid={`xero-draft-${job.id}`}>

@@ -15,6 +15,26 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Added — 30-day warranty redos (2026-11-18)
+Every recalibration can be tied to an earlier completed job (`warranty_of_job_id`).
+The shop portal booking form has an optional "This is a redo of a past job"
+choice. It lists that shop's own completed jobs from the last 90 days, by
+vehicle, customer, and completion date. The owner can set or clear the same
+link while editing a job. A shop login cannot change the link after booking,
+and the server rejects another shop's job or a job that is not completed.
+
+Eligibility is Phoenix calendar days: the redo date minus the original
+completion date. 30 days is free. 31 days is billed. A free redo is priced at
+$0 and labeled "Warranty redo (free)". On Complete, that job does not get a
+Xero draft and the card is not charged. The job records why
+(`warranty_skip_reason`, `charge_skipped`, `xero_skipped_reason`). A redo past
+30 days keeps the shop's normal rate, the normal Xero draft, and the normal
+charge flow, and is labeled "Past 30-day warranty — billed normally".
+
+The badge shows on the owner Dispatch card, the field job page, and the shop's
+My Jobs. No new env vars. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are
+unchanged. A free redo does not send the completion text or the invoice email.
+
 ### Fixed — declined jobs leave the new-booking banner, and the owner can delete them (2026-11-18)
 Declining a pending job took it off the dispatch day, but its unseen
 new-booking alert stayed. The banner and its count still included that job

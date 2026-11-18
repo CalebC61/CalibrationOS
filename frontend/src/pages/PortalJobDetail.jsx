@@ -4,6 +4,7 @@ import { jobStatusLabel } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
 import JobEditModal from "../components/JobEditModal";
+import WarrantyBadge from "../components/WarrantyBadge";
 
 const fmt = (iso) => new Date(iso).toLocaleString();
 
@@ -63,6 +64,7 @@ export default function PortalJobDetail() {
       <h1 className="h1" style={{ marginTop: 8, marginBottom: 8 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</h1>
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
+        <WarrantyBadge job={j} />
         {j.status === "requested" && (
           <span className="muted" style={{ fontSize: 13 }}>This time is held until the owner approves it.</span>
         )}
@@ -82,6 +84,9 @@ export default function PortalJobDetail() {
         <Row k="Customer" v={[j.customer_first_name, j.customer_last_name].filter(Boolean).join(" ")} />
         <Row k="Service" v={j.calibration_label} />
         <Row k="Price" v={`$${j.price.toFixed(2)}`} />
+        {j.warranty_skip_reason && (
+          <div style={{ padding: "8px 0", fontSize: 14 }} data-testid={`warranty-reason-${j.id}`}>{j.warranty_skip_reason}</div>
+        )}
         <Row k="Scheduled" v={fmt(j.scheduled_start)} />
         {j.actual_completion && <Row k="Completed" v={fmt(j.actual_completion)} />}
         {j.result && <Row k="Result" v={j.result.toUpperCase()} />}

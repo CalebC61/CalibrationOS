@@ -503,3 +503,31 @@ test("Cancelled & declined lists those jobs and Delete still asks before it remo
   expect(api.delete).toHaveBeenCalledWith("/jobs/job-declined");
   expect(api.get.mock.calls.length).toBe(getsBefore);
 });
+
+test("dispatch shows a free warranty redo and does not offer a card charge", async () => {
+  mockGets([], {
+    ...job,
+    status: "complete",
+    price: 0,
+    payment_status: "not_charged",
+    warranty_of_job_id: "orig-1",
+    warranty_eligible: true,
+    warranty_label: "Warranty redo (free)",
+  });
+  render(<Dashboard />);
+  expect(await screen.findByTestId("warranty-badge-job-1")).toHaveTextContent("Warranty redo (free)");
+  expect(screen.queryByTestId("job-charge-job-1")).not.toBeInTheDocument();
+});
+
+test("dispatch shows a redo that is past the 30-day warranty", async () => {
+  mockGets([], {
+    ...job,
+    warranty_of_job_id: "orig-1",
+    warranty_eligible: false,
+    warranty_label: "Past 30-day warranty — billed normally",
+  });
+  render(<Dashboard />);
+  expect(await screen.findByTestId("warranty-badge-job-1")).toHaveTextContent(
+    "Past 30-day warranty — billed normally",
+  );
+});
