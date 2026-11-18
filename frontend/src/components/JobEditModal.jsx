@@ -171,7 +171,9 @@ export default function JobEditModal({ open, job, onClose, onDone, shopEdit = fa
       }}>
         <h2 className="h2" style={{ marginBottom: 4 }}>Edit booking</h2>
         <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>
-          Saving updates this job only. It does not send a message.
+          {shopEdit
+            ? "Saving updates this job. The shop contact gets one note of what changed."
+            : "Saving updates this job only. It does not send a message."}
         </div>
         <Field label="Address *">
           <input className="input" value={form.job_address} onChange={(e) => set("job_address", e.target.value)} data-testid="edit-address" />

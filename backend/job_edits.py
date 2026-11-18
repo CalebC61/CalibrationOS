@@ -133,7 +133,19 @@ def prepare_edit(raw: dict, *, allow_price: bool, allow_zone: bool) -> dict:
     return fields
 
 
+def _same_instant(old, new) -> bool:
+    """True when two stored times are the same moment in a different spelling."""
+    if not isinstance(old, str) or not isinstance(new, str):
+        return False
+    try:
+        return parse_instant(old) == parse_instant(new)
+    except (ValueError, TypeError):
+        return False
+
+
 def values_differ(old, new) -> bool:
+    if _same_instant(old, new):
+        return False
     if isinstance(old, (int, float)) or isinstance(new, (int, float)):
         try:
             return float(old) != float(new)

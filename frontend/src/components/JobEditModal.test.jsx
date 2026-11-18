@@ -63,6 +63,13 @@ test("clearing the warranty link sends a null id", async () => {
 test("a shop edit does not offer the warranty link", () => {
   render(<JobEditModal open shopEdit job={job} client={{ get: jest.fn(), patch: jest.fn() }} onClose={() => {}} />);
   expect(screen.queryByTestId("edit-warranty")).not.toBeInTheDocument();
+  expect(screen.getByTestId("job-edit-modal")).toHaveTextContent("one note of what changed");
+});
+
+test("an owner edit does not promise a shop email", async () => {
+  render(<JobEditModal open job={job} onClose={() => {}} />);
+  expect(await screen.findByRole("option", { name: /2019 Toyota Camry/ })).toBeInTheDocument();
+  expect(screen.getByTestId("job-edit-modal")).toHaveTextContent("does not send a message");
 });
 
 test("rescheduling a shop warranty redo past 30 days asks before it saves", async () => {

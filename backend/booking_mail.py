@@ -152,6 +152,166 @@ def owner_alert_email(
     }
 
 
+def _blank(value) -> str:
+    if value is None:
+        return "—"
+    text = str(value).strip()
+    return text or "—"
+
+
+def _vehicle_text(job: dict) -> str:
+    parts = []
+    for key in ("vehicle_year", "vehicle_make", "vehicle_model"):
+        piece = str(job.get(key) or "").strip()
+        if piece:
+            parts.append(piece)
+    return " ".join(parts)
+
+
+def _customer_text(job: dict) -> str:
+    return " ".join(
+        piece for piece in (
+            str(job.get("customer_first_name") or "").strip(),
+            str(job.get("customer_last_name") or "").strip(),
+        ) if piece
+    )
+
+
+def _when_text(value) -> str:
+    if not value:
+        return "—"
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)
+    return phoenix_clock(parsed)
+
+
+def _price_text(value) -> str:
+    try:
+        return _money(value)
+    except (TypeError, ValueError):
+        return _blank(value)
+
+
+def _price_differs(old, new) -> bool:
+    try:
+        return float(old) != float(new)
+    except (TypeError, ValueError):
+        return old != new
+
+
+_STATUS_WORDS = {
+    "booked": "Confirmed",
+    "requested": "Pending approval",
+    "cancelled": "Cancelled",
+    "declined": "Declined",
+    "driving": "Driving",
+    "on_site": "On site",
+    "complete": "Complete",
+}
+
+
+def _status_text(value) -> str:
+    if not value:
+        return "—"
+    return _STATUS_WORDS.get(str(value), str(value).replace("_", " "))
+
+
+def shop_change_rows(before: dict, after: dict) -> list:
+    """Shop-visible edits as (label, old, new). Empty when nothing the shop would notice changed."""
+    rows = []
+
+    def add(label: str, old: str, new: str) -> None:
+        if old != new:
+            rows.append((label, old, new))
+
+    add("Address", _blank(before.get("job_address")), _blank(after.get("job_address")))
+    add("Date and time", _when_text(before.get("scheduled_start")), _when_text(after.get("scheduled_start")))
+    add("Customer", _blank(_customer_text(before)), _blank(_customer_text(after)))
+    add("Phone", _blank(before.get("notification_phone")), _blank(after.get("notification_phone")))
+    add("Email", _blank(before.get("notification_email")), _blank(after.get("notification_email")))
+    add("Vehicle", _blank(_vehicle_text(before)), _blank(_vehicle_text(after)))
+    add("VIN", _blank(before.get("vehicle_vin")), _blank(after.get("vehicle_vin")))
+    add(
+        "Service",
+        _blank(before.get("calibration_label") or before.get("calibration_type")),
+        _blank(after.get("calibration_label") or after.get("calibration_type")),
+    )
+    if _price_differs(before.get("price"), after.get("price")):
+        rows.append(("Price", _price_text(before.get("price")), _price_text(after.get("price"))))
+    add("Notes", _blank(before.get("notes")), _blank(after.get("notes")))
+    if before.get("status") != after.get("status"):
+        add("Status", _status_text(before.get("status")), _status_text(after.get("status")))
+    return rows
+
+
+def _change_items(changes) -> str:
+    items = []
+    for label, old, new in changes:
+        items.append(
+            f"<li>{html.escape(str(label))}: {html.escape(str(old))} -&gt; {html.escape(str(new))}</li>"
+        )
+    return "".join(items)
+
+
+def _portal_line(portal_url: str) -> str:
+    link = html.escape(portal_url or "", quote=True)
+    if not portal_url:
+        return ""
+    return f'<p><a href="{link}">Open this job in your portal</a></p>'
+
+
+def job_updated_email(*, to, reply_to, changes, reference: str = "", portal_url: str = "") -> dict:
+    """One shop note listing what changed. Same shell as a booking confirmation."""
+    body = (
+        "<p>This job was <strong>updated</strong>.</p>"
+        "<ul>"
+        + _row("Ref", reference or "—")
+        + _change_items(changes)
+        + "</ul>"
+        + _portal_line(portal_url)
+        + "<p>Reply to this email and it comes to Caleb.</p>"
+    )
+    return {
+        "to": to,
+        "reply_to": reply_to,
+        "subject": "Job updated",
+        "html": body,
+        "kind": "job_updated",
+    }
+
+
+def job_cancelled_email(
+    *, to, reply_to, when, window_end, vehicle, address, calibration, price,
+    reference: str, portal_url: str,
+) -> dict:
+    """Shop note after the shop cancels its own job. Same fields as a booking confirmation."""
+    date_text = phoenix_date(when)
+    window = arrival_window(when, window_end)
+    body = (
+        "<p>This job was <strong>cancelled</strong>.</p>"
+        "<ul>"
+        + _row("Date", date_text)
+        + _row("Arrival window", window)
+        + _row("Vehicle", vehicle or "—")
+        + _row("Address", address or "—")
+        + _row("Ref", reference or "—")
+        + _row("Calibration", calibration or "—")
+        + _row("Price", _money(price))
+        + "</ul>"
+        + _portal_line(portal_url)
+        + "<p>Reply to this email and it comes to Caleb.</p>"
+    )
+    return {
+        "to": to,
+        "reply_to": reply_to,
+        "subject": "Job cancelled",
+        "html": body,
+        "kind": "job_cancelled",
+    }
+
+
 def shop_event_email(*, to, reply_to, event, when, vehicle, address, calibration, price) -> dict:
     """Shop note after the owner approves, declines, reschedules, or cancels."""
     sentences = {

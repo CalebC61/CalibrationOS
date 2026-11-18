@@ -22,6 +22,15 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): shop edits use the booking rules, and a shop cancel names itself.**
+  Changing the date, time, address, or service rechecks the open day, the
+  valley, the free slot, before-8:00 AM approval, and same-day drive limits.
+  The price follows the shop's rate. Names, vehicle, VIN, and notes do not
+  change the status. A real edit emails the shop one "Job updated" note, with
+  the ref and a portal link. A shop cancel emails "Job cancelled" in the same
+  shape as a booking confirmation, and Dispatch shows "Cancelled by shop".
+  Both stay in Email preview while `SHOP_EMAILS_ENABLED` is off. Owner edits
+  are not emailed this way. No new env var. `BILLING_ENABLED` is unchanged.
 - **Session (2026-11-18): booking does not show a geocode error while the address is being typed.**
   A miss on the in-progress text stays quiet, including while Places suggestions
   are open. Blur still reports an address that cannot be found, such as
