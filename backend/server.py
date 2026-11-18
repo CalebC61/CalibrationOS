@@ -1469,6 +1469,7 @@ class ShopUserRegisterIn(BaseModel):
     password: str
     terms_signature: str
     terms_agreed: bool
+    charge_accepted: bool = False
     origin: Optional[str] = None
 
 class ShopUserLoginIn(BaseModel):
@@ -4590,6 +4591,8 @@ async def register_shop_user(token: str, body: ShopUserRegisterIn, request: Requ
         raise HTTPException(400, "You must agree to the terms")
     if not (body.terms_signature or "").strip():
         raise HTTPException(400, "Type your name to sign.")
+    if not body.charge_accepted:
+        raise HTTPException(400, "Accept the charge terms to continue.")
     pw_problem = password_error(body.password)
     if pw_problem:
         raise HTTPException(400, pw_problem)
@@ -4633,6 +4636,10 @@ async def register_shop_user(token: str, body: ShopUserRegisterIn, request: Requ
         "agreement_text": agreement_text(),
         "agreement_ip": _client_ip(request),
         "agreement_user_agent": request.headers.get("user-agent", ""),
+        "charge_terms_accepted_at": signed_at,
+        "charge_authorization_text": CHARGE_ACCEPTANCE_TEXT,
+        "charge_authorization_ip": _client_ip(request),
+        "charge_authorization_user_agent": request.headers.get("user-agent", ""),
         "charge_authorization_accepted_at": None,
         "is_active": True,
         "created_at": signed_at,
@@ -4714,7 +4721,42 @@ async def _store_card(su: dict, card: dict, *, action: str = "saved") -> dict:
     await _audit_card_change(
         su["shop_id"], su.get("id"), action, previous_last4, fields.get("card_last4"), fields.get("card_brand"),
     )
+    await _apply_pending_charge_acceptance(su)
     return await db.shop_users.find_one({"id": su["id"]}, {"_id": 0, "password_hash": 0})
+
+
+async def _apply_pending_charge_acceptance(su: dict) -> None:
+    """Record charge acceptance once a card exists, the same moment signup uses.
+
+    Signup writes charge_authorization_accepted_at in the create request, and
+    only when the shop accepted the charge terms and the card saved. An invite
+    accepts those terms on the setup form, then saves the card in a later
+    request. The agreement signature is not that acceptance. A shop that already
+    signed and already has a card stays unset until they accept in Settings.
+    """
+    if su.get("charge_authorization_accepted_at") or not su.get("charge_terms_accepted_at"):
+        return
+    shop = await db.shops.find_one({"id": su["shop_id"]}, {"_id": 0}) or {}
+    if shop.get("charge_authorization_accepted_at"):
+        await db.shop_users.update_one({"id": su["id"]}, {"$set": {
+            "charge_authorization_accepted_at": shop["charge_authorization_accepted_at"],
+        }})
+        return
+    accepted_at = iso(now_utc())
+    await db.shop_users.update_one({"id": su["id"]}, {"$set": {
+        "charge_authorization_accepted_at": accepted_at,
+        "charge_authorization_text": su.get("charge_authorization_text") or CHARGE_ACCEPTANCE_TEXT,
+    }})
+    await db.shops.update_one({"id": su["shop_id"]}, {"$set": {
+        "charge_authorization_accepted_at": accepted_at,
+    }})
+    try:
+        await _send_signup_finished(
+            {**shop, "id": su["shop_id"], "name": shop.get("name") or su.get("shop_name") or "Your shop"},
+            su.get("email") or "",
+        )
+    except Exception as exc:
+        logger.error("[EMAIL] welcome after card save failed: %s", exc)
 
 
 async def _clear_saved_card(shop_id: str, previous_last4, brand) -> None:

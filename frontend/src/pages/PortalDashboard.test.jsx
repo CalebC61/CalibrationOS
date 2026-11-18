@@ -45,6 +45,27 @@ function show(day) {
   return render(<PortalDashboard />);
 }
 
+test("a signed shop with a card is sent to accept charge terms", async () => {
+  portalApi.get.mockImplementation((url) => {
+    if (String(url).includes("day-map")) return Promise.resolve({ data: { own: [], others: [], date: "2026-11-18" } });
+    return Promise.resolve({
+      data: {
+        setup: {
+          banner: true,
+          allowed: false,
+          has_card: true,
+          accepted: false,
+          charge_failed: false,
+          suspended: false,
+          message: "Accept the charge terms in Settings before booking.",
+        },
+      },
+    });
+  });
+  render(<PortalDashboard />);
+  expect(await screen.findByTestId("add-card-cta")).toHaveTextContent("Accept charge terms");
+});
+
 test("an empty route shows a note instead of a valley map", async () => {
   show({ own: [], others: [], date: "2026-11-18" });
   expect(await screen.findByTestId("portal-day-empty")).toHaveTextContent("No stops on this day");

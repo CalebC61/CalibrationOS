@@ -14,6 +14,7 @@ export default function PortalRegister() {
   const [form, setForm] = useState({ full_name: "", password: "", confirm: "" });
   const [signature, setSignature] = useState("");
   const [agreed, setAgreed] = useState(false);
+  const [chargeAccepted, setChargeAccepted] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [setupSecret, setSetupSecret] = useState("");
@@ -61,6 +62,7 @@ export default function PortalRegister() {
     if (form.password !== form.confirm) return setError("Passwords don't match");
     if (form.password.length < 8) return setError("Password must be at least 8 characters");
     if (!agreed || !signature.trim()) return setError("Sign the agreement to continue");
+    if (!chargeAccepted) return setError("Accept the charge terms to continue.");
     setSubmitting(true);
     try {
       const { data } = await portalApi.post(`/public/invites/${token}/register`, {
@@ -69,6 +71,7 @@ export default function PortalRegister() {
         password: form.password,
         terms_signature: signature,
         terms_agreed: true,
+        charge_accepted: true,
       });
       setPortalAuth({
         token: data.token, full_name: form.full_name, shop_name: invite.shop_name,
@@ -86,6 +89,14 @@ export default function PortalRegister() {
       setError(typeof detail === "string" ? detail : (detail?.message || "Registration failed"));
       setSubmitting(false);
     }
+  }
+
+  function cardSaved(shopUser) {
+    if (shopUser && shopUser.charge_authorization_accepted_at) {
+      nav("/portal/book");
+      return;
+    }
+    setNeedsAcceptance(true);
   }
 
   async function accept() {
@@ -150,6 +161,10 @@ export default function PortalRegister() {
               <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} data-testid="reg-agree" />
               <span>I am allowed to sign for this shop. My typed name is my signature.</span>
             </label>
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 16, lineHeight: 1.55 }}>
+              <input type="checkbox" checked={chargeAccepted} onChange={e => setChargeAccepted(e.target.checked)} data-testid="reg-charge" />
+              <span>{acceptanceText}</span>
+            </label>
             {error && <div style={{ color: "var(--red)", fontSize: 13, marginBottom: 12 }} data-testid="reg-error">{error}</div>}
             <button className="btn btn-primary" style={{ width: "100%" }} disabled={submitting} data-testid="reg-submit">
               {submitting ? "Saving…" : "Continue to card"}
@@ -160,7 +175,7 @@ export default function PortalRegister() {
             <h2 className="h3" style={{ marginBottom: 8 }}>Save a card</h2>
             <p className="muted" style={{ marginBottom: 16 }}>No charge today. The card is used after a job is completed, unless you asked to be invoiced.</p>
             {setupSecret ? (
-              <CardSetup clientSecret={setupSecret} onSaved={() => setNeedsAcceptance(true)} />
+              <CardSetup clientSecret={setupSecret} onSaved={cardSaved} />
             ) : (
               <a className="btn btn-primary" href={checkoutUrl}>Continue in Stripe</a>
             )}

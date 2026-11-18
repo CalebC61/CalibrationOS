@@ -45,6 +45,52 @@ beforeEach(() => {
   });
 });
 
+test("a shop that still owes charge terms is sent to accept them, not to replace the card", async () => {
+  portalApi.get.mockImplementation((url) => {
+    if (String(url).includes("/portal/me")) {
+      return Promise.resolve({
+        data: {
+          shop,
+          setup: {
+            allowed: false,
+            has_card: true,
+            accepted: false,
+            charge_failed: false,
+            suspended: false,
+            message: "Accept the charge terms in Settings before booking.",
+          },
+        },
+      });
+    }
+    return Promise.resolve({ data: [] });
+  });
+  render(<PortalBook />);
+  expect(await screen.findByTestId("booking-closed")).toHaveTextContent("Accept the charge terms in Settings before booking.");
+  expect(screen.getByTestId("goto-add-card")).toHaveTextContent("Accept charge terms");
+});
+
+test("a shop with no card is still sent to update the card", async () => {
+  portalApi.get.mockImplementation((url) => {
+    if (String(url).includes("/portal/me")) {
+      return Promise.resolve({
+        data: {
+          shop,
+          setup: {
+            allowed: false,
+            has_card: false,
+            accepted: false,
+            suspended: false,
+            message: "Add a card in Settings before booking. A shop needs a valid card on file.",
+          },
+        },
+      });
+    }
+    return Promise.resolve({ data: [] });
+  });
+  render(<PortalBook />);
+  expect(await screen.findByTestId("goto-add-card")).toHaveTextContent("Update card");
+});
+
 test("a changed address is checked while typing, before the field loses focus", async () => {
   render(<PortalBook />);
   const address = await screen.findByTestId("b-addr");
