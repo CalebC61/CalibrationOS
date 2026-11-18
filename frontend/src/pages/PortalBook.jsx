@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { phoenixTodayStr } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
@@ -48,12 +48,17 @@ export default function PortalBook() {
   const [redoChecked, setRedoChecked] = useState(false);
   const [redoOf, setRedoOf] = useState("");
   const [chargeNotice, setChargeNotice] = useState(false);
+  const addressRef = useRef("");
+  const confirmedRef = useRef("");
+  const geoSeq = useRef(0);
 
   useEffect(() => {
     portalApi.get("/portal/me").then(r => {
+      const shopAddress = r.data.shop.address || "";
+      addressRef.current = shopAddress;
       setShop(r.data.shop);
       setSetup(r.data.setup);
-      setAddress(r.data.shop.address || "");
+      setAddress(shopAddress);
       setZoneInfo({ in_metro: true, reused: true });
       setNotifyPhone(r.data.shop.contact_phone || "");
     });
@@ -65,14 +70,21 @@ export default function PortalBook() {
   useEffect(() => {
     if (!shop || !address.trim()) return undefined;
     if (sameAddress(address, shop.address) || sameAddress(address, shop.formatted_address)) return undefined;
+    if (sameAddress(address, confirmedRef.current)) return undefined;
+    const seq = ++geoSeq.current;
+    const requested = address;
     let cancelled = false;
     const handle = setTimeout(() => {
-      portalApi.post("/geocode", { address }).then(({ data }) => {
-        if (cancelled) return;
+      portalApi.post("/geocode", { address: requested }).then(({ data }) => {
+        if (cancelled || seq !== geoSeq.current) return;
+        if (!sameAddress(addressRef.current, requested)) return;
+        if (sameAddress(addressRef.current, confirmedRef.current)) return;
         setZoneInfo(data);
         setAddressError("");
       }).catch((e) => {
-        if (cancelled) return;
+        if (cancelled || seq !== geoSeq.current) return;
+        if (!sameAddress(addressRef.current, requested)) return;
+        if (sameAddress(addressRef.current, confirmedRef.current)) return;
         setZoneInfo(null);
         const detail = e.response?.data?.detail;
         setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
@@ -99,16 +111,26 @@ export default function PortalBook() {
     return sameAddress(value, shop.address) || sameAddress(value, shop.formatted_address);
   }
   async function geo(value = address) {
-    if (atShop(value)) {
+    const requested = value;
+    if (atShop(requested)) {
       setAddressError("");
       setZoneInfo({ in_metro: true, reused: true });
       return;
     }
+    if (sameAddress(requested, confirmedRef.current)) return;
+    if (!sameAddress(requested, addressRef.current)) return;
+    const seq = ++geoSeq.current;
     setAddressError("");
     try {
-      const { data } = await portalApi.post("/geocode", { address: value });
+      const { data } = await portalApi.post("/geocode", { address: requested });
+      if (seq !== geoSeq.current) return;
+      if (!sameAddress(addressRef.current, requested)) return;
+      if (sameAddress(addressRef.current, confirmedRef.current)) return;
       setZoneInfo(data);
     } catch (e) {
+      if (seq !== geoSeq.current) return;
+      if (!sameAddress(addressRef.current, requested)) return;
+      if (sameAddress(addressRef.current, confirmedRef.current)) return;
       setZoneInfo(null);
       const detail = e.response?.data?.detail;
       setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
@@ -211,20 +233,32 @@ export default function PortalBook() {
               testId="b-addr"
               placeholder="Street, city, AZ"
               onChange={value => {
+                addressRef.current = value;
                 setAddress(value);
                 setChosen(null);
                 setSlots([]);
-                if (atShop(value)) setZoneInfo({ in_metro: true, reused: true });
-                else setZoneInfo(null);
+                if (atShop(value)) {
+                  confirmedRef.current = "";
+                  setAddressError("");
+                  setZoneInfo({ in_metro: true, reused: true });
+                  return;
+                }
+                if (!sameAddress(value, confirmedRef.current)) {
+                  confirmedRef.current = "";
+                  geoSeq.current += 1;
+                  setZoneInfo(null);
+                }
               }}
               onPlace={place => {
+                confirmedRef.current = place.address;
+                addressRef.current = place.address;
+                geoSeq.current += 1;
                 setAddress(place.address);
                 setChosen(null);
                 setSlots([]);
-                if (atShop(place.address)) {
-                  setAddressError("");
-                  setZoneInfo({ in_metro: true, reused: true });
-                }
+                setAddressError("");
+                if (atShop(place.address)) setZoneInfo({ in_metro: true, reused: true });
+                else setZoneInfo({ in_metro: true });
               }}
               onBlur={value => geo(value)}
             />

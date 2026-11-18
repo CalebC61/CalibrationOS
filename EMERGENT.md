@@ -22,6 +22,12 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): a picked business on booking stays in the service area.**
+  The suggestion request uses the full typed name. Places may still rank other
+  businesses above that name. Picking one fills the street and confirms the
+  valley from the place itself. A geocode of the typed name cannot show
+  "We couldn't find that address" after the pick. Signup and add-shop still
+  get the street and the place id. No new env var. `BILLING_ENABLED` is unchanged.
 - **Session (2026-11-18): Places suggestions keep up with the address being typed.**
   The booking, signup, and add-shop address fields wait 200ms, then request
   suggestions for the current text. A keystroke typed before Places has loaded
