@@ -85,3 +85,21 @@ test("focusing the window refreshes the field Xero outcome", async () => {
 
   await waitFor(() => expect(document.body.textContent).toContain("Draft INV-9 created"));
 });
+
+test("a free warranty redo shows its badge and does not offer a Xero retry", async () => {
+  mockList({
+    ...attentionJob,
+    warranty_of_job_id: "orig-1",
+    warranty_eligible: true,
+    warranty_label: "Warranty redo (free)",
+    warranty_skip_reason: "Warranty redo (free). The redo is within 30 days of the original completion, so no Xero draft is filed and the card is not charged.",
+    xero_draft_status: "skipped",
+    xero_attention_reason: null,
+    price: 0,
+  });
+  render(<Field />);
+  fireEvent.click(await screen.findByTestId("field-job-job-1"));
+  expect(await screen.findByTestId("warranty-badge-job-1")).toHaveTextContent("Warranty redo (free)");
+  expect(screen.getByTestId("xero-draft-status")).toHaveTextContent("no Xero draft is filed");
+  expect(screen.queryByTestId("retry-xero-draft")).not.toBeInTheDocument();
+});

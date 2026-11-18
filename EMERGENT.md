@@ -22,6 +22,14 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): 30-day warranty redos.** A job can be a redo of one
+  of that shop's completed jobs. Within 30 Phoenix days of the original
+  completion the redo is $0, and Complete skips the Xero draft and the card
+  charge and records why. Day 31 is billed normally. The shop picks the
+  original job while booking. The owner can set or clear the link on edit.
+  Another shop's job, or a job that is not completed, is rejected. Badges show
+  on Dispatch, the field job, and My Jobs. No new env vars. `BILLING_ENABLED`
+  and `SHOP_EMAILS_ENABLED` are unchanged. A free redo sends no email or text.
 - **Session (2026-11-18): declined jobs leave the new-booking banner.**
   `GET /api/notifications/new-bookings` skips `declined` as well as
   `cancelled`. Decline marks that job's alert seen. Dispatch updates the

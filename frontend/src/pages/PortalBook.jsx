@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { phoenixTodayStr } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
+import { redoIsFree, warrantyOptionLabel, WARRANTY_BILLED, WARRANTY_FREE } from "../lib/warranty";
 import PortalShell from "../components/PortalShell";
 
 const ADAS = [
@@ -41,6 +42,9 @@ export default function PortalBook() {
   const [invoiceInstead, setInvoiceInstead] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
   const [bookError, setBookError] = useState("");
+  const [pastJobs, setPastJobs] = useState([]);
+  const [redoChecked, setRedoChecked] = useState(false);
+  const [redoOf, setRedoOf] = useState("");
 
   useEffect(() => {
     portalApi.get("/portal/me").then(r => {
@@ -50,6 +54,9 @@ export default function PortalBook() {
       setZoneInfo({ in_metro: true, reused: true });
       setNotifyPhone(r.data.shop.contact_phone || "");
     });
+    portalApi.get("/portal/warranty-jobs").then(r => {
+      setPastJobs(Array.isArray(r.data) ? r.data : []);
+    }).catch(() => setPastJobs([]));
   }, []);
 
   useEffect(() => {
@@ -123,6 +130,11 @@ export default function PortalBook() {
     if (shop.pricing_tier === "custom" && shop[`custom_rate_${t}`] != null) return Number(shop[`custom_rate_${t}`]);
     return ({static: 125, dynamic: 125, dual: 175, triple: 185, tesla: 225})[t];
   }
+  const selectedRedo = pastJobs.find(row => row.id === redoOf);
+  const redoDay = chosen?.start ? phoenixTodayStr(new Date(chosen.start)) : "";
+  const redoFree = Boolean(redoChecked && selectedRedo && redoIsFree(selectedRedo.warranty_through, redoDay));
+  const redoBilled = Boolean(redoChecked && selectedRedo && redoDay && !redoIsFree(selectedRedo.warranty_through, redoDay));
+  const shownPrice = redoFree ? 0 : priceFor(calType);
   async function submit() {
     setSubmitting(true);
     setBookError("");
@@ -136,6 +148,7 @@ export default function PortalBook() {
         trim: veh.trim || null, vin: veh.vin || null,
         adas_system: veh.adas_system, calibration_type: calType,
         notification_phone: notifyPhone, invoice_instead: invoiceInstead,
+        warranty_of_job_id: redoChecked && redoOf ? redoOf : null,
       });
       setConfirmation(data);
     } catch (e) {
@@ -151,6 +164,14 @@ export default function PortalBook() {
         {!pending && <div style={{ fontSize: 48, color: "var(--green)" }}>✓</div>}
         <div className="h2">{pending ? "Pending owner approval" : "Booking Confirmed"}</div>
         <div className="muted">Ref #{confirmation.booking_reference}</div>
+        {confirmation.warranty_label && (
+          <div style={{ marginTop: 12, fontSize: 14 }} data-testid="portal-warranty-label">{confirmation.warranty_label}</div>
+        )}
+        {confirmation.price != null && (
+          <div className="font-mono" style={{ marginTop: 8 }} data-testid="portal-confirm-price">
+            ${Number(confirmation.price).toFixed(2)}
+          </div>
+        )}
         {pending && (
           <div style={{ marginTop: 12, fontSize: 14 }} data-testid="portal-pending-note">
             This time is held until the owner approves it.
@@ -225,9 +246,9 @@ export default function PortalBook() {
             <R><F label="Year *"><input className="input" type="number" value={veh.year}
               onChange={e => setVeh({...veh, year: e.target.value})} /></F>
               <F label="Make *"><input className="input" value={veh.make}
-                onChange={e => setVeh({...veh, make: e.target.value})} /></F></R>
+                onChange={e => setVeh({...veh, make: e.target.value})} data-testid="b-make" /></F></R>
             <R><F label="Model *"><input className="input" value={veh.model}
-              onChange={e => setVeh({...veh, model: e.target.value})} /></F>
+              onChange={e => setVeh({...veh, model: e.target.value})} data-testid="b-model" /></F>
               <F label="Trim"><input className="input" value={veh.trim}
                 onChange={e => setVeh({...veh, trim: e.target.value})} /></F></R>
             <F label="VIN"><input className="input" maxLength={17} value={veh.vin}
@@ -251,13 +272,43 @@ export default function PortalBook() {
                 Pending owner approval. This time is held until the owner approves it.
               </div>
             )}
+            <div style={{ margin: "8px 0 16px" }}>
+              <label style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <input type="checkbox" checked={redoChecked}
+                  onChange={e => { setRedoChecked(e.target.checked); if (!e.target.checked) setRedoOf(""); }}
+                  data-testid="warranty-redo" />
+                <span>This is a redo of a past job</span>
+              </label>
+              {redoChecked && pastJobs.length === 0 && (
+                <div className="muted" style={{ fontSize: 13, marginTop: 8 }} data-testid="warranty-none">
+                  No completed jobs in the last 90 days.
+                </div>
+              )}
+              {redoChecked && pastJobs.length > 0 && (
+                <select className="input" style={{ marginTop: 8 }} value={redoOf}
+                  onChange={e => setRedoOf(e.target.value)} data-testid="warranty-of">
+                  <option value="">Choose a completed job</option>
+                  {pastJobs.map(row => (
+                    <option key={row.id} value={row.id}>{warrantyOptionLabel(row)}</option>
+                  ))}
+                </select>
+              )}
+              {redoFree && (
+                <div style={{ fontSize: 13, marginTop: 8 }} data-testid="warranty-preview">{WARRANTY_FREE}</div>
+              )}
+              {redoBilled && (
+                <div style={{ fontSize: 13, marginTop: 8 }} data-testid="warranty-preview">{WARRANTY_BILLED}</div>
+              )}
+            </div>
             <div className="elevated" style={{ padding: 14, fontSize: 14 }}>
               <Row k="When" v={`${new Date(chosen.start).toLocaleDateString()} · ${fmt(chosen.start)}`} />
               <Row k="Vehicle" v={`${veh.year} ${veh.make} ${veh.model}`} />
               <Row k="Customer" v={[veh.customer_first_name, veh.customer_last_name].filter(s => s.trim()).join(" ")} />
-              <Row k="Total" v={`$${priceFor(calType).toFixed(2)}`} bold />
+              <Row k="Total" v={`$${shownPrice.toFixed(2)}`} bold />
               <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                The card on file is charged when the job is completed, unless you ask to be invoiced.
+                {redoFree
+                  ? "This redo is within 30 days, so it is free. The card is not charged."
+                  : "The card on file is charged when the job is completed, unless you ask to be invoiced."}
               </div>
             </div>
             <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 14 }}>
@@ -279,7 +330,7 @@ export default function PortalBook() {
             )}
             <Nav onBack={() => setStep(1)} onNext={submit}
               nextLabel={submitting ? "Booking…" : (chosen?.requires_approval ? "Request this time" : "Confirm Booking")}
-              nextDisabled={submitting || !veh.customer_last_name.trim() || !String(veh.year).trim() || !veh.make.trim() || !veh.model.trim()} />
+              nextDisabled={submitting || !veh.customer_last_name.trim() || !String(veh.year).trim() || !veh.make.trim() || !veh.model.trim() || (redoChecked && !redoOf)} />
           </Card>
         )}
       </div>

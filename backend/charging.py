@@ -20,6 +20,8 @@ def chargeable_reason(job: dict, shop_user: Optional[dict]) -> Optional[str]:
     Centralizes the eligibility check so both the charge endpoint and (if ever needed) the
     queue listing agree on what counts as chargeable, instead of duplicating conditions.
     """
+    if job.get("warranty_eligible"):
+        return "This warranty redo is free. The card is not charged."
     if job.get("status") != "complete":
         return "Job is not marked complete."
     if job.get("charged_at"):

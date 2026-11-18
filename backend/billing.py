@@ -105,6 +105,8 @@ def billing_plan(job: Optional[dict]) -> dict:
     """
     job = job or {}
     mode = payment_mode(job)
+    if job.get("warranty_eligible"):
+        return {"mode": mode, "create_invoice": False, "charge": False}
     return {
         "mode": mode,
         "create_invoice": not has_invoice(job),
