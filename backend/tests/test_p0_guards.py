@@ -145,8 +145,17 @@ def test_approve_link_previews_then_works_once(monkeypatch):
             assert db.owner_action_tokens.docs[0]["used_at"]
             assert emails == []
             held = [row for row in db.email_outbox.docs if row.get("to") == "shop@glass.example"]
-            assert held
-            assert "approved" in (held[0]["subject"] + held[0]["body"]).lower()
+            assert len(held) == 1
+            note = held[0]["subject"] + held[0]["body"]
+            assert held[0]["kind"] == "booking_confirmation"
+            assert "We have this job." in note
+            assert "Fri, Nov 13, 2026" in note
+            assert "7:00 AM Phoenix" in note
+            assert "2022 Honda Civic" in note
+            assert "Surprise, AZ" in note
+            assert "JOB-1" in note
+            assert "/portal/jobs/job-1" in note
+            assert "pending Caleb's OK" not in note
             again = await client.post(f"/api/public/owner-action/{minted['token']}")
             assert again.status_code == 400
             assert "already used" in again.json()["detail"].lower()

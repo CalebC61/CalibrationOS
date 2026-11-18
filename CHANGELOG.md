@@ -15,6 +15,27 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Removed — 5:00 PM day-before shop reminder (2026-11-18)
+Shops no longer get an evening email listing the next day's jobs. The
+in-process 5:00 PM Phoenix loop, `backend/day_before.py`, the
+`day_before_reminder` template, and `day_before_reminders` markers are gone.
+The late-fee loop is unchanged. No environment variable changed.
+`SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged.
+
+A shop still gets one booking confirmation when we have the job. A portal
+booking that is booked immediately sends it then. A pending or same-day job
+that is waiting on the owner does not send it yet. Approving that job (the
+dispatch button or the owner email link) sends the same confirmation, once.
+A second approve does not send another. Decline, reschedule, and cancel notes
+are unchanged.
+
+The confirmation says we have the job and includes the Phoenix date, the
+arrival window (scheduled start through scheduled end), the vehicle, the
+address, the ref (the first 8 characters of the job id), and a link to
+`/portal/jobs/{id}`. While `SHOP_EMAILS_ENABLED` is false it stays in Email
+preview and Resend is not called. `booking_confirmation_sent_at` on the job
+blocks a second copy.
+
 ### Fixed — a picked business address stays confirmed on booking (2026-11-18)
 Typing a business name on Book a Calibration asks Places for that full text.
 "Downtown Phoenix Inc" is sent whole, not as an earlier prefix. Places can
@@ -178,6 +199,7 @@ no text. Cancel and Complete still work on a job that is not today. A 6:30 PM
 Phoenix job is still today.
 
 ### Added — day-before reminder for shops (2026-11-18)
+Removed the same day. See "Removed — 5:00 PM day-before shop reminder" above.
 Each evening at 5:00 PM America/Phoenix, every shop with jobs the next Phoenix
 day gets one email. It lists each job's vehicle, customer, address, calibration
 type, and estimated arrival (the scheduled start through the scheduled end,

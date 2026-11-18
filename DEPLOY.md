@@ -39,7 +39,7 @@ Any database user with read and write works, including permission to create inde
    **Optional — the app boots and the matching feature stays mocked or off until set:**
    - `ADMIN_EMAIL` (default `admin@thecalibrationcrew.us`)
    - `ALERT_EMAIL` — where 500s and browser crashes are mailed. Blank uses `OWNER_EMAIL`, then `ADMIN_EMAIL`. Blank for all three sends nothing. These notes still send while `SHOP_EMAILS_ENABLED` is false. They need `RESEND_API_KEY` and `SENDER_EMAIL` to leave the server; otherwise they are logged like other mail.
-   - `SHOP_EMAILS_ENABLED` — leave `false` until you want shop and customer mail to actually send. While it is false, that mail is stored for Email preview. The 5:00 PM Phoenix day-before reminder uses this same flag and the API process's existing background loop. There is no separate secret.
+   - `SHOP_EMAILS_ENABLED` — leave `false` until you want shop and customer mail to actually send. While it is false, that mail is stored for Email preview. There is no separate secret.
    - `TEST_EMAIL_ALLOWLIST` — your own address, so an invite or password reset can reach you while shop mail is off.
    - `BILLING_ENABLED` — leave `false` until you want a completed job to charge the card and the late-fee sweep to run. A live Stripe key is ignored until this is true.
    - `RESEND_API_KEY`, `SENDER_EMAIL` — email. `SENDER_EMAIL` must be a verified `thecalibrationcrew.us` address. `onboarding@resend.dev` is logged as an error and will not reach a shop.

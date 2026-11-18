@@ -5,7 +5,7 @@
 import asyncio
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,45 +23,49 @@ EARLY = datetime(2026, 11, 13, 14, 0, tzinfo=timezone.utc)  # 7:00 AM Phoenix
 NOW = datetime(2026, 11, 12, 17, 0, tzinfo=timezone.utc)
 
 
-def test_confirmation_email_includes_the_booking_and_phoenix_time():
-    message = booking_confirmation_email(
+def _confirmation(**overrides):
+    payload = dict(
         to="shop@glass.example",
         reply_to="caleb@thecalibrationcrew.us",
         when=WHEN,
+        window_end=WHEN + timedelta(minutes=20),
         vehicle="2022 Honda Civic",
         address="1234 E Williams Field Rd, Gilbert, AZ",
         calibration="Static ADAS Calibration",
         price=125,
-        pending=False,
+        reference="ABCD1234",
+        portal_url="https://www.thecalibrationcrew.us/portal/jobs/abcd1234-rest",
     )
+    payload.update(overrides)
+    return booking_confirmation_email(**payload)
+
+
+def test_confirmation_email_says_we_have_the_job():
+    message = _confirmation()
     assert message["to"] == "shop@glass.example"
     assert message["reply_to"] == "caleb@thecalibrationcrew.us"
     assert message["kind"] == "booking_confirmation"
     body = message["subject"] + message["html"]
-    assert "confirmed" in body
+    assert "We have this job." in message["html"]
+    assert "We have your job: Fri, Nov 13, 2026" in message["subject"]
     assert "pending Caleb's OK" not in body
     assert "Fri, Nov 13, 2026" in body
-    assert "8:00 AM" in body
-    assert "Phoenix" in body
+    assert "8:00–8:20 AM Phoenix" in message["html"]
     assert "2022 Honda Civic" in body
     assert "1234 E Williams Field Rd, Gilbert, AZ" in body
+    assert "ABCD1234" in message["html"]
+    assert "https://www.thecalibrationcrew.us/portal/jobs/abcd1234-rest" in message["html"]
+    assert "Open this job in your portal" in message["html"]
     assert "Static ADAS Calibration" in body
     assert "$125.00" in body
 
 
-def test_a_held_booking_says_pending_calebs_ok():
-    message = booking_confirmation_email(
-        to="shop@glass.example",
-        reply_to="caleb@thecalibrationcrew.us",
-        when=EARLY,
-        vehicle="2022 Honda Civic",
-        address="Surprise, AZ",
-        calibration="Static ADAS Calibration",
-        price=125,
-        pending=True,
-    )
-    assert "pending Caleb's OK" in message["html"]
-    assert "pending Caleb's OK" in message["subject"]
+def test_arrival_window_names_both_meridiems_when_it_crosses_noon():
+    start = datetime(2026, 11, 13, 18, 50, tzinfo=timezone.utc)  # 11:50 AM Phoenix
+    end = datetime(2026, 11, 13, 19, 10, tzinfo=timezone.utc)  # 12:10 PM Phoenix
+    message = _confirmation(when=start, window_end=end)
+    assert "11:50 AM–12:10 PM Phoenix" in message["html"]
+    assert "Fri, Nov 13, 2026" in message["html"]
 
 
 def test_deliver_message_calls_the_mailer_and_does_not_send_without_a_recipient():
@@ -73,16 +77,7 @@ def test_deliver_message_calls_the_mailer_and_does_not_send_without_a_recipient(
         })
         return {"delivered": True}
 
-    message = booking_confirmation_email(
-        to="shop@glass.example",
-        reply_to="caleb@thecalibrationcrew.us",
-        when=WHEN,
-        vehicle="2022 Honda Civic",
-        address="Gilbert, AZ",
-        calibration="Static ADAS Calibration",
-        price=125,
-        pending=False,
-    )
+    message = _confirmation(address="Gilbert, AZ")
     result = asyncio.run(deliver_message(send, message))
     assert result["delivered"] is True
     assert sent[0]["to"] == "shop@glass.example"

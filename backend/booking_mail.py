@@ -28,12 +28,48 @@ def normalize_us_phone(value) -> str | None:
     return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
 
 
+def _as_phoenix(value) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        instant = value
+    else:
+        try:
+            instant = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return instant.astimezone(BUSINESS_TZ)
+
+
 def phoenix_clock(when: datetime) -> str:
     """Wall time in America/Phoenix, with the city named in the sentence."""
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    local = when.astimezone(BUSINESS_TZ)
+    local = _as_phoenix(when)
+    if local is None:
+        return "—"
     return local.strftime("%a, %b %-d, %Y at %-I:%M %p") + " Phoenix"
+
+
+def phoenix_date(when) -> str:
+    """The Phoenix calendar date, without a clock time."""
+    local = _as_phoenix(when)
+    if local is None:
+        return "—"
+    return local.strftime("%a, %b %-d, %Y")
+
+
+def arrival_window(start, end) -> str:
+    """Estimated arrival, Phoenix clock. Same meridiem collapses to one AM/PM."""
+    start_local = _as_phoenix(start)
+    if start_local is None:
+        return "—"
+    end_local = _as_phoenix(end)
+    if end_local is None or end_local <= start_local:
+        return start_local.strftime("%-I:%M %p") + " Phoenix"
+    if start_local.strftime("%p") == end_local.strftime("%p"):
+        return f"{start_local.strftime('%-I:%M')}–{end_local.strftime('%-I:%M %p')} Phoenix"
+    return f"{start_local.strftime('%-I:%M %p')}–{end_local.strftime('%-I:%M %p')} Phoenix"
 
 
 def _money(price) -> str:
@@ -44,21 +80,30 @@ def _row(label: str, value: str) -> str:
     return f"<li>{html.escape(label)}: {html.escape(value)}</li>"
 
 
-def booking_confirmation_email(*, to, reply_to, when, vehicle, address, calibration, price, pending: bool) -> dict:
-    """Shop confirmation. `pending` uses the words 'pending Caleb's OK'."""
-    status = "pending Caleb's OK" if pending else "confirmed"
-    when_text = phoenix_clock(when)
-    subject = f"Calibration {status}: {when_text}"
+def booking_confirmation_email(
+    *, to, reply_to, when, window_end, vehicle, address, calibration, price,
+    reference: str, portal_url: str,
+) -> dict:
+    """One shop note that we have the job. Sent when it is booked, not while it is pending."""
+    date_text = phoenix_date(when)
+    window = arrival_window(when, window_end)
+    ref = reference or "—"
+    subject = f"We have your job: {date_text}"
+    link = html.escape(portal_url or "", quote=True)
+    portal = f'<p><a href="{link}">Open this job in your portal</a></p>' if portal_url else ""
     body = (
-        f"<p>Your calibration is <strong>{status}</strong>.</p>"
+        "<p>We have this job.</p>"
         "<ul>"
-        + _row("When", when_text)
-        + _row("Vehicle", vehicle)
-        + _row("Address", address)
-        + _row("Calibration", calibration)
+        + _row("Date", date_text)
+        + _row("Arrival window", window)
+        + _row("Vehicle", vehicle or "—")
+        + _row("Address", address or "—")
+        + _row("Ref", ref)
+        + _row("Calibration", calibration or "—")
         + _row("Price", _money(price))
         + "</ul>"
-        "<p>Reply to this email and it comes to Caleb.</p>"
+        + portal
+        + "<p>Reply to this email and it comes to Caleb.</p>"
     )
     return {
         "to": to,
