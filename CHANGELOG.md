@@ -15,6 +15,29 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — declined jobs leave the new-booking banner, and the owner can delete them (2026-11-18)
+Declining a pending job took it off the dispatch day, but its unseen
+new-booking alert stayed. The banner and its count still included that job
+until a full reload, and a reload did not help, because
+`GET /api/notifications/new-bookings` only dropped alerts whose job was
+`cancelled`. Decline never set `seen_at`.
+
+The banner now drops alerts for `declined` jobs as well as `cancelled` jobs,
+including ones declined before this change. Decline (the dispatch button and
+the owner email link) sets `seen_at` on that job's alerts only. After Decline
+or Cancel, the dispatch banner count updates immediately. A later poll cannot
+put that job's alert back.
+
+Cancelled and declined jobs are still off the day board, so Delete was
+unreachable. `GET /api/jobs?closed=true` is owner-only and returns those jobs
+across dates, newest update first, up to 1,000. The day list and `include_cancelled=true`
+are unchanged: declined jobs stay out of the day and out of that history flag.
+Dispatch has a Cancelled & declined control. The list shows date, shop,
+vehicle, customer, status, and reason. Each row uses the existing Delete
+action and its Yes, delete confirmation. Delete is still
+`DELETE /api/jobs/{job_id}`: owner-only, no email, no text, and invoice rows
+stay. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+
 ### Fixed — Xero status updates without a browser reload (2026-11-18)
 The owner app kept the previous Xero connection and the previous draft badge
 until a full reload. Three things stacked:
