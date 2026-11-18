@@ -294,6 +294,17 @@ frontend:
         - working: true
           agent: "main"
           comment: "The portal book address uses AddressField. A prefilled shop address does not request suggestions until the user edits it. The edit requests Places suggestions for the full new text. In our Phoenix service area still follows the shop-address shortcut and the geocode check. Covered by AddressField.test.jsx and PortalBook.test.jsx."
+  - task: "Booking hides a geocode miss until the address field blurs"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/PortalBook.jsx, frontend/src/pages/PortalBook.test.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Typing Downtown Phoenix Inc with suggestions open does not show We couldn't find that address. Blur does. zzzz qqqq nowhere 99999 shows that error on blur and leaves the date disabled. A real street still enables the date before blur. A pick still confirms the street. Covered by PortalBook.test.jsx."
   - task: "A picked business confirms the street on booking"
     implemented: true
     working: true

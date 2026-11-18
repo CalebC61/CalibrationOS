@@ -22,6 +22,11 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): booking does not show a geocode error while the address is being typed.**
+  A miss on the in-progress text stays quiet, including while Places suggestions
+  are open. Blur still reports an address that cannot be found, such as
+  `zzzz qqqq nowhere 99999`. A picked suggestion still confirms the street and
+  enables the date. No new env var. `BILLING_ENABLED` is unchanged.
 - **Session (2026-11-18): a picked business on booking stays in the service area.**
   The suggestion request uses the full typed name. Places may still rank other
   businesses above that name. Picking one fills the street and confirms the

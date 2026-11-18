@@ -85,9 +85,8 @@ export default function PortalBook() {
         if (cancelled || seq !== geoSeq.current) return;
         if (!sameAddress(addressRef.current, requested)) return;
         if (sameAddress(addressRef.current, confirmedRef.current)) return;
+        // A miss while the field is still being typed stays quiet. Blur reports it.
         setZoneInfo(null);
-        const detail = e.response?.data?.detail;
-        setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
       });
     }, 300);
     return () => {
@@ -247,6 +246,7 @@ export default function PortalBook() {
                   confirmedRef.current = "";
                   geoSeq.current += 1;
                   setZoneInfo(null);
+                  setAddressError("");
                 }
               }}
               onPlace={place => {

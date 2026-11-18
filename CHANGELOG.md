@@ -15,6 +15,19 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — no geocode error while a booking address is still being typed (2026-11-18)
+Book a Calibration looks up the address while it is being typed so a real
+street can enable the date before blur. That lookup was also painting
+"We couldn't find that address, please check it" when the text was still a
+business name, such as `Downtown Phoenix Inc`, and the suggestion list was
+open. The date went disabled with it.
+
+A miss during typing no longer shows that sentence. Leaving the field does:
+`zzzz qqqq nowhere 99999` still shows the error on blur, and the date stays
+disabled. Picking a suggestion still fills the street, shows "In our Phoenix
+service area", and enables the date. Editing again clears a blur error until
+the next blur. No new env var. `BILLING_ENABLED` is unchanged.
+
 ### Removed — 5:00 PM day-before shop reminder (2026-11-18)
 Shops no longer get an evening email listing the next day's jobs. The
 in-process 5:00 PM Phoenix loop, `backend/day_before.py`, the
