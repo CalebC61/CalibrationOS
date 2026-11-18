@@ -15,6 +15,29 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — warranty banners, past-window booking warning, settings, and paid complete (2026-11-18)
+A free warranty redo still confirms with no approval step. The job now shows a
+Warranty banner on the owner day cards, the closed-job list, tomorrow's strip,
+the route map tip, the field list and job page (including the complete
+screen), and the shop's day list, My Jobs, job page, and scorecard. The banner
+says the redo is not charged.
+
+Booking a redo, or moving one, whose original completion was more than 30
+Phoenix days ago asks the shop first. The notice says the 30-day warranty has
+passed and the job will be charged at full price, with Continue and Cancel.
+Cancel does not book or save. The price for that redo is the shop's normal
+rate for the calibration, including a custom rate. Rescheduling a free redo
+onto a day outside the window, from the shop edit or the owner reschedule,
+reprices it the same way. A redo still inside 30 days stays $0 and does not
+show the notice. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+
+Shop Settings shows the shop address. Update card has a Cancel button that
+closes the form and does not save a card.
+
+The field complete screen shows Paid and the amount as soon as the charge
+succeeds. A later day-list response that is still unpaid does not cover that
+paid result. A later card decline still replaces it.
+
 ### Fixed — health check and owner error mail (2026-11-18)
 `GET /api/health` pings Mongo and returns 503 when the database does not
 answer. The driver gives up after 2 seconds, and the request itself is capped

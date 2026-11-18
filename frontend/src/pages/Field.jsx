@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, formatTime, getStoredAuth, setStoredAuth, phoenixTodayStr, isPhoenixToday, isOnDayBoard, jobStatusLabel } from "../lib/api";
-import { fresherJob, mergeJobList } from "../lib/jobState";
+import { fresherJob, jobLooksPaid, mergeJobList } from "../lib/jobState";
 import { useRefreshOnShow } from "../lib/refreshOnShow";
 import JobEditModal from "../components/JobEditModal";
 import WarrantyBadge from "../components/WarrantyBadge";
@@ -159,8 +159,8 @@ export default function Field() {
             <div><b>Price:</b> ${j.price.toFixed(2)}</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <b>Status:</b> <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
-              <WarrantyBadge job={j} />
             </div>
+            {j.status !== "complete" && <WarrantyBadge job={j} />}
             {j.warranty_skip_reason && (
               <div style={{ marginTop: 8 }} data-testid={`warranty-reason-${j.id}`}>{j.warranty_skip_reason}</div>
             )}
@@ -315,6 +315,7 @@ export default function Field() {
               </div>
               <div className="h3" style={{ marginTop: 6 }}>{j.shop_name}</div>
               <div className="muted" style={{ fontSize: 13 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
+              <WarrantyBadge job={j} />
               <div style={{ marginTop: 8 }}><span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span></div>
             </button>
           ))}
@@ -388,7 +389,7 @@ function dueDateLabel(job) {
 
 function paymentSummary(job) {
   if (!job || job.warranty_eligible) return "";
-  const paid = Boolean(job.charged_at) || job.payment_status === "paid" || job.payment_status === "succeeded";
+  const paid = jobLooksPaid(job);
   if (paid) {
     const amount = job.charged_amount != null && job.charged_amount !== ""
       ? Number(job.charged_amount)
@@ -406,6 +407,14 @@ function paymentSummary(job) {
 function PaymentLine({ job }) {
   const line = paymentSummary(job);
   if (!line) return null;
+  const paid = line.startsWith("Paid");
+  if (paid) {
+    return (
+      <div style={{ marginTop: 10 }} data-testid="payment-status-line">
+        <span className="paid-flag">{line}</span>
+      </div>
+    );
+  }
   return <div style={{ marginTop: 8, fontSize: 14 }} data-testid="payment-status-line">{line}</div>;
 }
 
@@ -416,6 +425,7 @@ function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace,
     return (
       <div style={{ marginTop: 16, padding: 14 }} data-testid="job-complete-confirmation">
         <div className="h3">Job complete</div>
+        <WarrantyBadge job={job} />
         <PaymentLine job={job} />
         <div style={{ marginTop: 8, fontSize: 14 }} data-testid="xero-draft-status">
           {job.xero_skipped_reason || job.warranty_skip_reason || "Warranty redo (free). No Xero draft was filed."}
@@ -426,6 +436,7 @@ function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace,
   return (
     <div style={{ marginTop: 16, padding: 14 }} data-testid="job-complete-confirmation">
       <div className="h3">Job complete</div>
+      <WarrantyBadge job={job} />
       <PaymentLine job={job} />
       {draft ? (
         <div style={{ marginTop: 8, fontSize: 14 }} data-testid="xero-draft-status">

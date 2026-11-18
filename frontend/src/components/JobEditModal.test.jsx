@@ -64,3 +64,37 @@ test("a shop edit does not offer the warranty link", () => {
   render(<JobEditModal open shopEdit job={job} client={{ get: jest.fn(), patch: jest.fn() }} onClose={() => {}} />);
   expect(screen.queryByTestId("edit-warranty")).not.toBeInTheDocument();
 });
+
+test("rescheduling a shop warranty redo past 30 days asks before it saves", async () => {
+  const client = { get: jest.fn(), patch: jest.fn().mockResolvedValue({ data: {} }) };
+  const onDone = jest.fn();
+  render(<JobEditModal open shopEdit client={client} onClose={() => {}} onDone={onDone} job={{
+    ...job,
+    price: 0,
+    warranty_of_job_id: "old-1",
+    warranty_eligible: true,
+    warranty_original_completed_on: "2026-10-01",
+  }} />);
+
+  fireEvent.change(screen.getByTestId("edit-notes"), { target: { value: "Side gate" } });
+  fireEvent.click(screen.getByTestId("edit-save"));
+  await waitFor(() => expect(client.patch).toHaveBeenCalled());
+  expect(screen.queryByTestId("warranty-charge-notice")).not.toBeInTheDocument();
+
+  client.patch.mockClear();
+  fireEvent.change(screen.getByTestId("edit-date"), { target: { value: "2026-12-15" } });
+  fireEvent.click(screen.getByTestId("edit-save"));
+  expect(await screen.findByTestId("warranty-charge-notice")).toHaveTextContent("charged at full price");
+  expect(client.patch).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByTestId("warranty-charge-cancel"));
+  expect(client.patch).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByTestId("edit-save"));
+  fireEvent.click(screen.getByTestId("warranty-charge-continue"));
+  await waitFor(() => expect(client.patch).toHaveBeenCalledWith(
+    "/portal/jobs/job-1",
+    expect.objectContaining({ scheduled_start: expect.any(String) }),
+  ));
+  expect(onDone).toHaveBeenCalled();
+});

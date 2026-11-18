@@ -85,6 +85,33 @@ test("other stops stay on the map as a time window", async () => {
   expect(screen.queryByText(/other shops/i)).not.toBeInTheDocument();
 });
 
+test("a free warranty redo is marked on the shop day list", async () => {
+  show({
+    own: [{
+      id: "job-free",
+      route_order: 1,
+      job_lat: 33.45,
+      job_lng: -112.07,
+      scheduled_start: "2026-11-18T16:00:00+00:00",
+      status: "booked",
+      vehicle_year: 2020,
+      vehicle_make: "Honda",
+      vehicle_model: "Civic",
+      job_address: "1 E Washington St",
+      calibration_label: "Static",
+      customer_last_name: "Ng",
+      price: 0,
+      warranty_of_job_id: "old-1",
+      warranty_eligible: true,
+      warranty_label: "Warranty redo (free)",
+    }],
+    others: [],
+  });
+  const banner = await screen.findByTestId("warranty-badge-job-free");
+  expect(banner).toHaveTextContent("Warranty");
+  expect(banner).toHaveTextContent("not charged");
+});
+
 test("a shop with no jobs of its own still sees the rest of the route", async () => {
   show({
     own: [],

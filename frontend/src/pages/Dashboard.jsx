@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import { api, formatTime, formatDate, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, isPhoenixToday, jobStatusLabel } from "../lib/api";
-import { fresherJob, mergeJobList } from "../lib/jobState";
+import { fresherJob, jobLooksPaid, mergeJobList } from "../lib/jobState";
 import { useRefreshOnShow } from "../lib/refreshOnShow";
 import Shell from "../components/Shell";
 import RouteMap from "../components/RouteMap";
@@ -499,6 +499,7 @@ function ClosedJobs({ jobs, status, error, onRetry, onDelete }) {
               <div>
                 <span className="closed-k">Status</span>
                 <span className={`badge badge-${row.status}`}>{closedStatusLabel(row.status)}</span>
+                <WarrantyBadge job={row} />
               </div>
               <div>
                 <span className="closed-k">Reason</span>
@@ -681,7 +682,7 @@ function TripFeeControls({ job, onOutside, onTripFee }) {
 }
 
 function jobIsPaid(job) {
-  return Boolean(job?.charged_at) || job?.payment_status === "paid" || job?.payment_status === "succeeded";
+  return jobLooksPaid(job);
 }
 
 function paidAmount(job) {

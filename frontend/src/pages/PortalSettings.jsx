@@ -69,6 +69,7 @@ export default function PortalSettings() {
         <Row k="Name" v={su.full_name} />
         <Row k="Email" v={su.email} />
         <Row k="Shop" v={su.shop_name} />
+        <Row k="Address" v={me.shop?.address || "—"} testId="shop-address" />
       </div>
 
       <div className="surface" style={{ padding: 20, marginBottom: 16, maxWidth: 560 }} data-testid="payment-method-section">
@@ -96,6 +97,11 @@ export default function PortalSettings() {
         {clientSecret && (
           <div style={{ marginTop: 16 }} data-testid="card-setup">
             <CardSetup clientSecret={clientSecret} onSaved={cardSaved} />
+            <button type="button" className="btn btn-ghost" style={{ marginTop: 12 }}
+              onClick={() => { setClientSecret(""); setCardError(""); }}
+              data-testid="cancel-card-update">
+              Cancel
+            </button>
           </div>
         )}
       </div>
@@ -115,8 +121,8 @@ export default function PortalSettings() {
   );
 }
 
-const Row = ({ k, v }) => (
-  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-    <span className="muted">{k}</span><span style={{ fontWeight: 500 }}>{v}</span>
+const Row = ({ k, v, testId }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+    <span className="muted">{k}</span><span style={{ fontWeight: 500, textAlign: "right" }} data-testid={testId}>{v}</span>
   </div>
 );

@@ -314,6 +314,99 @@ def test_owner_link_is_free_at_30_days_and_billed_at_31(world):
     asyncio.run(run())
 
 
+def test_a_redo_past_30_days_uses_that_shops_rate(world):
+    async def run():
+        shop = next(doc for doc in world["db"].shops.docs if doc["id"] == "shop-1")
+        shop["pricing_tier"] = "custom"
+        shop["custom_rate_static"] = 210
+        async with _client() as client:
+            billed = await client.patch(
+                "/api/jobs/job-1",
+                headers=_auth(world["owner"]),
+                json={"warranty_of_job_id": "done-31"},
+            )
+            free = await client.patch(
+                "/api/jobs/job-1",
+                headers=_auth(world["owner"]),
+                json={"warranty_of_job_id": "done-30"},
+            )
+        assert billed.status_code == 200, billed.text
+        assert billed.json()["warranty_eligible"] is False
+        assert billed.json()["price"] == 210
+        assert billed.json()["calibration_price"] == 210
+        assert free.status_code == 200, free.text
+        assert free.json()["price"] == 0
+
+    asyncio.run(run())
+
+
+def test_rescheduling_a_free_redo_past_30_days_uses_the_shop_rate(world, monkeypatch):
+    async def closed(_day):
+        return None
+
+    async def mail(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(server, "closed_day_message", closed)
+    monkeypatch.setattr(server, "email_shop_event", mail)
+
+    async def run():
+        async with _client() as client:
+            linked = await client.patch(
+                "/api/jobs/job-1",
+                headers=_auth(world["owner"]),
+                json={"warranty_of_job_id": "done-30"},
+            )
+            assert linked.status_code == 200, linked.text
+            assert linked.json()["price"] == 0
+            moved = await client.post(
+                "/api/jobs/job-1/reschedule",
+                headers=_auth(world["owner"]),
+                json={
+                    "scheduled_start": phoenix_noon(TODAY + timedelta(days=10)),
+                    "reason": "Shop asked",
+                },
+            )
+        assert moved.status_code == 200, moved.text
+        job = moved.json()
+        assert job["warranty_eligible"] is False
+        assert job["warranty_label"] == BILLED_LABEL
+        assert job["price"] == 125
+        assert job["calibration_price"] == 125
+
+    asyncio.run(run())
+
+
+def test_a_shop_moving_its_redo_past_30_days_is_charged_the_shop_rate(world, monkeypatch):
+    async def closed(_day):
+        return None
+
+    monkeypatch.setattr(server, "closed_day_message", closed)
+
+    async def run():
+        async with _client() as client:
+            linked = await client.patch(
+                "/api/jobs/job-1",
+                headers=_auth(world["owner"]),
+                json={"warranty_of_job_id": "done-30"},
+            )
+            assert linked.status_code == 200, linked.text
+            assert linked.json()["price"] == 0
+            moved = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["portal"]),
+                json={"scheduled_start": phoenix_noon(TODAY + timedelta(days=10))},
+            )
+        assert moved.status_code == 200, moved.text
+        job = moved.json()
+        assert job["warranty_eligible"] is False
+        assert job["price"] == 125
+        assert job["calibration_price"] == 125
+        assert job["status"] == "booked"
+
+    asyncio.run(run())
+
+
 def test_owner_can_clear_the_warranty_link(world):
     async def run():
         async with _client() as client:

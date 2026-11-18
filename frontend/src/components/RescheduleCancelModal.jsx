@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, formatTime, todayStr } from "../lib/api";
+import { api, formatTime, phoenixTodayStr, todayStr } from "../lib/api";
+import { redoWouldBeBilled } from "../lib/warranty";
+import WarrantyChargeNotice from "./WarrantyChargeNotice";
 
 const QUICK_REASONS = [
   "Customer requested",
@@ -18,6 +20,7 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
   const [error, setError] = useState("");
   const [slotsError, setSlotsError] = useState("");
   const [reloadSlots, setReloadSlots] = useState(0);
+  const [chargeNotice, setChargeNotice] = useState(false);
 
   useEffect(() => {
     if (!open || mode !== "reschedule" || !job) return;
@@ -43,8 +46,22 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
 
   if (!open || !job) return null;
 
+  function movingPastWarranty() {
+    if (mode !== "reschedule" || !chosen?.start || !job?.warranty_of_job_id) return false;
+    return redoWouldBeBilled(job, phoenixTodayStr(new Date(chosen.start)));
+  }
+
+  function askSubmit() {
+    if (movingPastWarranty()) {
+      setChargeNotice(true);
+      return;
+    }
+    submit();
+  }
+
   async function submit() {
     setBusy(true); setError("");
+    setChargeNotice(false);
     try {
       if (mode === "reschedule") {
         if (!chosen) { setError("Pick a new time"); setBusy(false); return; }
@@ -130,11 +147,16 @@ export default function RescheduleCancelModal({ open, job, mode, onClose, onDone
         <div style={{ display: "flex", gap: 8, marginTop: 20, justifyContent: "flex-end" }}>
           <button className="btn btn-ghost" onClick={onClose}>Back</button>
           <button className={"btn " + (mode === "reschedule" ? "btn-primary" : "btn-danger")}
-            onClick={submit} disabled={busy} data-testid="modal-confirm">
+            onClick={askSubmit} disabled={busy} data-testid="modal-confirm">
             {busy ? "Submitting…" : (mode === "reschedule" ? "Confirm Reschedule" : "Confirm Cancellation")}
           </button>
         </div>
       </div>
+      <WarrantyChargeNotice
+        open={chargeNotice}
+        onCancel={() => setChargeNotice(false)}
+        onContinue={submit}
+      />
     </div>
   );
 }

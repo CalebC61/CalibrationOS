@@ -4,6 +4,7 @@ import { phoenixTodayStr } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
 import AddressField from "../components/AddressField";
 import { redoIsFree, warrantyOptionLabel, WARRANTY_BILLED, WARRANTY_FREE } from "../lib/warranty";
+import WarrantyChargeNotice from "../components/WarrantyChargeNotice";
 import PortalShell from "../components/PortalShell";
 
 const ADAS = [
@@ -46,6 +47,7 @@ export default function PortalBook() {
   const [pastJobs, setPastJobs] = useState([]);
   const [redoChecked, setRedoChecked] = useState(false);
   const [redoOf, setRedoOf] = useState("");
+  const [chargeNotice, setChargeNotice] = useState(false);
 
   useEffect(() => {
     portalApi.get("/portal/me").then(r => {
@@ -162,6 +164,13 @@ export default function PortalBook() {
       const detail = e.response?.data?.detail;
       setBookError(typeof detail === "string" && detail ? detail : "Booking failed");
     } finally { setSubmitting(false); }
+  }
+  function askSubmit() {
+    if (redoBilled) {
+      setChargeNotice(true);
+      return;
+    }
+    submit();
   }
 
   if (confirmation) {
@@ -351,12 +360,17 @@ export default function PortalBook() {
                 {bookError}
               </div>
             )}
-            <Nav onBack={() => setStep(1)} onNext={submit}
+            <Nav onBack={() => setStep(1)} onNext={askSubmit}
               nextLabel={submitting ? "Booking…" : (chosen?.requires_approval ? "Request this time" : "Confirm Booking")}
               nextDisabled={submitting || !veh.customer_last_name.trim() || !String(veh.year).trim() || !veh.make.trim() || !veh.model.trim() || (redoChecked && !redoOf)} />
           </Card>
         )}
       </div>
+      <WarrantyChargeNotice
+        open={chargeNotice}
+        onCancel={() => setChargeNotice(false)}
+        onContinue={() => { setChargeNotice(false); submit(); }}
+      />
     </PortalShell>
   );
 }

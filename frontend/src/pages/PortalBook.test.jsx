@@ -162,4 +162,48 @@ test("a redo of a past job is optional and is sent with that job", async () => {
   })));
   expect(await screen.findByTestId("portal-warranty-label")).toHaveTextContent("Warranty redo (free)");
   expect(screen.getByTestId("portal-confirm-price")).toHaveTextContent("$0.00");
+  expect(screen.queryByTestId("warranty-charge-notice")).not.toBeInTheDocument();
+});
+
+test("a redo past 30 days asks before it books and does not book on cancel", async () => {
+  portalApi.get.mockImplementation((url) => {
+    if (String(url).includes("/portal/me")) {
+      return Promise.resolve({ data: { shop, setup: { allowed: true } } });
+    }
+    if (String(url).includes("/portal/warranty-jobs")) {
+      return Promise.resolve({ data: [{
+        id: "old-1",
+        vehicle: "2020 Honda Civic",
+        customer: "Ana Ng",
+        completed_on: "2026-10-01",
+        warranty_through: "2026-10-31",
+      }] });
+    }
+    return Promise.resolve({ data: [] });
+  });
+
+  render(<PortalBook />);
+  fireEvent.change(await screen.findByTestId("b-date"), { target: { value: "2026-11-18" } });
+  fireEvent.click(await screen.findByTestId("b-slot-2026-11-18T16:00:00Z"));
+  fireEvent.click(screen.getByTestId("b-next"));
+  fireEvent.click(screen.getByTestId("warranty-redo"));
+  fireEvent.change(await screen.findByTestId("warranty-of"), { target: { value: "old-1" } });
+  expect(screen.getByTestId("warranty-preview")).toHaveTextContent("Past 30-day warranty — billed normally");
+  fireEvent.change(screen.getByTestId("b-ln"), { target: { value: "Ng" } });
+  fireEvent.change(screen.getByTestId("b-make"), { target: { value: "Honda" } });
+  fireEvent.change(screen.getByTestId("b-model"), { target: { value: "Civic" } });
+  fireEvent.click(screen.getByTestId("b-next"));
+
+  expect(await screen.findByTestId("warranty-charge-notice")).toHaveTextContent("charged at full price");
+  expect(portalApi.post).not.toHaveBeenCalledWith("/portal/book", expect.anything());
+
+  fireEvent.click(screen.getByTestId("warranty-charge-cancel"));
+  expect(screen.queryByTestId("warranty-charge-notice")).not.toBeInTheDocument();
+  expect(portalApi.post).not.toHaveBeenCalledWith("/portal/book", expect.anything());
+
+  fireEvent.click(screen.getByTestId("b-next"));
+  fireEvent.click(await screen.findByTestId("warranty-charge-continue"));
+  await waitFor(() => expect(portalApi.post).toHaveBeenCalledWith("/portal/book", expect.objectContaining({
+    warranty_of_job_id: "old-1",
+  })));
 });

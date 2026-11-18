@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { redoIsFree, warrantyOptionLabel, WARRANTY_BILLED, WARRANTY_FREE } from "../lib/warranty";
+import { redoIsFree, redoWouldBeBilled, warrantyOptionLabel, WARRANTY_BILLED, WARRANTY_FREE } from "../lib/warranty";
+import WarrantyChargeNotice from "./WarrantyChargeNotice";
 
 const CAL_TYPES = [
   ["static", "Static ADAS Calibration"],
@@ -48,6 +49,7 @@ export default function JobEditModal({ open, job, onClose, onDone, shopEdit = fa
   const [error, setError] = useState(null);
   const [pastJobs, setPastJobs] = useState([]);
   const [warrantyOf, setWarrantyOf] = useState("");
+  const [chargeNotice, setChargeNotice] = useState(false);
 
   useEffect(() => {
     if (!open || !job) return;
@@ -142,6 +144,21 @@ export default function JobEditModal({ open, job, onClose, onDone, shopEdit = fa
     } finally {
       setSaving(false);
     }
+  }
+
+  function movingPastWarranty() {
+    if (!shopEdit || !job?.warranty_of_job_id || !form.date) return false;
+    const original = job.scheduled_start ? phoenixDateAndTime(job.scheduled_start).date : "";
+    if (form.date === original) return false;
+    return redoWouldBeBilled(job, form.date);
+  }
+
+  function askSave() {
+    if (movingPastWarranty()) {
+      setChargeNotice(true);
+      return;
+    }
+    save();
   }
 
   return (
@@ -239,11 +256,16 @@ export default function JobEditModal({ open, job, onClose, onDone, shopEdit = fa
         {error && <div style={{ color: "var(--red)", fontSize: 13, marginBottom: 12 }} data-testid="edit-error">{error}</div>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button type="button" className="btn btn-ghost" onClick={onClose}>Close</button>
-          <button type="button" className="btn btn-primary" onClick={save} disabled={saving} data-testid="edit-save">
+          <button type="button" className="btn btn-primary" onClick={askSave} disabled={saving} data-testid="edit-save">
             {saving ? "Saving…" : "Save changes"}
           </button>
         </div>
       </div>
+      <WarrantyChargeNotice
+        open={chargeNotice}
+        onCancel={() => setChargeNotice(false)}
+        onContinue={() => { setChargeNotice(false); save(); }}
+      />
     </div>
   );
 }

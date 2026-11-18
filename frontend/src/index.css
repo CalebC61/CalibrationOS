@@ -185,6 +185,37 @@ html, body, #root {
 .badge-pending { background: rgba(136,136,136,0.15); color: #c4c4c4; border: 1px solid rgba(255,255,255,0.1); }
 .badge-draft { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
 
+.warranty-banner {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #0a0a0a;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.warranty-banner strong {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.paid-flag {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.18);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
 .card-job {
   background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
   padding: 1rem; transition: all 150ms ease;

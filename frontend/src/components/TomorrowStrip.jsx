@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, formatTime, formatDate, isOnDayBoard } from "../lib/api";
+import { api, formatTime, isOnDayBoard } from "../lib/api";
+import WarrantyBadge from "./WarrantyBadge";
 
 export default function TomorrowStrip({ baseDate }) {
   const [jobs, setJobs] = useState([]);
@@ -34,6 +35,7 @@ export default function TomorrowStrip({ baseDate }) {
               </div>
               <div style={{ fontWeight: 600, marginTop: 6, fontSize: 14 }}>{j.shop_name}</div>
               <div className="muted" style={{ fontSize: 12 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
+              <WarrantyBadge job={j} />
             </div>
           ))}
         </div>

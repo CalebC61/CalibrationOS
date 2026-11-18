@@ -6,6 +6,7 @@ import L from "leaflet";
 import { phoenixTodayStr, jobStatusLabel } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
+import WarrantyBadge from "../components/WarrantyBadge";
 
 function pinIcon(num, color, ghost = false, text = "#fff") {
   const opacity = ghost ? 0.55 : 1;
@@ -139,6 +140,7 @@ export default function PortalDashboard() {
                     </div>
                     <div className="h3" style={{ marginTop: 4 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
                     <div className="muted" style={{ fontSize: 13 }}>{j.calibration_label} · {j.customer_last_name}</div>
+                    <WarrantyBadge job={j} />
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div className="font-display" style={{ fontWeight: 700 }}>{fmt(j.scheduled_start)}</div>
