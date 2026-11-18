@@ -22,6 +22,13 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): a paid card charge shows as paid.** A successful
+  charge, and `invoice.paid` / `invoice.payment_succeeded`, set the job and
+  the `job_invoices` row to paid. `invoice.finalized` no longer reopens a
+  paid job. Invoices show Paid or Open and a due date 7 Phoenix days after
+  completion. Dispatch and the field completion card show Paid, Invoiced, or
+  Charge failed. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+  No new env vars.
 - **Session (2026-11-18): contractors are gone, and travel steps are today-only.**
   Dispatch to Contractor, contractor offers, the Settings contractor tab, the
   field-app offer list, contractor login, and the contractor API routes are

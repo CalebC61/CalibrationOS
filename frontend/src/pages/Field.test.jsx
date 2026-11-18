@@ -88,6 +88,45 @@ test("focusing the window refreshes the field Xero outcome", async () => {
   await waitFor(() => expect(document.body.textContent).toContain("Draft INV-9 created"));
 });
 
+test("the complete confirmation says when the card was paid", async () => {
+  mockList({
+    ...draftedJob,
+    payment_status: "paid",
+    charged_at: "2026-11-18T16:05:00Z",
+    charged_amount: 185,
+  });
+  render(<Field />);
+  fireEvent.click(await screen.findByTestId("field-job-job-1"));
+  expect(await screen.findByTestId("payment-status-line")).toHaveTextContent("Paid $185.00");
+  expect(screen.getByTestId("xero-draft-status")).toHaveTextContent("Draft INV-9 created");
+});
+
+test("the complete confirmation shows an invoice due date", async () => {
+  mockList({
+    ...draftedJob,
+    payment_mode: "invoice_hold",
+    payment_status: "unpaid",
+    invoice_id: "in_1",
+    invoice_status: "open",
+    invoice_due_at: "2026-11-25",
+  });
+  render(<Field />);
+  fireEvent.click(await screen.findByTestId("field-job-job-1"));
+  expect(await screen.findByTestId("payment-status-line")).toHaveTextContent("Invoiced, due Nov 25, 2026");
+});
+
+test("the complete confirmation says when the charge failed", async () => {
+  mockList({
+    ...attentionJob,
+    payment_status: "payment_failed",
+    charge_error: "Card declined.",
+  });
+  render(<Field />);
+  fireEvent.click(await screen.findByTestId("field-job-job-1"));
+  expect(await screen.findByTestId("payment-status-line")).toHaveTextContent("Charge failed");
+  expect(screen.getByTestId("xero-draft-status")).toHaveTextContent("needs attention");
+});
+
 test("a free warranty redo shows its badge and does not offer a Xero retry", async () => {
   mockList({
     ...attentionJob,

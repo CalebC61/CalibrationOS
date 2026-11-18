@@ -593,3 +593,66 @@ test("dispatch shows a redo that is past the 30-day warranty", async () => {
     "Past 30-day warranty — billed normally",
   );
 });
+
+test("a paid charge shows the amount and time and hides Charge card now", async () => {
+  mockGets([], {
+    ...job,
+    status: "complete",
+    payment_mode: "charge_on_completion",
+    payment_status: "paid",
+    charged_at: "2026-11-18T16:05:00Z",
+    charged_amount: 125,
+    updated_at: "2026-11-18T16:05:00Z",
+  });
+  render(<Dashboard />);
+  expect(await screen.findByTestId("job-paid-job-1")).toHaveTextContent("Paid $125.00 · 9:00 AM");
+  expect(screen.queryByTestId("job-charge-job-1")).not.toBeInTheDocument();
+});
+
+test("a paid invoice-hold job hides the hold badge and Charge card now", async () => {
+  mockGets([], {
+    ...job,
+    status: "complete",
+    payment_mode: "invoice_hold",
+    payment_status: "paid",
+    charged_at: "2026-11-18T16:05:00Z",
+    charged_amount: 185.5,
+    invoice_id: "in_1",
+    updated_at: "2026-11-18T16:05:00Z",
+  });
+  render(<Dashboard />);
+  expect(await screen.findByTestId("job-paid-job-1")).toHaveTextContent("Paid $185.50 · 9:00 AM");
+  expect(screen.queryByText("Invoice — hold charge")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("job-charge-job-1")).not.toBeInTheDocument();
+});
+
+test("Charge card now keeps the paid job when the day list is still unpaid", async () => {
+  const unpaid = {
+    ...job,
+    status: "complete",
+    payment_mode: "invoice_hold",
+    payment_status: "unpaid",
+    invoice_status: "open",
+    invoice_id: "in_1",
+    updated_at: "2026-11-18T16:00:00Z",
+  };
+  const paid = {
+    ...unpaid,
+    payment_status: "paid",
+    invoice_status: "paid",
+    charged_at: "2026-11-18T16:05:00Z",
+    charged_amount: 125,
+    updated_at: "2026-11-18T16:05:00Z",
+  };
+  mockGets([], unpaid);
+  api.post.mockImplementation((url) => {
+    if (String(url).endsWith("/charge-card")) return Promise.resolve({ data: { job: paid } });
+    return Promise.resolve({ data: {} });
+  });
+  render(<Dashboard />);
+  expect(await screen.findByText("Invoice — hold charge")).toBeInTheDocument();
+  fireEvent.click(screen.getByTestId("job-charge-job-1"));
+  expect(await screen.findByTestId("job-paid-job-1")).toHaveTextContent("Paid $125.00 · 9:00 AM");
+  expect(screen.queryByText("Invoice — hold charge")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("job-charge-job-1")).not.toBeInTheDocument();
+});

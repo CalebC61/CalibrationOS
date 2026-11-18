@@ -358,6 +358,57 @@ function ScanPicker({ uploadedDoc, uploading, onFile, onReplace }) {
   );
 }
 
+function formatDueDate(value) {
+  if (!value) return "";
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "";
+    return parsed.toLocaleDateString("en-US", {
+      month: "short", day: "numeric", year: "numeric", timeZone: "America/Phoenix",
+    });
+  }
+  const noon = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12));
+  return noon.toLocaleDateString("en-US", {
+    month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+  });
+}
+
+function dueDateLabel(job) {
+  if (job.invoice_due_at || job.due_at) return formatDueDate(job.invoice_due_at || job.due_at);
+  if (!job.actual_completion) return "";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Phoenix", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(job.actual_completion));
+  const get = (type) => parts.find((part) => part.type === type).value;
+  const due = new Date(Date.UTC(Number(get("year")), Number(get("month")) - 1, Number(get("day"))));
+  due.setUTCDate(due.getUTCDate() + 7);
+  return formatDueDate(due.toISOString().slice(0, 10));
+}
+
+function paymentSummary(job) {
+  if (!job || job.warranty_eligible) return "";
+  const paid = Boolean(job.charged_at) || job.payment_status === "paid" || job.payment_status === "succeeded";
+  if (paid) {
+    const amount = job.charged_amount != null && job.charged_amount !== ""
+      ? Number(job.charged_amount)
+      : Number(job.price || 0) + Number(job.late_fee || 0);
+    const shown = Number.isFinite(amount) ? amount.toFixed(2) : "0.00";
+    return `Paid $${shown}`;
+  }
+  if (job.payment_status === "payment_failed") return "Charge failed";
+  const invoiced = job.invoice_id || job.payment_mode === "invoice_hold" || job.invoice_status === "open";
+  if (!invoiced) return "";
+  const due = dueDateLabel(job);
+  return due ? `Invoiced, due ${due}` : "Invoiced";
+}
+
+function PaymentLine({ job }) {
+  const line = paymentSummary(job);
+  if (!line) return null;
+  return <div style={{ marginTop: 8, fontSize: 14 }} data-testid="payment-status-line">{line}</div>;
+}
+
 function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace, onRetry }) {
   const draft = job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id);
   const number = job.xero_invoice_number || job.xero_invoice_id;
@@ -365,6 +416,7 @@ function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace,
     return (
       <div style={{ marginTop: 16, padding: 14 }} data-testid="job-complete-confirmation">
         <div className="h3">Job complete</div>
+        <PaymentLine job={job} />
         <div style={{ marginTop: 8, fontSize: 14 }} data-testid="xero-draft-status">
           {job.xero_skipped_reason || job.warranty_skip_reason || "Warranty redo (free). No Xero draft was filed."}
         </div>
@@ -374,6 +426,7 @@ function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace,
   return (
     <div style={{ marginTop: 16, padding: 14 }} data-testid="job-complete-confirmation">
       <div className="h3">Job complete</div>
+      <PaymentLine job={job} />
       {draft ? (
         <div style={{ marginTop: 8, fontSize: 14 }} data-testid="xero-draft-status">
           Draft {number} created. It is waiting in Xero for review.
