@@ -21,8 +21,18 @@ ITEM_NAMES = {
     "static": "Static Calibration",
     "dynamic": "Dynamic Calibration",
     "dual": "Dual Calibration",
-    "triple": "Triple/Subaru Calibration",
+    "triple": "Subaru MC Calibration",
     "tesla": "Tesla Calibration",
+}
+
+# Older Xero names. Used only when the current item is not in the organisation.
+ITEM_FALLBACK_NAMES = {
+    "triple": ("Triple/Subaru Calibration",),
+}
+
+# Xero item Code, matched with the current name before any fallback name.
+ITEM_CODES = {
+    "triple": "8",
 }
 
 # Shop code or shop name -> the contact that already exists in Xero.
@@ -324,29 +334,49 @@ def vin_from_pdf(data: bytes | None) -> str | None:
     return _vin_from_compressed_streams(data)
 
 
-def price_updates_for_calibration_change(job, shop, calibration_type, standard_prices, special_rates) -> dict:
-    """Price fields when Complete changes the calibration type.
+def _same_money(left, right) -> bool:
+    try:
+        return money(left) == money(right)
+    except (TypeError, ValueError):
+        return False
 
-    The new price is that shop's wholesale rate, so the local invoice and the
-    card charge match the Xero line. A trip-fee-only job stays at $30. An
-    outside-area job keeps the $30 on top of the new rate. A job that already
-    has a Xero invoice is left alone.
+
+def price_updates_for_calibration_change(job, shop, calibration_type, standard_prices, special_rates) -> dict:
+    """Price fields so the job matches this shop's wholesale rate.
+
+    Complete calls this for the calibration type being filed, including when
+    that type did not change. A booking can still be sitting on the standard
+    card. The local invoice, the admin email, and the card charge then read
+    this price. A trip-fee-only job stays at $30. An outside-area job keeps
+    the $30 on top of the wholesale rate. A job that already has a Xero
+    invoice is left alone. An empty dict means the stored price already matches.
     """
     job = job or {}
     if not calibration_type or job.get("xero_invoice_id"):
-        return {}
-    if calibration_type == job.get("calibration_type"):
         return {}
     if job.get("calibration_not_performed"):
         return {}
     amount = wholesale_amount(shop, calibration_type, standard_prices, special_rates)
     if job.get("outside_service_area"):
-        return {
+        updates = {
             "calibration_price": amount,
             "price": money(amount + TRIP_FEE_DOLLARS),
             "trip_fee": float(TRIP_FEE_DOLLARS),
         }
-    return {"price": amount, "calibration_price": amount}
+        already = (
+            _same_money(job.get("price"), updates["price"])
+            and _same_money(job.get("calibration_price"), updates["calibration_price"])
+            and _same_money(job.get("trip_fee"), updates["trip_fee"])
+        )
+    else:
+        updates = {"price": amount, "calibration_price": amount}
+        already = (
+            _same_money(job.get("price"), updates["price"])
+            and _same_money(job.get("calibration_price"), updates["calibration_price"])
+        )
+    if already:
+        return {}
+    return updates
 
 
 def _as_datetime(value) -> datetime | None:
@@ -395,20 +425,30 @@ def find_branding_theme(themes) -> dict | None:
     return matches[0]
 
 
-def find_item(items, calibration_type: str) -> dict | None:
-    target = ITEM_NAMES.get(calibration_type)
-    if not target:
-        return None
+def item_search_names(calibration_type: str) -> list[str]:
+    """Current Xero item name, then any older name kept as a fallback."""
+    primary = ITEM_NAMES.get(calibration_type)
+    if not primary:
+        return []
+    names = [primary]
+    for extra in ITEM_FALLBACK_NAMES.get(calibration_type, ()):
+        if extra not in names:
+            names.append(extra)
+    return names
+
+
+def _named_like(item, target: str) -> bool:
+    code = str(item.get("Code") or "").strip()
+    name = str(item.get("Name") or "").strip()
+    if code.lower() == target.lower() or name.lower() == target.lower():
+        return True
     target_compact = _compact(target)
-    matches = []
-    for item in items or []:
-        code = str(item.get("Code") or "").strip()
-        name = str(item.get("Name") or "").strip()
-        if code.lower() == target.lower() or name.lower() == target.lower():
-            matches.append(item)
-            continue
-        if _compact(code) == target_compact or _compact(name) == target_compact:
-            matches.append(item)
+    if not target_compact:
+        return False
+    return _compact(code) == target_compact or _compact(name) == target_compact
+
+
+def _unique_items(matches: list) -> list:
     unique = []
     seen = set()
     for item in matches:
@@ -417,9 +457,37 @@ def find_item(items, calibration_type: str) -> dict | None:
             continue
         seen.add(marker)
         unique.append(item)
-    if len(unique) != 1 or not (unique[0].get("Code") or unique[0].get("Name")):
+    return unique
+
+
+def find_item(items, calibration_type: str) -> dict | None:
+    """The one Xero item for this calibration type.
+
+    Triple matches the item named Subaru MC Calibration, or code 8.
+    Triple/Subaru Calibration is used only when that item is absent.
+    Two matches at the same step is not a confident pick.
+    """
+    names = item_search_names(calibration_type)
+    if not names:
         return None
-    return unique[0]
+    tiers = [[names[0]]]
+    code = str(ITEM_CODES.get(calibration_type) or "").strip()
+    if code:
+        tiers[0].append(code)
+    if len(names) > 1:
+        tiers.append(list(names[1:]))
+    catalog = list(items or [])
+    for targets in tiers:
+        matches = [
+            item for item in catalog
+            if any(_named_like(item, target) for target in targets)
+        ]
+        unique = _unique_items(matches)
+        if len(unique) > 1:
+            return None
+        if len(unique) == 1 and (unique[0].get("Code") or unique[0].get("Name")):
+            return unique[0]
+    return None
 
 
 def item_description(item: dict) -> str:

@@ -23,6 +23,7 @@ from xero_invoice import (
     invoice_link,
     invoice_update_body,
     item_description,
+    item_search_names,
     job_text,
     money,
     parse_pop,
@@ -179,7 +180,8 @@ def _prepare(job, shop, vehicle, calibration_type, pop, scan_pdf, standard_price
     if theme is None:
         return "Xero has no branding theme named Calibration Template."
     if not calibration_skipped(job) and item is None:
-        return f"Xero has no item named {ITEM_NAMES[calibration_type]}."
+        wanted = " or ".join(item_search_names(calibration_type)) or ITEM_NAMES[calibration_type]
+        return f"Xero has no item named {wanted}."
     if tax is None:
         return "Xero has no Tax Exempt tax type."
 

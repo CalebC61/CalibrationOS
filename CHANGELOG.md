@@ -28,6 +28,22 @@ Edit. The confirmation shows the vehicle, shop, and date, and names a linked
 Xero draft or Stripe invoice when the job has one. Cancel leaves the job.
 Yes, delete removes that card without reloading the page.
 
+### Fixed — triple Xero item and wholesale price at Complete (2026-11-17)
+A triple calibration now files the Xero item named Subaru MC Calibration
+(code 8). Triple/Subaru Calibration is used only when that item is missing.
+The rates are unchanged: standard $185, Real Fast $175, Preferred $165.
+
+Booking and Complete now price the job at that shop's wholesale rate for the
+calibration being filed (standard, Real Fast, Preferred, custom, or auto from
+the shop name). Complete does this even when the calibration type stays the
+same, and it does it before the local invoice, the admin email, and any card
+charge. The $30 trip fee stays a separate amount on top. A Xero failure still
+leaves the completed job as needs attention, with Retry.
+
+The public booking link and the portal booking screen show that same rate.
+The public date step imports `phoenixTodayStr`. It was calling that helper
+without an import, so the date field threw before a date could be picked.
+
 ### Fixed — Complete files a usable Xero draft (2026-11-17)
 The signed post-scan on a real scan tool is a font-encoded PDF. `vin_from_pdf`
 now reads that text with pypdf, collapses whitespace, and keeps the 17-character
