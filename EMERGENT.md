@@ -22,11 +22,56 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
-- **Session (2026-11-17): shops book only after they log in.** Public `/book/{token}` and
+- **Session (2026-11-18): shops book only after they log in.** Public `/book/{token}` and
   `/scorecard/{token}` no longer show or change jobs. Booking, edits, cancels, and the
   scorecard go through the shop portal. The owner still books for a shop from the shop
-  page. Welcome mail points at the portal login. `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED`
-  are unchanged. Details in `CHANGELOG.md`.
+  page, and can still delete a job. Response allowlists still hide Stripe ids, Xero
+  tokens, and password hashes. The public site Book a job buttons go to signup, or to
+  portal Book when the shop is already logged in. Welcome mail points at the portal
+  login. `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged. Details in `CHANGELOG.md`.
+- **Session (2026-11-18): the owner can delete a job.** `DELETE /api/jobs/{id}`
+  is owner-only (shop, technician, and contractor logins are 403). It removes
+  the job and its documents, alerts, offers, and action tokens. It does not
+  email, text, cancel, or call Xero or Stripe. Invoice rows stay. Dispatch
+  shows Delete with a confirmation. No new env vars. `SHOP_EMAILS_ENABLED`
+  and `BILLING_ENABLED` are unchanged.
+- **Session (2026-11-17): triple drafts and wholesale prices.** Triple files
+  the Xero item Subaru MC Calibration (code 8), with Triple/Subaru Calibration
+  as the fallback name. Booking and Complete price the job at the shop's
+  wholesale rate, including when the calibration type does not change. The
+  $30 trip fee stays separate. A Xero miss still marks the completed job
+  needs attention. The public booking date step imports `phoenixTodayStr`.
+  No new env vars.
+- **Session (2026-11-17): Complete can file the Xero draft.** Post-scan VINs are
+  read with pypdf (the old stream reader is the fallback). Dispatch Complete
+  asks for calibration type, POP, and a signed PDF before it completes the job.
+  A trip-fee-only draft does not require that PDF. Changing the calibration
+  type at Complete updates the job price to the shop's wholesale rate. An
+  upload with no customer last name gets a safe filename. New dependency:
+  `pypdf` (and `reportlab`, used by the VIN test).
+- **Session (2026-11-17): the Xero callback redirects.** After the tokens are
+  saved, the browser is sent to `XERO_POST_CONNECT_REDIRECT` with `?xero=connected`
+  or `?xero=error`. The missing `RedirectResponse` import was a 500.
+- **Session (2026-11-17): Xero connect uses granular scopes.** `XERO_SCOPES`
+  requests `accounting.invoices` instead of `accounting.transactions`. It does
+  not request `accounting.payments`, reports, or journals. The owner connects
+  Xero again so the saved token matches.
+- **Session (2026-11-17): completing a job files one Xero draft.** The card charge is
+  unchanged (`BILLING_ENABLED`, `SHOP_EMAILS_ENABLED`). The draft is ACCREC, status
+  DRAFT, due the job date, no tax. It does not create a Xero contact and it does not
+  send the invoice. A miss is marked needs attention on the job. The owner can set a
+  shop's Xero contact id and edit Real Fast / Preferred wholesale rates. No new env
+  vars. Connect requests `accounting.attachments` and `accounting.settings.read` from
+  the `XERO_SCOPES` constant in `backend/server.py`. The owner connects Xero again
+  so the saved token includes them.
+- **Session (2026-11-17): pre-launch guards.** The shop day map shows the whole
+  route. Other shops' stops are a rough pin and a time window, without names or
+  the job id. Sign-in, password reset, public geocode, and the contact form
+  are rate limited. A cached geocode drops a leading business name before the
+  street is saved. Portal report downloads send the login token. The card form
+  opens expanded. A failed portal booking shows an inline error. No env, Stripe,
+  Render, or Vercel setting changes. Public booking, scorecard, job completion,
+  Xero, and SMS are unchanged.
 - **Session (2026-11-12): cancelled jobs leave the owner and technician day list.**
   `GET /api/jobs` now omits `cancelled` and `declined`. The jobs stay in Mongo.
   `include_cancelled=true` is an opt-in for a future history view; the dashboard,
@@ -200,6 +245,11 @@ new integration to wire up, only account setup:
   deleted via the UI.)*
 - `CORS_ORIGINS` *(already existed; now checked)* — set to your real app domain(s), comma-separated,
   instead of the `*` default.
+- `ENABLE_API_DOCS` *(optional)* — interactive docs (`/docs`, `/redoc`, `/openapi.json`).
+  Unset: on in development, off when `APP_ENV` is `production` or `prod`. Set `true` to turn
+  them on in production (the pages are mounted at process start), or `false` to turn them off
+  everywhere. Turning them off takes effect on the next request. Turning them on in a process
+  that booted with them unmounted needs a restart.
 
 **Added for real Google Maps (2026-07-21):**
 - `GOOGLE_MAPS_API_KEY` — a Google Cloud API key with the **Geocoding API** and **Routes API**

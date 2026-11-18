@@ -33,14 +33,17 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   Module 9, Module 8, security hardening, Google Maps). Core business logic is solid; most external
   integrations are now real, credential-optional (real-if-key-present, else mock).
 - **Real integrations:** Stripe (card-capture/setup mode **+ off-session charging** via the Charge
-  Queue, 2026-07-21), Resend (degrades to a DB log if no key), **Xero invoicing** (Step 1 — merged
-  to `main` via PR #1 on 2026-06-16), **Google Maps** (geocoding + drive-time, 2026-07-21 —
+  Queue, 2026-07-21), Resend (degrades to a DB log if no key), **Xero invoicing** (completing a job
+  files one ACCREC **draft** for Maddy: same-day due, no tax, wholesale line + vehicle line, POP
+  PDF when there is a dollar POP, post-scan PDF attached. It matches an existing contact and
+  **does not create one**, and it never authorises or sends. If Xero is down or the contact
+  does not match, the job still completes and is marked needs attention. `BILLING_ENABLED` is
+  a separate card charge), **Google Maps** (geocoding + drive-time, 2026-07-21 —
   daily-cached; `GOOGLE_MAPS_API_KEY`). **Pending decision:**
   the business just hired a CPA who exclusively uses **QuickBooks**, so Xero may be replaced by a
-  real QuickBooks integration. Nothing has changed in code yet — Xero stays live-capable/mock-fallback
-  as documented until a QuickBooks migration is explicitly scoped and approved. Don't start that
-  migration without a go-ahead; when it comes, mirror the same "real-if-configured, else mock"
-  pattern and keep the Xero code until the swap is verified end-to-end (don't delete it preemptively).
+  real QuickBooks integration. Don't start that migration without a go-ahead; when it comes,
+  mirror the same "real-if-configured, else flag the job" pattern and keep the Xero code until
+  the swap is verified end-to-end (don't delete it preemptively).
 - **Mocked:** Twilio SMS, cloud document storage (base64-in-Mongo).
 - **Missing:** Google Calendar sync (explicitly deferred).
 - **On hold:** Twilio SMS (Step 2) — deprioritized by the user, not needed for MVP. Don't pick this
@@ -68,6 +71,11 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   unchanged until `APP_ENV=production` is set, so tests and the preview deployment are unaffected.
 - **No code launch-blockers remain.** What's left is a live `STRIPE_API_KEY` (see the Stripe
   section below) plus the other credential/env items already tracked in "Open action items."
+- Interactive API docs (`/docs`, `/redoc`, `/openapi.json`) are off when `APP_ENV=production`
+  unless `ENABLE_API_DOCS=true`. `ENABLE_API_DOCS=false` turns them off in any environment.
+  Staff and shop-user JSON uses an allowlist (`backend/client_views.py`); Xero tokens and
+  Stripe customer/payment-method ids are not in it. The client gets `xero_connected` and
+  `xero_org_name`, and shop users get `has_payment_method`.
 
 ### Card charging (2026-07-21) — done, reuses the existing STRIPE_API_KEY, set on Emergent's side
 - `POST /api/charge-queue/{job_id}/charge` (owner-only, from the Charge Queue page) charges a

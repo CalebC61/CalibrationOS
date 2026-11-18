@@ -40,6 +40,7 @@ export default function PortalBook() {
   const [setup, setSetup] = useState(null);
   const [invoiceInstead, setInvoiceInstead] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
+  const [bookError, setBookError] = useState("");
 
   useEffect(() => {
     portalApi.get("/portal/me").then(r => {
@@ -50,6 +51,22 @@ export default function PortalBook() {
       setNotifyPhone(r.data.shop.contact_phone || "");
     });
   }, []);
+
+  useEffect(() => {
+    if (!shop || !address.trim()) return undefined;
+    if (sameAddress(address, shop.address) || sameAddress(address, shop.formatted_address)) return undefined;
+    const handle = setTimeout(() => {
+      portalApi.post("/geocode", { address }).then(({ data }) => {
+        setZoneInfo(data);
+        setAddressError("");
+      }).catch((e) => {
+        setZoneInfo(null);
+        const detail = e.response?.data?.detail;
+        setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
+      });
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [address, shop]);
 
   if (!shop || !setup) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
   if (setup.allowed === false) {
@@ -102,11 +119,13 @@ export default function PortalBook() {
     if (opt) setCalType(opt.default);
   }
   function priceFor(t) {
+    if (shop?.prices && shop.prices[t] != null) return Number(shop.prices[t]);
     if (shop.pricing_tier === "custom" && shop[`custom_rate_${t}`] != null) return Number(shop[`custom_rate_${t}`]);
     return ({static: 125, dynamic: 125, dual: 175, triple: 185, tesla: 225})[t];
   }
   async function submit() {
     setSubmitting(true);
+    setBookError("");
     try {
       const { data } = await portalApi.post("/portal/book", {
         job_address: address,
@@ -119,8 +138,10 @@ export default function PortalBook() {
         notification_phone: notifyPhone, invoice_instead: invoiceInstead,
       });
       setConfirmation(data);
-    } catch (e) { alert(e.response?.data?.detail || "Booking failed"); }
-    finally { setSubmitting(false); }
+    } catch (e) {
+      const detail = e.response?.data?.detail;
+      setBookError(typeof detail === "string" && detail ? detail : "Booking failed");
+    } finally { setSubmitting(false); }
   }
 
   if (confirmation) {
@@ -251,9 +272,14 @@ export default function PortalBook() {
               <textarea className="input" rows={3} value={veh.notes}
                 onChange={e => setVeh({...veh, notes: e.target.value})} data-testid="b-notes" />
             </F>
+            {bookError && (
+              <div role="alert" data-testid="portal-book-error" style={{ color: "var(--red)", fontSize: 14, marginTop: 4 }}>
+                {bookError}
+              </div>
+            )}
             <Nav onBack={() => setStep(1)} onNext={submit}
               nextLabel={submitting ? "Booking…" : (chosen?.requires_approval ? "Request this time" : "Confirm Booking")}
-              nextDisabled={submitting || !veh.customer_last_name || !veh.year || !veh.make || !veh.model} />
+              nextDisabled={submitting || !veh.customer_last_name.trim() || !String(veh.year).trim() || !veh.make.trim() || !veh.model.trim()} />
           </Card>
         )}
       </div>

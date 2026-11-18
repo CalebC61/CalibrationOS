@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
-import { api, formatTime, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, jobStatusLabel } from "../lib/api";
+import { api, formatTime, formatDate, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, jobStatusLabel } from "../lib/api";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
@@ -30,6 +30,10 @@ export default function Dashboard() {
   const [refreshResult, setRefreshResult] = useState(null);
   const [refreshError, setRefreshError] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const removedJobIds = useRef(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -39,7 +43,9 @@ export default function Dashboard() {
         api.get(`/notifications/new-bookings`),
         api.get(`/contractor-offers`),
       ]);
-      setJobs(j.data); setSummary(s.data); setAlerts(a.data); setOffers(o.data);
+      const visible = (j.data || []).filter(job => !removedJobIds.current.has(job.id));
+      const alertRows = (a.data?.alerts || []).filter(alert => !removedJobIds.current.has(alert.job_id));
+      setJobs(visible); setSummary(s.data); setAlerts({ count: alertRows.length, alerts: alertRows }); setOffers(o.data);
       try {
         const t = await api.get("/routing-techs");
         setTechs(t.data || []);
@@ -77,6 +83,14 @@ export default function Dashboard() {
       alert(err.response?.data?.detail || "Could not charge the trip fee.");
     }
   }
+  async function retryXero(jobId) {
+    try {
+      await api.post(`/jobs/${jobId}/retry-xero-draft`);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.detail || "Could not retry the Xero draft.");
+    }
+  }
   async function chargeNow(jobId) {
     try {
       await api.post(`/jobs/${jobId}/charge-card`);
@@ -87,18 +101,50 @@ export default function Dashboard() {
     }
   }
   async function setStatus(jobId, status) {
-    if (status === "complete") {
-      const ok = window.confirm("Mark this job complete? Charge-on-completion jobs are charged once. Invoice jobs are billed and not charged until you say so. A second click will not create another invoice.");
-      if (!ok) return;
-      try {
-        await api.post(`/jobs/${jobId}/complete`, { result: "pass", notes: null });
-      } catch (err) {
-        alert(err.response?.data?.detail || "Could not complete the job.");
-      }
-    } else {
-      await api.post(`/jobs/${jobId}/status`, { status });
+    await api.post(`/jobs/${jobId}/status`, { status });
+    load();
+  }
+  async function completeJob(jobId, body) {
+    try {
+      await api.post(`/jobs/${jobId}/complete`, body);
+    } catch (err) {
+      alert(err.response?.data?.detail || "Could not complete the job.");
+      return;
     }
     load();
+  }
+  function askDelete(job) {
+    setDeleteError("");
+    setDeleteTarget(job);
+  }
+  async function confirmDelete() {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await api.delete(`/jobs/${deleteTarget.id}`);
+      const removed = deleteTarget;
+      removedJobIds.current.add(removed.id);
+      setJobs(current => current.filter(job => job.id !== removed.id));
+      setAlerts(current => {
+        const next = (current.alerts || []).filter(alert => alert.job_id !== removed.id);
+        return { count: next.length, alerts: next };
+      });
+      setSummary(current => {
+        if (!current) return current;
+        const revenue = Number(current.revenue || 0) - Number(removed.price || 0);
+        return {
+          ...current,
+          job_count: Math.max(0, Number(current.job_count || 0) - 1),
+          revenue: revenue < 0 ? 0 : revenue,
+        };
+      });
+      setDeleteTarget(null);
+    } catch (err) {
+      setDeleteError(err.response?.data?.detail || "Could not delete this job.");
+    } finally {
+      setDeleting(false);
+    }
   }
   async function decideApproval(jobId, approve) {
     try {
@@ -249,14 +295,15 @@ export default function Dashboard() {
           <ZonePanel key={tech.id}
             title={tech.name || "Technician"}
             subtitle={routingTechs.length <= 1 ? "Whole valley" : (tech.home_address || "Home base")}
-            zone={tech.id} jobs={techJobs} onStatus={setStatus}
+            zone={tech.id} jobs={techJobs} onStatus={setStatus} onComplete={completeJob}
             onPayment={setPaymentMode} onCharge={chargeNow}
-            onOutside={setOutside} onTripFee={chargeTripFee}
+            onOutside={setOutside} onTripFee={chargeTripFee} onRetryXero={retryXero}
             accent={tech.color || "#FF5F1F"}
             newJobIds={newJobIds} offerByJob={offerByJob}
             onDispatch={setDispatchTarget} onRespond={manualRespond}
             onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
             onEdit={isOwner ? setEditTarget : null}
+            onDelete={isOwner ? askDelete : null}
             onDecide={isOwner ? decideApproval : null}
             dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
         ))}
@@ -305,11 +352,92 @@ export default function Dashboard() {
         onClose={() => setDispatchTarget(null)} onDone={load} />
       <JobEditModal open={!!editTarget} job={editTarget}
         onClose={() => setEditTarget(null)} onDone={load} />
+      <DeleteJobDialog job={deleteTarget} busy={deleting} error={deleteError}
+        onCancel={() => { if (!deleting) setDeleteTarget(null); }}
+        onConfirm={confirmDelete} />
       <RescheduleCancelModal open={!!rescheduleTarget} job={rescheduleTarget?.job}
         mode={rescheduleTarget?.mode}
         onClose={() => setRescheduleTarget(null)} onDone={load} />
       <TomorrowStrip baseDate={date} />
     </Shell>
+  );
+}
+
+function jobTitle(job) {
+  const vehicle = [job.vehicle_year, job.vehicle_make, job.vehicle_model]
+    .filter(part => part !== null && part !== undefined && String(part).trim() !== "")
+    .join(" ");
+  return vehicle || job.calibration_label || "This job";
+}
+
+function jobDeleteWarnings(job) {
+  const lines = [];
+  const xero = job.xero_invoice_number || job.xero_invoice_id;
+  if (xero) {
+    lines.push(`This job has Xero draft ${xero}; deleting the job does not delete it in Xero`);
+  }
+  const stripeId = job.stripe_invoice_id
+    || (String(job.invoice_id || "").startsWith("in_") ? job.invoice_id : "");
+  if (stripeId) {
+    lines.push(`This job has Stripe invoice ${stripeId}; deleting the job does not delete it in Stripe`);
+  }
+  const late = job.stripe_late_fee_invoice_id;
+  if (late && late !== stripeId) {
+    lines.push(`This job has Stripe invoice ${late}; deleting the job does not delete it in Stripe`);
+  }
+  return lines;
+}
+
+function DeleteJobDialog({ job, busy, error, onCancel, onConfirm }) {
+  if (!job) return null;
+  const warnings = jobDeleteWarnings(job);
+  return (
+    <div
+      onClick={onCancel}
+      onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 50,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+      }}
+      data-testid="job-delete-dialog"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="job-delete-title"
+        onClick={(e) => e.stopPropagation()}
+        className="surface page-fade"
+        style={{ padding: 24, maxWidth: 480, width: "100%" }}
+      >
+        <h2 id="job-delete-title" className="h2" style={{ marginBottom: 12 }}>
+          Are you sure you want to delete this job?
+        </h2>
+        <div className="elevated" style={{ padding: 12, marginBottom: 16, fontSize: 14 }}>
+          <div data-testid="job-delete-name" style={{ fontWeight: 600 }}>{jobTitle(job)}</div>
+          <div data-testid="job-delete-shop">{job.shop_name}</div>
+          <div data-testid="job-delete-date" className="muted">
+            {job.scheduled_start ? formatDate(job.scheduled_start) : "—"}
+          </div>
+        </div>
+        {warnings.map(line => (
+          <p key={line} data-testid="job-delete-warning" style={{ color: "#FCA5A5", fontSize: 14, lineHeight: 1.45, margin: "0 0 10px" }}>
+            {line}
+          </p>
+        ))}
+        {error && (
+          <div role="alert" style={{ color: "#FCA5A5", fontSize: 14, marginBottom: 12 }}>{error}</div>
+        )}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button type="button" className="btn btn-ghost" onClick={onCancel} autoFocus disabled={busy}
+            data-testid="job-delete-cancel">Cancel</button>
+          <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={busy}
+            data-testid="job-delete-confirm"
+            style={{ color: "#FCA5A5", borderColor: "rgba(252, 165, 165, 0.45)" }}>
+            {busy ? "Deleting…" : "Yes, delete"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -331,8 +459,8 @@ function Metric({ label, value, highlight }) {
   );
 }
 
-function ZonePanel({ title, subtitle, zone, jobs, onStatus, onPayment, onCharge, onOutside, onTripFee, accent, newJobIds, offerByJob,
-                    onDispatch, onRespond, onReschedule, onEdit, onDecide, dragOver, setDragOver, onDrop }) {
+function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, accent, newJobIds, offerByJob,
+                    onDispatch, onRespond, onReschedule, onEdit, onDelete, onDecide, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className="zone-header">
@@ -347,12 +475,12 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, onPayment, onCharge,
       )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {jobs.map((j, idx) => (
-          <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus}
+          <JobCard key={j.id} job={j} index={idx + 1} onStatus={onStatus} onComplete={onComplete}
             onPayment={onPayment} onCharge={onCharge}
-            onOutside={onOutside} onTripFee={onTripFee}
+            onOutside={onOutside} onTripFee={onTripFee} onRetryXero={onRetryXero}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
             onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule} onEdit={onEdit}
-            onDecide={onDecide}
+            onDelete={onDelete} onDecide={onDecide}
             zone={zone} dropIndex={idx}
             isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
             onDragOver={(e) => { e.preventDefault(); setDragOver({ zone, idx }); }}
@@ -406,9 +534,10 @@ function TripFeeControls({ job, onOutside, onTripFee }) {
   );
 }
 
-function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripFee, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDecide,
+function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDelete, onDecide,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
+  const [completeOpen, setCompleteOpen] = useState(false);
   const isLocked = job.status === "complete" || job.status === "cancelled" || job.status === "declined" || job.status === "requested";
   return (
     <div
@@ -479,10 +608,20 @@ function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripF
           <div className="font-mono" style={{ fontSize: 13, marginTop: 4 }}>${job.price.toFixed(2)}</div>
         </div>
       </div>
+      {job.status === "complete" && job.xero_draft_status === "needs_attention" && job.xero_attention_reason && (
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }} data-testid={`xero-reason-${job.id}`}>
+          {job.xero_attention_reason}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
         {onEdit && (
           <button className="btn btn-ghost" onClick={() => onEdit(job)}
             data-testid={`job-edit-${job.id}`}>Edit</button>
+        )}
+        {onDelete && (
+          <button type="button" className="btn btn-danger" onClick={() => onDelete(job)}
+            data-testid={`job-delete-${job.id}`}
+            style={{ color: "#FCA5A5", borderColor: "rgba(252, 165, 165, 0.45)" }}>Delete</button>
         )}
         {onDecide && job.status === "requested" && (
           <>
@@ -501,9 +640,27 @@ function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripF
         {job.status === "complete" && job.payment_status !== "paid" && !job.charged_at && (
           <button className="btn btn-primary" onClick={() => onCharge(job.id)}>Charge card now</button>
         )}
+        {job.status === "complete" && job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id) && (
+          <span className="badge badge-draft" data-testid={`xero-draft-${job.id}`}>
+            {job.xero_invoice_url ? (
+              <a href={job.xero_invoice_url} target="_blank" rel="noreferrer" style={{ color: "inherit" }}>
+                Xero draft {job.xero_invoice_number || job.xero_invoice_id}
+              </a>
+            ) : `Xero draft ${job.xero_invoice_number || job.xero_invoice_id}`}
+          </span>
+        )}
+        {job.status === "complete" && job.xero_draft_status === "needs_attention" && (
+          <>
+            <span className="badge badge-draft" data-testid={`xero-attention-${job.id}`}>Xero needs attention</span>
+            <button className="btn btn-ghost" type="button" onClick={() => onRetryXero(job.id)}
+              data-testid={`xero-retry-${job.id}`}>Retry Xero draft</button>
+          </>
+        )}
         {flow && (
-          <button className="btn btn-primary" onClick={() => onStatus(job.id, flow.next)}
-            data-testid={`job-action-${job.id}`}>{flow.label}</button>
+          <button className="btn btn-primary" onClick={() => {
+            if (flow.next === "complete") setCompleteOpen(true);
+            else onStatus(job.id, flow.next);
+          }} data-testid={`job-action-${job.id}`}>{flow.label}</button>
         )}
         {job.status === "booked" && (
           <>
@@ -524,6 +681,138 @@ function JobCard({ job, index, onStatus, onPayment, onCharge, onOutside, onTripF
           </>
         )}
       </div>
+      {completeOpen && flow?.next === "complete" && (
+        <CompleteFields job={job} onSubmit={onComplete} />
+      )}
+    </div>
+  );
+}
+
+const CAL_TYPES = [
+  ["static", "Static"],
+  ["dynamic", "Dynamic"],
+  ["dual", "Dual"],
+  ["triple", "Triple / Subaru"],
+  ["tesla", "Tesla"],
+];
+
+function isPdfDoc(doc) {
+  if (!doc) return false;
+  const name = (doc.file_name || "").toLowerCase();
+  const type = (doc.content_type || "").toLowerCase();
+  return name.endsWith(".pdf") || type.includes("pdf");
+}
+
+function canCompleteDraft(doc, calType, popChoice, popAmount) {
+  const amount = Number(String(popAmount || "").replace(/[$,]/g, ""));
+  const popReady = popChoice === "none" || (popChoice === "amount" && amount > 0);
+  return Boolean(isPdfDoc(doc) && calType && popReady);
+}
+
+function CompleteFields({ job, onSubmit }) {
+  const [calType, setCalType] = useState(job.calibration_type || "");
+  const [popChoice, setPopChoice] = useState("");
+  const [popAmount, setPopAmount] = useState("");
+  const [uploadedDoc, setUploadedDoc] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const ready = canCompleteDraft(uploadedDoc, calType, popChoice, popAmount);
+
+  useEffect(() => {
+    let cancel = false;
+    api.get(`/jobs/${job.id}/documents`).then(({ data }) => {
+      if (cancel) return;
+      const pdf = [...(data || [])].reverse().find(isPdfDoc);
+      if (pdf) setUploadedDoc(pdf);
+    }).catch(() => {});
+    return () => { cancel = true; };
+  }, [job.id]);
+
+  async function upload(file) {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const { data } = await api.post(`/jobs/${job.id}/upload-document`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setUploadedDoc(data);
+    } catch (err) {
+      alert(err.response?.data?.detail || "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function submit() {
+    if (!ready || submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(job.id, {
+        result: "pass",
+        notes: null,
+        calibration_type: calType,
+        pop: popChoice === "none" ? "none" : String(popAmount).trim(),
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }} data-testid={`complete-form-${job.id}`}>
+      <label className="label" htmlFor={`dash-cal-${job.id}`}>Calibration type *</label>
+      <select id={`dash-cal-${job.id}`} className="input" value={calType} onChange={e => setCalType(e.target.value)}
+        data-testid={`dash-cal-type-${job.id}`}>
+        <option value="">Choose</option>
+        {CAL_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+      <div style={{ marginTop: 14 }}>
+        <div className="label" id={`dash-pop-label-${job.id}`}>POP approved by insurance *</div>
+        <div style={{ display: "flex", gap: 8 }} role="group" aria-labelledby={`dash-pop-label-${job.id}`}>
+          <button type="button" className={"btn " + (popChoice === "none" ? "btn-primary" : "btn-ghost")}
+            style={{ flex: 1 }} onClick={() => setPopChoice("none")} data-testid={`dash-pop-none-${job.id}`}>None</button>
+          <button type="button" className={"btn " + (popChoice === "amount" ? "btn-primary" : "btn-ghost")}
+            style={{ flex: 1 }} onClick={() => setPopChoice("amount")} data-testid={`dash-pop-amount-${job.id}`}>Dollar amount</button>
+        </div>
+        {popChoice === "amount" && (
+          <input id={`dash-pop-${job.id}`} className="input" style={{ marginTop: 8 }} inputMode="decimal"
+            aria-label="POP dollar amount" value={popAmount} placeholder="450.00"
+            onChange={e => setPopAmount(e.target.value)} data-testid={`dash-pop-value-${job.id}`} />
+        )}
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <div className="label">Signed post-scan PDF *</div>
+        {!uploadedDoc ? (
+          <label className="btn btn-ghost" style={{ width: "100%", padding: 12, cursor: "pointer", justifyContent: "center" }}>
+            {uploading ? "Uploading…" : "Upload PDF"}
+            <input type="file" accept="application/pdf,.pdf" style={{ display: "none" }} disabled={uploading}
+              onChange={(e) => { if (e.target.files[0]) upload(e.target.files[0]); }}
+              data-testid={`doc-upload-${job.id}`} />
+          </label>
+        ) : (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }} data-testid="doc-uploaded">
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{uploadedDoc.file_name}</div>
+              <div className="muted" style={{ fontSize: 12 }}>
+                {uploadedDoc.size_bytes ? `${(uploadedDoc.size_bytes / 1024).toFixed(1)} KB` : "PDF"}
+              </div>
+            </div>
+            <button type="button" className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }}
+              onClick={() => setUploadedDoc(null)} data-testid={`doc-remove-${job.id}`}>Replace</button>
+          </div>
+        )}
+      </div>
+      {!ready && (
+        <div className="muted" style={{ fontSize: 13, marginTop: 12 }}>
+          Add the signed post-scan PDF, the calibration type, and POP (or None) before completing.
+        </div>
+      )}
+      <button type="button" className="btn btn-primary" style={{ marginTop: 12, opacity: ready && !submitting ? 1 : 0.55 }}
+        disabled={!ready || submitting} onClick={submit} data-testid={`dash-complete-${job.id}`}>
+        {submitting ? "Submitting…" : "Complete job"}
+      </button>
     </div>
   );
 }

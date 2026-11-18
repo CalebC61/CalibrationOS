@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { getStoredAuth } from "../lib/api";
+import BookJobLink from "./BookJobLink";
 import "./marketing.css";
 
 const LOGO = "/marketing/logo-crew-transparent.png";
@@ -54,7 +55,7 @@ export function SiteChrome({ children }) {
               <Link className="link-quiet" to={staff ? "/dashboard" : "/login"} onClick={() => setOpen(false)}>
                 {staff ? "Dispatch" : "Staff login"}
               </Link>
-              <Link className="btn btn-primary" to="/signup" onClick={() => setOpen(false)}>Sign up</Link>
+              <BookJobLink className="btn btn-primary" onClick={() => setOpen(false)}>Book a job</BookJobLink>
             </div>
           </nav>
         </div>
@@ -88,7 +89,7 @@ export function SiteChrome({ children }) {
               <li><Link to="/signup">Create a shop account</Link></li>
               <li><Link to="/portal/login">Shop login</Link></li>
               <li><Link to="/login">Staff login</Link></li>
-              <li><a href="https://calendly.com/calcrew/adas-calibration-appointment" target="_blank" rel="noopener noreferrer">Book a job</a></li>
+              <li><BookJobLink>Book a job</BookJobLink></li>
             </ul>
           </div>
           <div>

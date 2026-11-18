@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import BookJobLink from "./BookJobLink";
 import { FaqList, SiteChrome } from "./SiteChrome";
 
 const CITIES = ["Phoenix", "Mesa", "Chandler", "Gilbert", "Tempe", "Scottsdale", "Glendale", "Peoria", "Surprise", "Buckeye", "Goodyear", "Avondale", "Queen Creek", "Apache Junction", "San Tan Valley", "Gold Canyon", "Maricopa", "Casa Grande", "Florence", "Black Canyon City"];
@@ -180,7 +181,7 @@ export function PricingPage() {
           <h2 className="display">Create a shop account to book the first job</h2>
           <div className="btn-row" style={{ justifyContent: "center" }}>
             <Link className="btn btn-primary btn-lg" to="/signup">Create your shop account</Link>
-            <a className="btn btn-ghost btn-lg" href="https://calendly.com/calcrew/adas-calibration-appointment" target="_blank" rel="noopener noreferrer">Book a job</a>
+            <BookJobLink className="btn btn-ghost btn-lg">Book a job</BookJobLink>
           </div>
         </div>
       </section>

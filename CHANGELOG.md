@@ -15,7 +15,7 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
-### Changed — shops book only after they log in (2026-11-17)
+### Changed — shops book only after they log in (2026-11-18)
 A booking link is no longer a way to book, change, cancel, or read a shop's jobs.
 `GET /api/public/shop/{token}`, `POST /api/public/availability`, `POST /api/public/book`,
 `GET /api/public/bookings/{token}`, `PATCH /api/public/bookings/{token}/{job_id}`,
@@ -27,12 +27,199 @@ Shops book, see open times, edit, and cancel through the portal login:
 `POST /api/portal/availability`, `POST /api/portal/book`, `PATCH /api/portal/jobs/{job_id}`,
 `POST /api/portal/jobs/{job_id}/cancel`, and `GET /api/portal/scorecard` (that shop only).
 The card-on-file and charge-terms checks are unchanged. `SHOP_EMAILS_ENABLED` and
-`BILLING_ENABLED` are unchanged.
+`BILLING_ENABLED` are unchanged. Shop and staff responses still use the allowlists from
+`backend/client_views.py`: no Stripe ids, Xero tokens, or password hashes. The owner
+delete-job action is unchanged.
 
 The owner still books for a shop from the shop page (`POST /api/shops/{shop_id}/book` and
 `POST /api/shops/{shop_id}/availability`). Owner reschedule uses that availability route.
 Welcome mail and the owner "finished signup" mail point at `/portal/login`. The invite
 mail still opens the setup page, and says booking happens in the shop portal.
+
+The public site's Book a job buttons (header, footer, pricing, contact) go to shop
+signup, or to portal Book when that browser is already logged into a shop. They no
+longer open Calendly. The portal booking form checks a changed address while it is
+being typed, so Continue can turn on before the field loses focus.
+
+### Fixed — session and shop responses no longer include credentials (2026-11-18)
+`GET /api/auth/me` returned the owner Mongo document. That document holds the
+Xero access token, refresh token, token expiry, and tenant id. Password hashes
+were already left out of that query. They were not the only secret on the row.
+
+Staff responses (`/api/auth/me`, `/api/contractors`, contractor update, and
+`/api/routing-techs`) now use an allowlist (`StaffPublic` in
+`backend/client_views.py`). The client still gets `xero_connected` and
+`xero_org_name` (the Xero organisation name). It does not get access, refresh,
+or id tokens, token expiry, or the tenant id.
+
+Shop-user responses (`/api/portal/me`, card setup completion, charge
+acceptance, and public shop signup) use `ShopUserPublic`. Card brand, last4,
+and expiry stay, because the portal shows them. `stripe_customer_id` and
+`stripe_payment_method_id` do not. `has_payment_method` replaces the raw card
+id. The portal settings page reads that boolean.
+
+Shop documents returned to the owner or the shop keep the booking link and the
+Xero contact id the owner edits. They drop Stripe customer and payment-method
+ids, password hashes, and token fields. `GET /api/public/shop/{token}` was
+already an allowlist and did not include those ids.
+
+`/docs`, `/redoc`, and `/openapi.json` are off when `APP_ENV` is `production`
+or `prod`, unless `ENABLE_API_DOCS=true`. `ENABLE_API_DOCS=false` turns them
+off in any environment. When they are off, those paths return 404. The React
+app does not request `/openapi.json`. A SetupIntent `client_secret` is still
+returned from the card-setup calls, because Stripe.js in the browser has to
+have it to confirm the card. It is not stored on the user document.
+
+### Added — the owner can delete a job (2026-11-18)
+`DELETE /api/jobs/{job_id}` is owner-only. A shop portal login, a technician,
+and a contractor receive 403. The job row is removed, along with its documents,
+new-booking alerts, contractor offers, owner-action tokens, and a vehicle row
+no other job still uses. Xero and Stripe invoice rows stay on the invoices
+list. The call does not email, text, cancel, reschedule, or contact Xero or
+Stripe. `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged.
+
+On the owner Dispatch dashboard, each job card has a Delete action beside
+Edit. The confirmation shows the vehicle, shop, and date, and names a linked
+Xero draft or Stripe invoice when the job has one. Cancel leaves the job.
+Yes, delete removes that card without reloading the page.
+
+### Fixed — triple Xero item and wholesale price at Complete (2026-11-17)
+A triple calibration now files the Xero item named Subaru MC Calibration
+(code 8). Triple/Subaru Calibration is used only when that item is missing.
+The rates are unchanged: standard $185, Real Fast $175, Preferred $165.
+
+Booking and Complete now price the job at that shop's wholesale rate for the
+calibration being filed (standard, Real Fast, Preferred, custom, or auto from
+the shop name). Complete does this even when the calibration type stays the
+same, and it does it before the local invoice, the admin email, and any card
+charge. The $30 trip fee stays a separate amount on top. A Xero failure still
+leaves the completed job as needs attention, with Retry.
+
+The public booking link and the portal booking screen show that same rate.
+The public date step imports `phoenixTodayStr`. It was calling that helper
+without an import, so the date field threw before a date could be picked.
+
+### Fixed — Complete files a usable Xero draft (2026-11-17)
+The signed post-scan on a real scan tool is a font-encoded PDF. `vin_from_pdf`
+now reads that text with pypdf, collapses whitespace, and keeps the 17-character
+VIN next to the VIN label. The old compressed-stream reader remains the fallback
+when pypdf cannot read the file. `pypdf` is in `backend/requirements.txt`.
+The test PDF is built with reportlab and a TrueType font so the old reader
+finds nothing.
+
+Dispatch's Complete button no longer posts `{result: pass}` by itself. It opens
+the same required fields as the field app: calibration type, POP (None or a
+dollar amount), and a signed post-scan PDF already on the job or uploaded then.
+The job is not completed until those are present.
+
+A couldn't-calibrate job (trip fee only) still attaches a post-scan when one
+was uploaded, and it files the draft when there is no PDF. A normal calibration
+still requires the PDF.
+
+When Complete changes the calibration type, the job price becomes that shop's
+wholesale rate for the new type (Real Fast, Preferred, custom, or standard).
+An outside-area job keeps the extra $30. A trip-fee-only job stays at $30.
+The local invoice and the card charge then match the Xero line.
+
+`POST /api/jobs/{id}/upload-document` names the file
+`CUSTOMER_SHOP_Make_Model_Year.ext` when the job has no customer last name,
+instead of raising.
+
+### Fixed — Xero connect lands on Settings after the callback (2026-11-17)
+`GET /api/auth/xero/callback` saved the tokens and then raised
+`NameError: RedirectResponse is not defined`, so the browser saw a 500.
+The redirect is a 302 to `XERO_POST_CONNECT_REDIRECT` with `?xero=connected`
+or `?xero=error`. On Render that setting is
+`https://www.thecalibrationcrew.us/settings`, so the owner returns to
+Settings on that site. A query string already on the setting is dropped
+before `xero` is added.
+
+### Fixed — Xero connect uses granular invoice scopes (2026-11-17)
+The Xero app was created after 2 March 2026, so the authorize URL's broad
+`accounting.transactions` scope comes back as `invalid_scope`. `XERO_SCOPES`
+in `backend/server.py` now requests `accounting.invoices` instead. Invoice
+create, update, PDF download, and the status poll all use the Invoices
+endpoint, including reading `Status` when it is `PAID`. No code calls the
+Payments, Overpayments, or Prepayments endpoints, so `accounting.payments` is
+not requested. Reports and journals scopes are not requested. The rest of the
+string is unchanged: `openid profile email accounting.contacts
+accounting.attachments accounting.settings.read offline_access`. This is still
+a code constant, not an env var. A token saved under the old scope stays on
+the old grant until the owner connects Xero again.
+
+### Added — completing a job files the Xero draft Maddy builds by hand (2026-11-17)
+Completing a job still settles the card the same way. `BILLING_ENABLED` and
+`SHOP_EMAILS_ENABLED` are unchanged. After that, `create_invoice_for_job` files
+one Xero ACCREC draft for the job, or marks the job `needs attention` and still
+leaves the job complete.
+
+The draft is due the same day as the job, with no tax, a blank reference, and the
+branding theme named Calibration Template. Line 1 is the Xero item for the
+calibration type (Static, Dynamic, Dual, Triple/Subaru, Tesla) at the shop's
+wholesale rate, account 4100, tax exempt. Line 2 is only
+`FIRST LAST - YEAR MAKE MODEL - VIN`. A $30 trip fee is its own priced line when
+the job is out of area. A trip-fee-only job (could not calibrate) does not also
+sell the calibration. When POP is a dollar amount, the draft is saved at that
+amount, the invoice PDF is fetched, both PDFs are attached with IncludeOnline,
+and line 1 is then updated to the wholesale rate. The draft is never authorised
+and never sent from Xero.
+
+The shop's Xero contact id can be set by the owner. If it is blank, the app
+matches an existing contact by the exact name (the known shop list, or the shop's
+own name) and saves the id. It does not create a contact. No confident match
+means no invoice, and the job is flagged. Wholesale cards for Real Fast and
+Preferred are editable under Settings → Pricing. Standard wholesale follows the
+standard prices. A retry uses the invoice id already stored on the job.
+
+The field screen requires the signed post-scan PDF, the calibration type, and
+POP (or None) before Complete. The uploaded PDF is the document that downloads.
+Completion no longer inserts a second document row with no bytes. The field
+screen and the day board say either `Draft INV-#### created` or the attention
+reason. Maddy is emailed at `ADMIN_EMAIL` through the owner-mail path with the
+number and link.
+
+The connect URL reads `XERO_SCOPES` in `backend/server.py` (a code constant, not
+an env var). That string now also requests `accounting.attachments` and
+`accounting.settings.read`. A token saved before this change keeps its old
+scopes until the owner connects Xero again.
+
+### Fixed — pre-launch privacy, limits, and a few shop-facing snags (2026-11-17)
+A logged-in shop's day map (`GET /api/portal/day-map`) shows every stop on the
+owner's route for that America/Phoenix day, in route order. This shop's jobs
+stay in full (customer, vehicle, address, status, and the arrival window).
+Another shop's stop is a gray pin: route position, the arrival window, and a
+coordinate rounded to three decimal places (about a block). The response for
+that stop does not include a job id, shop name, customer, vehicle, VIN, address
+text, phone, notes, or price. The empty state is only for a day with no stops
+at all. The legend says the gray pins are other stops and show the time window
+only.
+
+`POST /api/auth/login`, `POST /api/portal/auth/login`, and
+`POST /api/portal/auth/forgot-password` use the same in-memory counter as
+signup. Sign-in allows 8 attempts per 15 minutes per network and per email,
+then `429` with "Too many sign-in attempts. Wait 15 minutes and try again."
+Password reset allows 5 per hour per network and per email, then a clear `429`,
+and does not send another email. `POST /api/geocode` allows 30 lookups per hour
+per network. `POST /api/public/contact` allows 5 messages per hour per network
+and per email. Signup's own limit is unchanged.
+
+A portal report download now requests the file with the shop's login token and
+saves it from that response. The old plain link had no token, so the download
+could not be authorized.
+
+A geocode cache hit runs the street-line strip again. An older cached line that
+still starts with a business name is saved as the street
+(`1 E Washington St, Phoenix, AZ 85004, USA`). A suite number stays. A fresh
+Google lookup was already doing this; the cache path was not.
+
+The card form in signup and Settings → Update card uses Stripe's tabs layout
+with the card fields open, still cards only, with Link and wallets off.
+
+A failed booking in the shop portal shows the error on the page. It no longer
+uses a browser alert.
+
+`SHOP_EMAILS_ENABLED`, `BILLING_ENABLED`, the public booking link, the
+scorecard link, job completion, Xero, and SMS are unchanged.
 
 ### Fixed — every shop needs a verified card before it can book (2026-11-14)
 The server no longer trusts a payment method id from the browser. Signup and
