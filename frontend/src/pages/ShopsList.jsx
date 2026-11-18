@@ -45,7 +45,7 @@ export default function ShopsList() {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "var(--bg-elevated)", textAlign: "left" }}>
-              <Th>Name</Th><Th>Zone</Th><Th>Tier</Th><Th>Status</Th><Th>Actions</Th>
+              <Th>Name</Th><Th>Zone</Th><Th>Rates</Th><Th>Status</Th><Th>Actions</Th>
             </tr>
           </thead>
           <tbody>
@@ -55,7 +55,7 @@ export default function ShopsList() {
                   <div className="muted" style={{ fontSize: 12 }}>{s.address}</div>
                 </Td>
                 <Td><span className={`badge badge-${s.zone}`}>{s.zone}</span></Td>
-                <Td><span style={{ textTransform: "capitalize" }}>{s.pricing_tier}</span></Td>
+                <Td><span data-testid={`shop-rates-${s.id}`}>{s.rate_label || "—"}</span></Td>
                 <Td><span className="badge badge-booked" style={{ textTransform: "capitalize" }}>{s.status}</span></Td>
                 <Td>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

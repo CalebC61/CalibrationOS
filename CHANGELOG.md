@@ -15,6 +15,31 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — owner screens show the rate card, the card on file, and the current booking time (2026-11-18)
+The Shops list printed Tier from `pricing_tier`. Website signup stores Standard
+there, so a Preferred or Real Fast shop still said Standard. The column is now
+the wholesale card that sets the price: `Preferred: $115 / $75 / $165`,
+`Real Fast: $115 / $100 / $165`, `Custom: $99 / $80 / $150`, or `Standard`
+when the shop is on the standard card. `pricing_tier` stays on the shop
+document and in the API.
+
+The shop page lists that shop's upcoming jobs and recent jobs (date, time,
+vehicle, status, price) and links each one to Dispatch on that job's day. It
+also shows the card on file (brand, last four, expiry, and Active, Expired,
+Removed, or None), whether charge terms are accepted, and whether the shop
+can book right now. That last line is the existing booking gate's message.
+The gate itself is unchanged.
+
+The Dispatch new-bookings pill was keeping `scheduled_start` from the moment
+the job was booked. After a shop moves the job, the pill now shows the job's
+current time and status (Pending approval when the edit is waiting). The
+stored alert still has the original time. Cancelling or declining still drops
+that notice.
+
+While shop mail is held, the board says "Shop emails are on hold — view held
+emails" and still opens Email preview. `SHOP_EMAILS_ENABLED` and
+`BILLING_ENABLED` are unchanged. No new env var.
+
 ### Fixed — invited shops can accept charge terms and then book (2026-11-18)
 Self-signup writes `charge_authorization_accepted_at` on the shop and the shop
 user when the shop accepts the charge terms and a card is saved. Invite

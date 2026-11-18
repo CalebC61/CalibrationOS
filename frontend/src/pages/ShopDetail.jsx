@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, formatDate, formatTime } from "../lib/api";
 import Shell from "../components/Shell";
 
 export default function ShopDetail() {
@@ -42,6 +42,12 @@ export default function ShopDetail() {
 
   if (!shop) return <Shell><div className="muted">Loading…</div></Shell>;
 
+  const card = shop.card_on_file || { state: "None", charge_terms_accepted: false, can_book: false };
+  const jobGroups = {
+    upcoming: Array.isArray(shop.jobs?.upcoming) ? shop.jobs.upcoming : [],
+    recent: Array.isArray(shop.jobs?.recent) ? shop.jobs.recent : [],
+  };
+
   return (
     <Shell>
       <div style={{ maxWidth: 820 }}>
@@ -51,12 +57,25 @@ export default function ShopDetail() {
           <span className="badge badge-booked" style={{ textTransform: "capitalize" }}>{shop.status}</span>
         </div>
 
-        <div className="surface" style={{ padding: 20, marginBottom: 16 }}>
-          <div className="h3" style={{ marginBottom: 8 }}>Booking</div>
+        <div className="surface" style={{ padding: 20, marginBottom: 16 }} data-testid="shop-billing">
+          <div className="h3" style={{ marginBottom: 8 }}>Card on file</div>
+          <p style={{ margin: "0 0 6px", fontSize: 15 }} data-testid="shop-card-summary">{cardLine(card)}</p>
+          <p style={{ margin: "0 0 6px", fontSize: 14 }} data-testid="shop-card-state">{card.state || "None"}</p>
+          <p style={{ margin: "0 0 6px", fontSize: 14 }} data-testid="shop-card-terms">
+            {card.charge_terms_accepted ? "Charge terms accepted" : "Charge terms not accepted"}
+          </p>
+          <p style={{ margin: "0 0 14px", fontSize: 14 }} data-testid="shop-can-book">
+            {card.can_book ? "This shop can book right now." : (card.book_block || "This shop cannot book right now.")}
+          </p>
           <p className="muted" style={{ fontSize: 14, marginTop: 0, marginBottom: 14 }}>
             This shop books from the shop portal after they log in. There is no public booking link.
           </p>
           <Link to={`/shops/${shop.id}/book`} className="btn btn-primary" data-testid="book-job">Book a job</Link>
+        </div>
+
+        <div className="surface" style={{ overflow: "hidden", marginBottom: 16 }} data-testid="shop-jobs">
+          <JobGroup title="Upcoming" jobs={jobGroups.upcoming} empty="No upcoming jobs." testId="shop-jobs-upcoming" />
+          <JobGroup title="Recent" jobs={jobGroups.recent} empty="No recent jobs." testId="shop-jobs-recent" />
         </div>
 
         <div className="surface" style={{ padding: 20 }}>
@@ -98,10 +117,72 @@ export default function ShopDetail() {
               <option value="custom">This shop’s custom rates</option>
             </select>
           </Field>
+          {shop.rate_label && (
+            <div className="muted" style={{ fontSize: 14, marginTop: -8, marginBottom: 14 }} data-testid="shop-rate-label">
+              Billed on {shop.rate_label}.
+            </div>
+          )}
           <button className="btn btn-primary" disabled={saving} onClick={save} data-testid="save-shop">{saving ? "Saving…" : "Save Changes"}</button>
         </div>
       </div>
     </Shell>
+  );
+}
+
+function cardLine(card) {
+  if (!card || card.state === "None") return "No card on file";
+  const raw = String(card.brand || "").trim();
+  const brand = raw ? raw.charAt(0).toUpperCase() + raw.slice(1) : "Card";
+  const last4 = card.last4 ? ` ending ${card.last4}` : "";
+  let exp = "";
+  if (card.exp_month && card.exp_year) {
+    const word = card.state === "Expired" ? "expired" : "expires";
+    exp = `, ${word} ${card.exp_month}/${card.exp_year}`;
+  }
+  return `${brand}${last4}${exp}`;
+}
+
+function jobMoney(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  const amount = Number(value);
+  if (Number.isNaN(amount)) return "—";
+  return `$${amount.toFixed(2)}`;
+}
+
+function jobHref(job) {
+  const params = new URLSearchParams();
+  if (job.board_date) params.set("date", job.board_date);
+  if (job.id) params.set("job", job.id);
+  const query = params.toString();
+  return query ? `/dashboard?${query}` : "/dashboard";
+}
+
+function JobGroup({ title, jobs, empty, testId }) {
+  return (
+    <div data-testid={testId}>
+      <div className="h3" style={{ padding: "16px 16px 8px" }}>{title}</div>
+      {jobs.length === 0 && (
+        <div className="muted" style={{ fontSize: 14, padding: "0 16px 16px" }}>{empty}</div>
+      )}
+      {jobs.map(job => (
+        <Link key={job.id} to={jobHref(job)} data-testid={`shop-job-${job.id}`}
+          style={{ display: "block", padding: "12px 16px", borderTop: "1px solid var(--border)", color: "inherit", textDecoration: "none" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontWeight: 600 }}>{job.vehicle || "Vehicle not listed"}</div>
+              <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+                {formatDate(job.scheduled_start)} · {formatTime(job.scheduled_start)}
+                {job.calibration_label ? ` · ${job.calibration_label}` : ""}
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 14 }}>{job.status_label || job.status}</div>
+              <div className="font-mono" style={{ fontSize: 13, marginTop: 4 }}>{jobMoney(job.price)}</div>
+            </div>
+          </div>
+        </Link>
+      ))}
+    </div>
   );
 }
 

@@ -12,6 +12,7 @@ from xero_invoice import (  # noqa: E402
     contact_search_name,
     invoice_date,
     parse_pop,
+    rate_card_label,
     rate_schedule_name,
     vehicle_descriptor,
     vin_from_pdf,
@@ -277,6 +278,26 @@ def test_known_shops_map_to_the_exact_xero_contact_name():
     # An id already on the shop is used as-is. We do not search or create.
     assert contact_search_name({"name": "PREFERRED", "xero_contact_id": "CID"}) is None
     assert contact_search_name({"name": "Some Other Glass"}) == "Some Other Glass"
+
+
+def test_rate_card_label_names_the_card_that_sets_the_price():
+    preferred = {"name": "Preferred Auto Glass", "pricing_tier": "standard"}
+    realfast = {"name": "Real Fast Auto Glass", "pricing_tier": "standard"}
+    plain = {"name": "Star Windshield", "pricing_tier": "standard"}
+    custom = {
+        "name": "Local Glass",
+        "pricing_tier": "standard",
+        "wholesale_schedule": "custom",
+        "custom_rate_static": 99,
+        "custom_rate_dynamic": 80,
+        "custom_rate_dual": 150,
+    }
+    pinned = {"name": "Preferred Auto Glass", "wholesale_schedule": "standard", "pricing_tier": "custom"}
+    assert rate_card_label(preferred, STANDARD, DEFAULT_SPECIAL_RATES) == "Preferred: $115 / $75 / $165"
+    assert rate_card_label(realfast, STANDARD, DEFAULT_SPECIAL_RATES) == "Real Fast: $115 / $100 / $165"
+    assert rate_card_label(custom, STANDARD, DEFAULT_SPECIAL_RATES) == "Custom: $99 / $80 / $150"
+    assert rate_card_label(plain, STANDARD, DEFAULT_SPECIAL_RATES) == "Standard"
+    assert rate_card_label(pinned, STANDARD, DEFAULT_SPECIAL_RATES) == "Standard"
 
 
 def test_preferred_and_real_fast_rates_and_standard():

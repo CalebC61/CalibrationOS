@@ -818,6 +818,69 @@ test("a paid invoice-hold job hides the hold badge and Charge card now", async (
   expect(screen.queryByTestId("job-charge-job-1")).not.toBeInTheDocument();
 });
 
+test("new bookings show the current time and status, not an older booking time", async () => {
+  const moved = {
+    id: "alert-moved",
+    job_id: "job-moved",
+    shop_name: "Preferred Auto Glass",
+    vehicle: "2020 Honda Civic",
+    scheduled_start: "2099-06-02T15:30:00Z",
+    original_scheduled_start: "2099-06-02T08:00:00Z",
+    status: "requested",
+    status_label: "Pending approval",
+    zone: "east",
+  };
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [] });
+    if (path.includes("/dashboard/summary")) return summaryGet();
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 1, alerts: [moved] } });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+
+  render(<Dashboard />);
+  fireEvent.click(await screen.findByTestId("new-bookings-pill"));
+  expect(screen.getByTestId("new-booking-time-job-moved")).toHaveTextContent("T15:30");
+  expect(screen.getByTestId("new-booking-status-job-moved")).toHaveTextContent("Pending approval");
+  expect(screen.getByTestId("new-bookings-panel")).not.toHaveTextContent("T08:00");
+});
+
+test("held shop mail uses plain words and still opens Email preview", async () => {
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [] });
+    if (path.includes("/dashboard/summary")) {
+      return Promise.resolve({ data: { job_count: 0, revenue: 0, estimated_miles: 0, done_by: null, shop_emails_enabled: false } });
+    }
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+
+  render(<Dashboard />);
+  const link = await screen.findByTestId("shop-emails-off");
+  expect(link).toHaveTextContent("Shop emails are on hold — view held emails");
+  expect(link).toHaveAttribute("href", "/email-preview");
+  expect(screen.queryByText(/OFF \(testing\)/)).not.toBeInTheDocument();
+});
+
+test("the held-mail link stays hidden while shop emails are sending", async () => {
+  mockGets([]);
+  render(<Dashboard />);
+  await screen.findByTestId("today-btn");
+  expect(screen.queryByTestId("shop-emails-off")).not.toBeInTheDocument();
+});
+
+test("a shop job link opens Dispatch on that job's day", async () => {
+  window.history.pushState({}, "", "/dashboard?date=2099-04-04&job=job-1");
+  mockGets([]);
+  render(<Dashboard />);
+  await screen.findByTestId("today-btn");
+  expect(api.get).toHaveBeenCalledWith("/jobs?date_str=2099-04-04");
+  window.history.pushState({}, "", "/");
+});
+
 test("Charge card now keeps the paid job when the day list is still unpaid", async () => {
   const unpaid = {
     ...job,
