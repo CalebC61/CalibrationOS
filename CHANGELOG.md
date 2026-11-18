@@ -15,6 +15,25 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — shop job edits follow the booking rules, and shop cancel names a reason (2026-11-18)
+A shop edit that changes the date, time, address, or service is checked the
+same way as a new booking. The time has to be free, the day has to be open
+(Sundays, Thanksgiving, and other days off), the address has to be in the
+valley, arrivals before 8:00 AM go back to pending and email the owner, and a
+same-day stop past the drive limits does too. 6:00 AM is still offered. 8:00 AM
+and later confirm. The price follows the shop's rate for the new service.
+Names, vehicle, VIN, and notes leave the status alone. An unchanged save sends
+nothing.
+
+A real shop edit sends one "Job updated" email listing each change as old to
+new, with the ref and a link to the job. A shop cancel sends one "Job
+cancelled" email in the same shape as a booking confirmation and stores the
+reason "Cancelled by shop", which Dispatch shows on Cancelled & declined. Both
+use the shop mail path, so they stay in Email preview while
+`SHOP_EMAILS_ENABLED` is off. Owner edits and owner cancel reasons are
+unchanged. Warranty links and contractor removal are unchanged. No new env
+var. `BILLING_ENABLED` is unchanged.
+
 ### Fixed — no geocode error while a booking address is still being typed (2026-11-18)
 Book a Calibration looks up the address while it is being typed so a real
 street can enable the date before blur. That lookup was also painting

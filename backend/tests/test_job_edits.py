@@ -6,7 +6,7 @@ No live Mongo. The routes run against an in-memory store:
 import asyncio
 import os
 import sys
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 import httpx
 import pytest
@@ -16,7 +16,7 @@ os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
 os.environ.setdefault("DB_NAME", "ci")
 
 import server  # noqa: E402
-from business_time import business_day_bounds, business_date  # noqa: E402
+from business_time import BUSINESS_TZ, business_day_bounds, business_date  # noqa: E402
 
 TODAY = business_date()
 TODAY_START, _TODAY_END = business_day_bounds(TODAY)
@@ -28,7 +28,19 @@ PAST = (TODAY_START - timedelta(days=2)).isoformat()
 
 def _match(doc, query):
     for key, expected in query.items():
-        if doc.get(key) != expected:
+        value = doc.get(key)
+        if isinstance(expected, dict):
+            if "$gte" in expected and not (value is not None and value >= expected["$gte"]):
+                return False
+            if "$lt" in expected and not (value is not None and value < expected["$lt"]):
+                return False
+            if "$nin" in expected and value in expected["$nin"]:
+                return False
+            if "$in" in expected and value not in expected["$in"]:
+                return False
+            if "$ne" in expected and value == expected["$ne"]:
+                return False
+        elif value != expected:
             return False
     return True
 
@@ -89,6 +101,8 @@ class _DB:
         self.shop_users = _Store()
         self.jobs = _Store()
         self.vehicles = _Store()
+        self.email_outbox = _Store()
+        self.days_off = _Store()
 
 
 def _job(**overrides):
@@ -224,6 +238,7 @@ def test_owner_patch_regeocodes_a_new_address_and_sends_nothing(world):
         assert world["calls"]["geo"] == ["1234 E Williams Field Rd, Gilbert, AZ"]
         assert world["calls"]["sms"] == []
         assert world["calls"]["email"] == []
+        assert world["db"].email_outbox.docs == []
         history = job["edit_history"]
         assert history[-1]["who"] == {"kind": "owner", "id": "tech-1", "name": "Caleb"}
         assert "at" in history[-1]
@@ -406,6 +421,14 @@ def test_shop_edits_only_its_own_jobs(world):
         assert other["notes"] == "Gate"
         assert world["calls"]["sms"] == []
         assert world["calls"]["email"] == []
+        held = world["db"].email_outbox.docs
+        assert len(held) == 1
+        assert held[0]["subject"] == "Job updated"
+        assert held[0]["audience"] == "shop"
+        assert held[0]["to"] == "ana@example.com"
+        assert "500 W Jefferson, Phoenix, AZ" in held[0]["body"]
+        assert "Rio" in held[0]["body"]
+        assert "->" in held[0]["body"] or "-&gt;" in held[0]["body"]
 
     asyncio.run(run())
 
@@ -441,6 +464,7 @@ def test_shop_lists_only_its_own_jobs_and_cancel_skips_messages(world):
             assert cancelled.status_code == 200, cancelled.text
             body = cancelled.json()
             assert body["status"] == "cancelled"
+            assert body["cancellation_reason"] == "Cancelled by shop"
             assert "status" in body["edit_history"][-1]["fields"]
             assert body["edit_history"][-1]["who"]["name"] == "Glass Co"
             again = await client.get("/api/portal/jobs", headers=_auth(world["shop"]))
@@ -453,6 +477,11 @@ def test_shop_lists_only_its_own_jobs_and_cancel_skips_messages(world):
             assert [job["id"] for job in other_shop.json()] == ["job-other"]
         assert world["calls"]["sms"] == []
         assert world["calls"]["email"] == []
+        cancelled_mail = [row for row in world["db"].email_outbox.docs if row["subject"] == "Job cancelled"]
+        assert len(cancelled_mail) == 1
+        assert cancelled_mail[0]["audience"] == "shop"
+        assert cancelled_mail[0]["to"] == "ana@example.com"
+        assert "cancelled" in cancelled_mail[0]["body"].lower()
         other = await world["db"].jobs.find_one({"id": "job-other"})
         assert other["status"] == "booked"
 
@@ -485,5 +514,426 @@ def test_shop_address_change_regeocodes_without_messages(world):
         assert world["calls"]["geo"] == ["200 E Main, Gilbert, AZ"]
         assert world["calls"]["sms"] == []
         assert world["calls"]["email"] == []
+
+    asyncio.run(run())
+
+
+def _phoenix(day, hour, minute=0):
+    moment = datetime.combine(day, time(hour, minute), tzinfo=BUSINESS_TZ)
+    return moment.astimezone(timezone.utc)
+
+
+def _park_tech(world):
+    tech = next(row for row in world["db"].technicians.docs if row["id"] == "tech-2")
+    tech["home_lat"] = 33.45
+    tech["home_lng"] = -112.2
+    tech["day_start"] = "08:00"
+    return tech
+
+
+def _sent_subjects(world):
+    subjects = []
+    for args, _kwargs in world["calls"]["email"]:
+        subjects.append(args[1] if len(args) > 1 else "")
+    return subjects
+
+
+def test_shop_detail_edit_keeps_an_approved_early_job_booked(world):
+    """Names, vehicle, VIN, and notes do not send the job back for approval."""
+    early = _phoenix(date(2026, 11, 25), 7)
+    _park_tech(world)
+    job = world["db"].jobs.docs[0]
+    job["scheduled_start"] = early.isoformat()
+    job["scheduled_end"] = (early + timedelta(hours=1)).isoformat()
+    job["status"] = "booked"
+    job["approval_reason"] = None
+    same_time = early.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    async def run():
+        async with _client() as client:
+            response = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={
+                    "customer_last_name": "Patel",
+                    "vehicle_vin": "1HGCM82633A004352",
+                    "vehicle_make": "Honda",
+                    "notes": "Side gate",
+                    "job_address": job["job_address"],
+                    "scheduled_start": same_time,
+                    "calibration_type": "static",
+                },
+            )
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["status"] == "booked"
+        assert saved["approval_reason"] is None
+        assert saved["price"] == 125.0
+        assert saved["customer_last_name"] == "Patel"
+        assert saved["vehicle_vin"] == "1HGCM82633A004352"
+        assert saved["notes"] == "Side gate"
+        assert _sent_subjects(world) == []
+        held = world["db"].email_outbox.docs
+        assert len(held) == 1
+        assert held[0]["subject"] == "Job updated"
+        assert "Patel" in held[0]["body"]
+        assert "1HGCM82633A004352" in held[0]["body"]
+        assert "Side gate" in held[0]["body"]
+        assert "Date and time" not in held[0]["body"]
+        assert "Pending approval" not in held[0]["body"]
+
+    asyncio.run(run())
+
+
+def test_unchanged_shop_edit_sends_nothing(world):
+    async def run():
+        async with _client() as client:
+            response = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"notes": "Gate"},
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "booked"
+        assert world["db"].email_outbox.docs == []
+        assert _sent_subjects(world) == []
+
+    asyncio.run(run())
+
+
+def test_shop_service_change_uses_the_shop_rate_and_confirms_a_normal_time(world):
+    shop = world["db"].shops.docs[0]
+    shop["pricing_tier"] = "custom"
+    shop["custom_rate_dual"] = 150
+
+    async def run():
+        async with _client() as client:
+            response = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"calibration_type": "dual"},
+            )
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["status"] == "booked"
+        assert saved["calibration_type"] == "dual"
+        assert saved["calibration_label"] == "Dual ADAS Calibration"
+        assert saved["price"] == 150
+        assert saved["calibration_price"] == 150
+        assert _sent_subjects(world) == []
+        held = world["db"].email_outbox.docs
+        assert len(held) == 1
+        body = held[0]["body"]
+        assert "Dual ADAS Calibration" in body
+        assert "$125.00" in body
+        assert "$150.00" in body
+
+    asyncio.run(run())
+
+
+def test_shop_move_before_8_needs_approval_and_emails_both_sides(world):
+    _park_tech(world)
+    early = _phoenix(date(2026, 11, 25), 7, 15)
+
+    async def run():
+        async with _client() as client:
+            response = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"scheduled_start": early.isoformat()},
+            )
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["status"] == "requested"
+        assert saved["approval_reason"] == "early_arrival"
+        assert saved["price"] == 125.0
+        subjects = _sent_subjects(world)
+        assert len(subjects) == 1
+        assert "Before 8:00" in subjects[0]
+        held = world["db"].email_outbox.docs
+        assert len(held) == 1
+        assert held[0]["subject"] == "Job updated"
+        assert held[0]["audience"] == "shop"
+        assert "Pending approval" in held[0]["body"]
+        assert "7:15 AM" in held[0]["body"]
+
+    asyncio.run(run())
+
+
+def test_shop_six_am_is_offered_pending_and_eight_am_confirms(world):
+    _park_tech(world)
+    day = date(2026, 11, 25)
+
+    async def run():
+        async with _client() as client:
+            too_early = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"scheduled_start": _phoenix(day, 5, 45).isoformat()},
+            )
+            assert too_early.status_code == 400
+            assert "6:00" in too_early.json()["detail"]
+            assert world["db"].email_outbox.docs == []
+            stored = await world["db"].jobs.find_one({"id": "job-1"})
+            assert stored["status"] == "booked"
+
+            six = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"scheduled_start": _phoenix(day, 6).isoformat()},
+            )
+            assert six.status_code == 200, six.text
+            assert six.json()["status"] == "requested"
+            assert six.json()["approval_reason"] == "early_arrival"
+
+            eight = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"scheduled_start": _phoenix(day, 8).isoformat()},
+            )
+            assert eight.status_code == 200, eight.text
+            assert eight.json()["status"] == "booked"
+            assert eight.json()["approval_reason"] is None
+
+        owner_mail = _sent_subjects(world)
+        assert len(owner_mail) == 1
+        assert "Before 8:00" in owner_mail[0]
+        shop_mail = world["db"].email_outbox.docs
+        assert [row["subject"] for row in shop_mail] == ["Job updated", "Job updated"]
+
+    asyncio.run(run())
+
+
+def test_shop_cannot_move_onto_a_closed_day_or_outside_the_valley(world, monkeypatch):
+    async def outside(address):
+        return {"lat": 40.0, "lng": -105.0, "formatted_address": address, "in_metro": False}
+
+    monkeypatch.setattr(server, "geocode_for_regeocode", outside)
+
+    async def run():
+        async with _client() as client:
+            sunday = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"scheduled_start": _phoenix(date(2026, 11, 22), 10).isoformat()},
+            )
+            assert sunday.status_code == 400
+            assert "Sunday" in sunday.json()["detail"]
+            thanksgiving = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"scheduled_start": _phoenix(date(2026, 11, 26), 10).isoformat()},
+            )
+            assert thanksgiving.status_code == 400, thanksgiving.text
+            assert "Thanksgiving" in thanksgiving.json()["detail"]
+            valley = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"job_address": "Outside the valley"},
+            )
+            assert valley.status_code == 400
+            assert "outside" in valley.json()["detail"].lower()
+        stored = await world["db"].jobs.find_one({"id": "job-1"})
+        assert stored["status"] == "booked"
+        assert stored["job_address"] == "100 W Main, Phoenix, AZ"
+        assert stored["price"] == 125.0
+        assert world["db"].email_outbox.docs == []
+        assert _sent_subjects(world) == []
+
+    asyncio.run(run())
+
+
+def test_service_change_on_thanksgiving_is_rejected(world):
+    day = date(2026, 11, 26)
+    start = _phoenix(day, 10)
+    job = world["db"].jobs.docs[0]
+    job["scheduled_start"] = start.isoformat()
+    job["scheduled_end"] = (start + timedelta(hours=1)).isoformat()
+
+    async def run():
+        async with _client() as client:
+            response = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"calibration_type": "dual"},
+            )
+        assert response.status_code == 400, response.text
+        assert "Thanksgiving" in response.json()["detail"]
+        stored = await world["db"].jobs.find_one({"id": "job-1"})
+        assert stored["calibration_type"] == "static"
+        assert stored["price"] == 125.0
+        assert world["db"].email_outbox.docs == []
+
+    asyncio.run(run())
+
+
+def test_shop_cannot_double_book_a_time(world):
+    _park_tech(world)
+    start = _phoenix(date(2026, 11, 25), 10)
+    world["db"].jobs.docs.append(_job(
+        id="job-taken",
+        technician_id="tech-2",
+        scheduled_start=start.isoformat(),
+        scheduled_end=(start + timedelta(minutes=20)).isoformat(),
+        duration_minutes=20,
+        job_lat=33.45,
+        job_lng=-112.2,
+    ))
+    job = world["db"].jobs.docs[0]
+    job["duration_minutes"] = 20
+    job["scheduled_end"] = (datetime.fromisoformat(job["scheduled_start"]) + timedelta(minutes=20)).isoformat()
+
+    async def run():
+        async with _client() as client:
+            response = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"scheduled_start": start.isoformat()},
+            )
+        assert response.status_code == 400, response.text
+        assert "overlap" in response.json()["detail"].lower()
+        stored = await world["db"].jobs.find_one({"id": "job-1"})
+        assert stored["scheduled_start"] != start.isoformat()
+        assert world["db"].email_outbox.docs == []
+
+    asyncio.run(run())
+
+
+def test_same_day_addon_is_held_and_an_empty_today_confirms(world, monkeypatch):
+    day = date(2026, 11, 18)
+    morning = _phoenix(day, 9)
+    monkeypatch.setattr(server, "now_utc", lambda: morning)
+    tech = _park_tech(world)
+    tech["home_lat"] = 33.3528
+    tech["home_lng"] = -111.7890
+    nine = _phoenix(day, 9)
+    world["db"].jobs.docs.append(_job(
+        id="job-eag",
+        technician_id="tech-2",
+        scheduled_start=nine.isoformat(),
+        scheduled_end=(nine + timedelta(minutes=20)).isoformat(),
+        duration_minutes=20,
+        job_lat=33.4372,
+        job_lng=-111.8210,
+        job_address="855 East Brown Road, Mesa, AZ",
+    ))
+    job = world["db"].jobs.docs[0]
+    job["scheduled_start"] = _phoenix(day, 14).isoformat()
+    job["scheduled_end"] = _phoenix(day, 15).isoformat()
+    job["duration_minutes"] = 20
+    job["job_lat"] = 33.3528
+    job["job_lng"] = -111.7890
+
+    async def geo(address):
+        if "goodyear" in address.lower():
+            return {"lat": 33.4353, "lng": -112.3576, "formatted_address": address, "in_metro": True}
+        return {"lat": 33.3528, "lng": -111.7890, "formatted_address": address, "in_metro": True}
+
+    monkeypatch.setattr(server, "geocode_for_regeocode", geo)
+
+    async def run():
+        async with _client() as client:
+            addon = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={
+                    "job_address": "Goodyear shop",
+                    "scheduled_start": _phoenix(day, 11).isoformat(),
+                },
+            )
+            assert addon.status_code == 200, addon.text
+            assert addon.json()["status"] == "requested"
+            assert addon.json()["approval_reason"] == "same_day_addon"
+            # Drop the other stop and move this one back beside home. An empty
+            # today confirms a normal time.
+            world["db"].jobs.docs[:] = [row for row in world["db"].jobs.docs if row["id"] != "job-eag"]
+            job_doc = next(row for row in world["db"].jobs.docs if row["id"] == "job-1")
+            job_doc["job_lat"] = 33.3528
+            job_doc["job_lng"] = -111.7890
+            job_doc["job_address"] = "Gilbert home"
+            plain = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={
+                    "job_address": "Gilbert home",
+                    "scheduled_start": _phoenix(day, 10).isoformat(),
+                },
+            )
+            assert plain.status_code == 200, plain.text
+            assert plain.json()["status"] == "booked"
+            assert plain.json()["approval_reason"] is None
+            late = morning.replace(hour=20, minute=30)
+            monkeypatch.setattr(server, "now_utc", lambda: late)
+            closed = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"scheduled_start": _phoenix(day, 15).isoformat()},
+            )
+            assert closed.status_code == 400, closed.text
+            assert "1:00 PM" in closed.json()["detail"]
+
+        subjects = _sent_subjects(world)
+        assert any("Same-day" in subject for subject in subjects)
+        assert len(world["db"].email_outbox.docs) == 2
+
+    asyncio.run(run())
+
+
+def test_owner_edit_does_not_email_the_shop(world):
+    _park_tech(world)
+    early = _phoenix(date(2026, 11, 25), 7)
+
+    async def run():
+        async with _client() as client:
+            response = await client.patch(
+                "/api/jobs/job-1",
+                headers=_auth(world["owner"]),
+                json={"scheduled_start": early.isoformat(), "notes": "Owner moved it"},
+            )
+            cancelled = await client.post(
+                "/api/jobs/job-other/cancel",
+                headers=_auth(world["owner"]),
+                json={"reason": "Customer requested"},
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "booked"
+        assert response.json()["notes"] == "Owner moved it"
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["cancellation_reason"] == "Customer requested"
+        shop_notes = [
+            row for row in world["db"].email_outbox.docs
+            if row["subject"] in ("Job updated", "Job cancelled")
+        ]
+        assert shop_notes == []
+        assert _sent_subjects(world) == []
+
+    asyncio.run(run())
+
+
+def test_early_service_change_goes_back_to_requested(world):
+    _park_tech(world)
+    early = _phoenix(date(2026, 11, 25), 7)
+    job = world["db"].jobs.docs[0]
+    job["scheduled_start"] = early.isoformat()
+    job["scheduled_end"] = (early + timedelta(hours=1)).isoformat()
+    job["status"] = "booked"
+    job["approval_reason"] = None
+
+    async def run():
+        async with _client() as client:
+            response = await client.patch(
+                "/api/portal/jobs/job-1",
+                headers=_auth(world["shop"]),
+                json={"calibration_type": "dual"},
+            )
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["status"] == "requested"
+        assert saved["approval_reason"] == "early_arrival"
+        assert saved["price"] == 175
+        assert saved["calibration_label"] == "Dual ADAS Calibration"
+        assert any("Before 8:00" in subject for subject in _sent_subjects(world))
+        assert len(world["db"].email_outbox.docs) == 1
+        assert "$175.00" in world["db"].email_outbox.docs[0]["body"]
 
     asyncio.run(run())

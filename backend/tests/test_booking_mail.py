@@ -12,9 +12,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from booking_mail import (  # noqa: E402
     booking_confirmation_email,
     deliver_message,
+    job_cancelled_email,
+    job_updated_email,
     normalize_us_phone,
     owner_alert_email,
     owner_needs_alert,
+    shop_change_rows,
     shop_event_email,
 )
 
@@ -141,6 +144,75 @@ def test_owner_is_alerted_for_same_day_and_before_8():
     assert owner_needs_alert(EARLY, "standard", NOW) is True
     assert owner_needs_alert(WHEN, "addon", NOW) is True
     assert owner_needs_alert(WHEN, "standard", NOW) is False
+
+
+def test_job_updated_lists_old_and_new_and_skips_untouched_fields():
+    before = {
+        "job_address": "100 W Main, Phoenix, AZ",
+        "scheduled_start": WHEN.isoformat(),
+        "customer_first_name": "Ana",
+        "customer_last_name": "Ng",
+        "vehicle_year": 2020,
+        "vehicle_make": "Honda",
+        "vehicle_model": "Civic",
+        "calibration_type": "static",
+        "calibration_label": "Static ADAS Calibration",
+        "price": 125,
+        "notes": "Gate",
+        "status": "booked",
+    }
+    after = {
+        **before,
+        "job_address": "200 E Main, Gilbert, AZ",
+        "calibration_type": "dual",
+        "calibration_label": "Dual ADAS Calibration",
+        "price": 175,
+        "status": "requested",
+    }
+    rows = shop_change_rows(before, after)
+    labels = [label for label, _old, _new in rows]
+    assert labels == ["Address", "Service", "Price", "Status"]
+    message = job_updated_email(
+        to="shop@glass.example",
+        reply_to="caleb@thecalibrationcrew.us",
+        changes=rows,
+        reference="ABCD1234",
+        portal_url="https://www.thecalibrationcrew.us/portal/jobs/abcd1234-rest",
+    )
+    assert message["subject"] == "Job updated"
+    assert message["kind"] == "job_updated"
+    assert message["reply_to"] == "caleb@thecalibrationcrew.us"
+    assert "100 W Main, Phoenix, AZ -&gt; 200 E Main, Gilbert, AZ" in message["html"]
+    assert "$125.00 -&gt; $175.00" in message["html"]
+    assert "Confirmed -&gt; Pending approval" in message["html"]
+    assert "ABCD1234" in message["html"]
+    assert "/portal/jobs/abcd1234-rest" in message["html"]
+    assert "Date and time" not in message["html"]
+    assert shop_change_rows(before, before) == []
+
+
+def test_job_cancelled_confirmation_names_the_job():
+    message = job_cancelled_email(
+        to="shop@glass.example",
+        reply_to="caleb@thecalibrationcrew.us",
+        when=WHEN,
+        window_end=WHEN + timedelta(minutes=20),
+        vehicle="2022 Honda Civic",
+        address="Gilbert, AZ",
+        calibration="Static ADAS Calibration",
+        price=125,
+        reference="ABCD1234",
+        portal_url="https://www.thecalibrationcrew.us/portal/jobs/abcd1234-rest",
+    )
+    assert message["subject"] == "Job cancelled"
+    assert message["kind"] == "job_cancelled"
+    assert "cancelled" in message["html"]
+    assert "8:00" in message["html"]
+    assert "8:20 AM" in message["html"]
+    assert "2022 Honda Civic" in message["html"]
+    assert "$125.00" in message["html"]
+    assert "ABCD1234" in message["html"]
+    assert "/portal/jobs/abcd1234-rest" in message["html"]
 
 
 def test_phone_numbers_must_look_like_a_us_phone():

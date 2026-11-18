@@ -22,7 +22,7 @@ export default function PortalJobDetail() {
   }, [id, version]);
 
   async function cancelJob() {
-    if (!window.confirm("Cancel this booking? This does not send a message.")) return;
+    if (!window.confirm("Cancel this booking? The shop contact gets a cancellation email.")) return;
     try {
       await portalApi.post(`/portal/jobs/${id}/cancel`);
       setVersion(value => value + 1);

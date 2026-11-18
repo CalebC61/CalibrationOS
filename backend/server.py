@@ -149,8 +149,9 @@ from address_pin import (
     came_from_fallback, interpret_live_geocode, pin_refusal,
 )
 from booking_mail import (
-    booking_confirmation_email, mail_route, normalize_us_phone, owner_alert_email,
-    owner_needs_alert, shop_emails_enabled, shop_event_email,
+    booking_confirmation_email, job_cancelled_email, job_updated_email, mail_route,
+    normalize_us_phone, owner_alert_email, owner_needs_alert, shop_change_rows,
+    shop_emails_enabled, shop_event_email,
 )
 from error_alerts import (
     CLIENT_ERROR_IP_LIMIT, CLIENT_ERROR_MAX_BYTES, CLIENT_ERROR_WINDOW_SECONDS,
@@ -163,7 +164,7 @@ from business_time import (
     offered_slot_starts, zone_window,
 )
 from booking_fields import completion_notes, job_customer_fields
-from job_edits import changed_keys, prepare_edit, shift_scheduled_end
+from job_edits import changed_keys, prepare_edit, shift_scheduled_end, values_differ
 from regeocode import (
     detect_zone, jobs_on_phoenix_day, location_set, regeocode_records,
     regeocode_scope, zone_for_geocode,
@@ -2436,14 +2437,18 @@ async def compute_available_slots(zone_key: str, day: date, job_lat: float, job_
     return slots, message, "addon" if kind == "same_day" else "standard"
 
 
-async def _arrival_plan(tech, day, start: datetime, new_point: tuple, jobs: list, *, allow_outside: bool, now: datetime = None, duration: int | None = None) -> dict:
-    """Server-side recheck for a book or an edit. Raises 400 when the time does not fit."""
+async def _arrival_plan(tech, day, start: datetime, new_point: tuple, jobs: list, *, allow_outside: bool, now: datetime = None, duration: int | None = None, skip_same_day_cutoff: bool = False) -> dict:
+    """Server-side recheck for a book or an edit. Raises 400 when the time does not fit.
+
+    `skip_same_day_cutoff` is for a shop edit that keeps the same arrival.
+    The 1:00 PM cutoff still blocks a new or moved same-day time.
+    """
     now = now or now_utc()
     start = _aware_start(start)
     kind = request_kind(day, now)
     if kind == "past" and not allow_outside:
         raise HTTPException(400, "That date is in the past.")
-    if kind == "same_day" and not allow_outside:
+    if kind == "same_day" and not allow_outside and not skip_same_day_cutoff:
         closed = same_day_closed_message(now, policy_from_tech(tech))
         if closed:
             raise HTTPException(400, closed)
@@ -2695,7 +2700,11 @@ async def owner_book_for_shop(shop_id: str, data: BookingIn, tech=Depends(requir
 
 @api.patch("/portal/jobs/{job_id}")
 async def portal_job_edit(job_id: str, body: JobEditIn, su=Depends(get_current_shop_user)):
-    """This shop edits its own job. Price and zone stay owner-only. No messages."""
+    """This shop edits its own job. Price and zone stay owner-only.
+
+    A real change emails the shop one update. Date, time, address, and service
+    are checked like a new booking. Owner edits use a different route.
+    """
     shop, job = await _job_for_portal_shop(su, job_id)
     raw = body.model_dump(exclude_unset=True)
     if "warranty_of_job_id" in raw:
@@ -2704,13 +2713,15 @@ async def portal_job_edit(job_id: str, body: JobEditIn, su=Depends(get_current_s
         fields = prepare_edit(raw, allow_price=False, allow_zone=False)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    return await _apply_job_edit(
+    fresh = await _apply_job_edit(
         job, fields, {"kind": "shop", "id": shop["id"], "name": shop["name"]},
     )
+    await _notify_shop_edit(job, fresh, shop)
+    return fresh
 
 @api.post("/portal/jobs/{job_id}/cancel")
 async def portal_job_cancel(job_id: str, su=Depends(get_current_shop_user)):
-    """Cancel one of this shop's jobs. Does not send SMS or email."""
+    """Cancel one of this shop's jobs. Emails the shop. Does not text."""
     shop, job = await _job_for_portal_shop(su, job_id)
     if job.get("status") == "cancelled":
         raise HTTPException(400, "Job is already cancelled")
@@ -2724,10 +2735,17 @@ async def portal_job_cancel(job_id: str, su=Depends(get_current_shop_user)):
     }
     await db.jobs.update_one(
         {"id": job["id"]},
-        {"$set": {"status": "cancelled", "updated_at": now}, "$push": {"edit_history": entry}},
+        {"$set": {
+            "status": "cancelled",
+            "cancellation_reason": "Cancelled by shop",
+            "cancelled_at": now,
+            "updated_at": now,
+        }, "$push": {"edit_history": entry}},
     )
     await dismiss_new_booking_alert(job["id"])
-    return await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+    fresh = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
+    await _email_shop_job_cancelled(fresh, shop)
+    return fresh
 
 # ---------- Jobs (dispatcher + field) ----------
 def annotate_at_risk(jobs: List[dict]) -> List[dict]:
@@ -2885,12 +2903,80 @@ def _reject_free_warranty(job: dict) -> None:
         raise HTTPException(400, "A free warranty redo is not billed.")
 
 
+def _merged_start(job: dict, fields: dict) -> datetime:
+    raw = fields.get("scheduled_start") or job.get("scheduled_start")
+    try:
+        start = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Invalid date and time.")
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return start
+
+
+def _shop_schedule_changed(before: dict, after: dict) -> bool:
+    keys = ("scheduled_start", "job_address", "job_lat", "job_lng", "calibration_type")
+    return any(values_differ(before.get(key), after.get(key)) for key in keys)
+
+
+async def _email_shop_job_updated(before: dict, after: dict, shop: dict) -> None:
+    """One shop email listing what changed. Held while shop mail is off."""
+    rows = shop_change_rows(before, after)
+    if not rows:
+        return
+    job_id = str(after.get("id") or "")
+    message = job_updated_email(
+        to=_shop_email(after, shop) or "",
+        reply_to=SEED_OWNER_EMAIL,
+        changes=rows,
+        reference=job_id[:8].upper(),
+        portal_url=_portal_job_url(job_id),
+    )
+    message["meta"] = {"job_id": after.get("id")}
+    await _send_booking_message(message, audience="shop")
+
+
+async def _email_shop_job_cancelled(job: dict, shop: dict) -> None:
+    job_id = str(job.get("id") or "")
+    message = job_cancelled_email(
+        to=_shop_email(job, shop) or "",
+        reply_to=SEED_OWNER_EMAIL,
+        when=_job_when(job),
+        window_end=job.get("scheduled_end"),
+        vehicle=_vehicle_line(job),
+        address=job.get("job_address") or "",
+        calibration=job.get("calibration_label") or job.get("calibration_type") or "",
+        price=job.get("price") or 0,
+        reference=job_id[:8].upper(),
+        portal_url=_portal_job_url(job_id),
+    )
+    message["meta"] = {"job_id": job.get("id")}
+    await _send_booking_message(message, audience="shop")
+
+
+async def _notify_shop_edit(before: dict, fresh: dict, shop: dict) -> None:
+    """Shop update mail, plus an owner alert when the edit now needs approval.
+
+    Owner edits do not call this. A save that changes nothing sends nothing.
+    """
+    await _email_shop_job_updated(before, fresh, shop)
+    if fresh.get("status") != "requested":
+        return
+    if before.get("status") == "requested" and not _shop_schedule_changed(before, fresh):
+        return
+    start = _job_when(fresh)
+    now = now_utc()
+    same_day = fresh.get("booking_kind") == "addon" or business_date(start) == business_date(now)
+    await email_owner_alert(fresh, shop, pending=True, same_day=same_day)
+
+
 async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
     """Write a job edit. Does not send SMS or email.
 
-    Status stays put unless the new time is before 8:00 AM or no longer fits
-    today's route without approval. Those become requested or booked. Driving,
-    on site, complete, cancelled, and declined are left alone.
+    For a shop, a new date, time, address, or service is checked like a new
+    booking. Arrivals before 8:00 AM, and same-day stops past the detour
+    limits, become requested. Driving, on site, complete, cancelled, and
+    declined keep their status. The caller sends any mail.
     """
     if "job_address" in fields and fields["job_address"] != (job.get("job_address") or ""):
         try:
@@ -2917,21 +3003,41 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
             raise HTTPException(400, str(exc))
     if "calibration_type" in fields:
         fields["calibration_label"] = STANDARD_PRICING[fields["calibration_type"]]["label"]
+        if (
+            who.get("kind") == "shop"
+            and "price" not in fields
+            and values_differ(job.get("calibration_type"), fields["calibration_type"])
+        ):
+            shop = await db.shops.find_one({"id": job.get("shop_id")}, {"_id": 0}) or {}
+            price = shop_price_for(shop, fields["calibration_type"])
+            fields["price"] = price
+            fields["calibration_price"] = price
     if "scheduled_start" in fields:
         new_start = datetime.fromisoformat(fields["scheduled_start"])
         if new_start.tzinfo is None:
             new_start = new_start.replace(tzinfo=timezone.utc)
-        fields["scheduled_end"] = shift_scheduled_end(job, new_start).isoformat()
-        previous = _job_when(job)
-        if business_date(new_start) != business_date(previous):
-            closed = await closed_day_message(business_date(new_start))
-            if closed:
-                raise HTTPException(400, closed)
+        if values_differ(job.get("scheduled_start"), fields["scheduled_start"]):
+            fields["scheduled_end"] = shift_scheduled_end(job, new_start).isoformat()
+        else:
+            fields.pop("scheduled_start", None)
     await _overlay_warranty(job, fields)
     changed = changed_keys(job, fields)
     if not changed:
         return job
-    route_touch = {"scheduled_start", "job_lat", "job_lng", "technician_id"} & set(changed)
+    schedule_keys = {"scheduled_start", "job_address", "job_lat", "job_lng", "calibration_type"}
+    schedule_changed = bool(schedule_keys & set(changed))
+    if schedule_changed:
+        merged_start = _merged_start(job, fields)
+        previous = _job_when(job)
+        date_moved = business_date(merged_start) != business_date(previous)
+        if date_moved or who.get("kind") == "shop":
+            closed = await closed_day_message(business_date(merged_start))
+            if closed:
+                raise HTTPException(400, closed)
+    route_keys = {"scheduled_start", "job_lat", "job_lng", "technician_id"}
+    if who.get("kind") == "shop":
+        route_keys.add("calibration_type")
+    route_touch = route_keys & set(changed)
     if route_touch:
         merged = {**job, **fields}
         try:
@@ -2950,6 +3056,9 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
             (merged.get("job_lat"), merged.get("job_lng")),
             siblings, allow_outside=(who.get("kind") == "owner"),
             duration=block_minutes(merged),
+            skip_same_day_cutoff=(
+                who.get("kind") == "shop" and "scheduled_start" not in changed
+            ),
         )
         if job.get("status") in ("booked", "requested"):
             if plan["status"] != job.get("status") or plan.get("approval_reason") != job.get("approval_reason"):

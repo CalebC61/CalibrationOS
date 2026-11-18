@@ -566,6 +566,38 @@ test("Cancelled & declined lists those jobs and Delete still asks before it remo
   expect(api.get.mock.calls.length).toBe(getsBefore);
 });
 
+test("a shop cancellation shows Cancelled by shop", async () => {
+  const shopCancelled = {
+    id: "job-shop-cancelled",
+    status: "cancelled",
+    shop_name: "Test Shop",
+    vehicle_year: 2021,
+    vehicle_make: "Ford",
+    vehicle_model: "F-150",
+    customer_first_name: "Riley",
+    customer_last_name: "Nguyen",
+    cancellation_reason: "Cancelled by shop",
+    scheduled_start: "2026-11-25T16:00:00Z",
+    price: 125,
+  };
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.includes("closed=true")) return Promise.resolve({ data: [shopCancelled] });
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [] });
+    if (path.includes("/documents")) return Promise.resolve({ data: [] });
+    if (path.includes("/dashboard/summary")) return summaryGet();
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/contractor-offers")) return Promise.resolve({ data: [] });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+
+  render(<Dashboard />);
+  fireEvent.click(await screen.findByTestId("closed-jobs-toggle"));
+  expect(await screen.findByTestId("closed-reason-job-shop-cancelled")).toHaveTextContent("Cancelled by shop");
+  expect(screen.getByTestId("closed-job-job-shop-cancelled")).toHaveTextContent("Cancelled");
+});
+
 test("dispatch shows a free warranty redo and does not offer a card charge", async () => {
   mockGets([], {
     ...job,
