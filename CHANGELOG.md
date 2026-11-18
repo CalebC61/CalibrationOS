@@ -15,6 +15,19 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Added — the owner can delete a job (2026-11-18)
+`DELETE /api/jobs/{job_id}` is owner-only. A shop portal login, a technician,
+and a contractor receive 403. The job row is removed, along with its documents,
+new-booking alerts, contractor offers, owner-action tokens, and a vehicle row
+no other job still uses. Xero and Stripe invoice rows stay on the invoices
+list. The call does not email, text, cancel, reschedule, or contact Xero or
+Stripe. `SHOP_EMAILS_ENABLED` and `BILLING_ENABLED` are unchanged.
+
+On the owner Dispatch dashboard, each job card has a Delete action beside
+Edit. The confirmation shows the vehicle, shop, and date, and names a linked
+Xero draft or Stripe invoice when the job has one. Cancel leaves the job.
+Yes, delete removes that card without reloading the page.
+
 ### Fixed — Complete files a usable Xero draft (2026-11-17)
 The signed post-scan on a real scan tool is a font-encoded PDF. `vin_from_pdf`
 now reads that text with pypdf, collapses whitespace, and keeps the 17-character

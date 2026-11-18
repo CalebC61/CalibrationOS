@@ -291,6 +291,23 @@ async def require_owner(tech=Depends(get_current_tech)):
         raise HTTPException(status_code=403, detail="Owner only")
     return tech
 
+async def require_owner_not_shop(token: Optional[str] = Depends(oauth2_scheme)):
+    """Owner only. A shop portal token is 403, the same as any other non-owner login."""
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if payload.get("kind") == "portal":
+        raise HTTPException(status_code=403, detail="Owner only")
+    tech = await db.technicians.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not tech:
+        raise HTTPException(status_code=401, detail="User not found")
+    if tech.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Owner only")
+    return tech
+
 def make_portal_token(shop_user_id: str) -> str:
     payload = {
         "sub": shop_user_id, "kind": "portal",
@@ -3342,6 +3359,52 @@ async def cancel_job(job_id: str, body: CancelIn, tech=Depends(require_owner)):
     fresh = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     await email_shop_event(fresh, await _shop_for_job(fresh), "cancelled")
     return fresh
+
+# Rows that exist only because of a job. Invoice rows are not in this list:
+# a Xero draft or Stripe invoice stays in its provider and on the invoices page.
+_JOB_CHILD_COLLECTIONS = (
+    "documents",
+    "new_booking_alerts",
+    "contractor_offers",
+    "owner_action_tokens",
+)
+
+
+async def _drop_job_children(job_id: str) -> None:
+    for name in _JOB_CHILD_COLLECTIONS:
+        store = getattr(db, name, None)
+        if store is None or not hasattr(store, "delete_many"):
+            continue
+        await store.delete_many({"job_id": job_id})
+
+
+@api.delete("/jobs/{job_id}")
+async def delete_job(job_id: str, tech=Depends(require_owner_not_shop)):
+    """Remove a job from CalibrationOS.
+
+    This is not cancel or reschedule. It sends no email, SMS, or other
+    notification, and it does not call Xero or Stripe. Invoice records stay
+    so the invoices list still shows a draft or Stripe invoice that lives
+    outside this database.
+    """
+    job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    await _drop_job_children(job_id)
+    vehicle_id = job.get("vehicle_id")
+    await db.jobs.delete_one({"id": job_id})
+    if vehicle_id:
+        vehicles = getattr(db, "vehicles", None)
+        if vehicles is not None and hasattr(vehicles, "delete_many"):
+            if hasattr(db.jobs, "count_documents"):
+                still_used = await db.jobs.count_documents({"vehicle_id": vehicle_id}) > 0
+            else:
+                still_used = bool(await db.jobs.find(
+                    {"vehicle_id": vehicle_id}, {"_id": 0, "id": 1},
+                ).to_list(1000))
+            if not still_used:
+                await vehicles.delete_many({"id": vehicle_id})
+    return {"deleted": True, "id": job_id}
 
 # ---------- Real document upload (replaces mocked filename) ----------
 @api.post("/jobs/{job_id}/upload-document")

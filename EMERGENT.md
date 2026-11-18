@@ -22,6 +22,12 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): the owner can delete a job.** `DELETE /api/jobs/{id}`
+  is owner-only (shop, technician, and contractor logins are 403). It removes
+  the job and its documents, alerts, offers, and action tokens. It does not
+  email, text, cancel, or call Xero or Stripe. Invoice rows stay. Dispatch
+  shows Delete with a confirmation. No new env vars. `SHOP_EMAILS_ENABLED`
+  and `BILLING_ENABLED` are unchanged.
 - **Session (2026-11-17): Complete can file the Xero draft.** Post-scan VINs are
   read with pypdf (the old stream reader is the fallback). Dispatch Complete
   asks for calibration type, POP, and a signed PDF before it completes the job.
