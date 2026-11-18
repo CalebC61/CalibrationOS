@@ -1,20 +1,26 @@
 import { useEffect, useState } from "react";
 import { portalApi, setPortalAuth, getPortalAuth } from "../lib/portalApi";
 import PortalShell from "../components/PortalShell";
-import { CardSetup, ChargeAcceptance, CHARGE_ACCEPTANCE_FALLBACK } from "../components/CardSetup";
+import { CardSetup, CHARGE_ACCEPTANCE_FALLBACK } from "../components/CardSetup";
 import AgreementView from "../components/AgreementView";
 
 export default function PortalSettings() {
   const [me, setMe] = useState(null);
   const [clientSecret, setClientSecret] = useState("");
   const [cardError, setCardError] = useState("");
+  const [termsError, setTermsError] = useState("");
   const [needsAcceptance, setNeedsAcceptance] = useState(false);
   const [acceptance, setAcceptance] = useState(CHARGE_ACCEPTANCE_FALLBACK);
   const [accepting, setAccepting] = useState(false);
   const [agreement, setAgreement] = useState(null);
   const [cardNote, setCardNote] = useState("");
 
-  function load() { return portalApi.get("/portal/me").then(r => setMe(r.data)); }
+  function load() {
+    return portalApi.get("/portal/me").then(r => {
+      setMe(r.data);
+      if (r.data.setup?.accepted) setNeedsAcceptance(false);
+    });
+  }
   useEffect(() => {
     load();
     portalApi.get("/public/agreement").then(r => {
@@ -42,17 +48,19 @@ export default function PortalSettings() {
     const last4 = shopUser.card_last4 || "";
     setCardNote(`${brand} ending in ${last4} is now the card on file. New charges use this card.`);
     if (!shopUser.charge_authorization_accepted_at) setNeedsAcceptance(true);
-    else load();
+    load();
   }
 
   async function accept() {
     setAccepting(true);
+    setTermsError("");
     try {
       await portalApi.post("/portal/accept-charge", { accepted: true });
       setNeedsAcceptance(false);
       load();
     } catch (err) {
-      setCardError(err.response?.data?.detail || "Could not save that.");
+      const detail = err.response?.data?.detail;
+      setTermsError(typeof detail === "string" ? detail : "Could not save that.");
     } finally {
       setAccepting(false);
     }
@@ -60,6 +68,10 @@ export default function PortalSettings() {
 
   if (!me) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
   const su = me.shop_user;
+  const setup = me.setup || {};
+  const showChargeTerms = !setup.accepted && !setup.suspended && !setup.charge_failed && (
+    (setup.has_card && setup.signed) || needsAcceptance
+  );
 
   return (
     <PortalShell>
@@ -106,6 +118,17 @@ export default function PortalSettings() {
         )}
       </div>
 
+      {showChargeTerms && (
+        <div className="surface" style={{ padding: 20, marginBottom: 16, maxWidth: 640 }} data-testid="charge-terms">
+          <h2 className="h2" style={{ fontSize: "1.35rem", marginBottom: 12 }}>Charge terms</h2>
+          <p style={{ lineHeight: 1.55, margin: "0 0 16px" }}>{acceptance}</p>
+          <button className="btn btn-primary" type="button" disabled={accepting} onClick={accept} data-testid="accept-charge-terms">
+            {accepting ? "Saving…" : "I accept the charge terms"}
+          </button>
+          {termsError && <div style={{ color: "var(--red)", marginTop: 12 }}>{termsError}</div>}
+        </div>
+      )}
+
       <div className="surface" style={{ padding: 20, maxWidth: 640 }}>
         <h2 className="h2" style={{ fontSize: "1.35rem", marginBottom: 12 }}>Service agreement</h2>
         <AgreementView sections={agreement?.sections} paragraphs={agreement?.paragraphs} />
@@ -116,7 +139,6 @@ export default function PortalSettings() {
           {su.charge_authorization_accepted_at && <div style={{ marginTop: 8 }}>Card charge accepted {new Date(su.charge_authorization_accepted_at).toLocaleString()}.</div>}
         </div>
       </div>
-      {needsAcceptance && <ChargeAcceptance text={acceptance} busy={accepting} onAccept={accept} />}
     </PortalShell>
   );
 }

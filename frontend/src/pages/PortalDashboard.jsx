@@ -56,7 +56,9 @@ export default function PortalDashboard() {
               <div style={{ fontWeight: 600 }}>{setup.suspended ? "Booking is paused" : "Booking is closed"}</div>
               <div className="muted" style={{ fontSize: 13 }}>{setup.message}</div>
             </div>
-            <Link to="/portal/settings" className="btn btn-primary" data-testid="add-card-cta">Update card</Link>
+            <Link to="/portal/settings" className="btn btn-primary" data-testid="add-card-cta">
+              {setup.has_card && !setup.charge_failed && !setup.accepted ? "Accept charge terms" : "Update card"}
+            </Link>
           </div>
         </div>
       )}

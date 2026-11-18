@@ -15,6 +15,36 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Fixed — invited shops can accept charge terms and then book (2026-11-18)
+Self-signup writes `charge_authorization_accepted_at` on the shop and the shop
+user when the shop accepts the charge terms and a card is saved. Invite
+registration saved the agreement signature and left that timestamp empty. The
+charge-terms step was a modal that appeared only in the same sitting as the
+card save. A shop that signed the invite, left before the card, and later saved
+a card in Settings had an active card and a signed agreement, and booking stayed
+closed on "Accept the charge terms in Settings before booking." Settings had no
+control for that.
+
+The invite form now requires the same charge-terms checkbox signup shows.
+Register stores that acceptance (`charge_terms_accepted_at`, the terms text,
+IP, and user agent) and still leaves `charge_authorization_accepted_at` empty
+until a card exists. Saving the card then writes the timestamp on the shop and
+the user, the same fields signup writes when the card is part of create. The
+agreement signature alone does not count, and shops already on file are not
+backfilled. A shop that already has a signed agreement and an active card, and
+is missing that timestamp, sees the terms text and "I accept the charge terms"
+on Settings. That posts the existing `/portal/accept-charge`. Booking and the
+day map send that shop to accept the terms. A shop with no valid card is still
+told to update the card.
+
+`POST /api/portal/book` already returned 403 from the booking gate. Tests now
+cover a missing card, an expired card, a removed card, and missing charge
+terms, and they check that accepting the terms lets the request past that gate.
+`/requests` (New shops) still lists only shops with `signup_source: self_serve`.
+An owner invite does not set that, and the page says those rows created their
+own accounts. That is intended. No new env var. `BILLING_ENABLED` and
+`SHOP_EMAILS_ENABLED` are unchanged.
+
 ### Fixed — shop job edits follow the booking rules, and shop cancel names a reason (2026-11-18)
 A shop edit that changes the date, time, address, or service is checked the
 same way as a new booking. The time has to be free, the day has to be open

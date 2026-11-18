@@ -270,6 +270,17 @@ backend:
         - working: true
           agent: "main"
           comment: "Verified all three states: key set → 5 /api/assist routes registered + integrations/status.assist.mode=live; no key → 0 routes (404s); key set but ASSIST_MODULE_ENABLED=false → 0 routes."
+  - task: "Invite charge terms are recorded when the card is saved"
+    implemented: true
+    working: true
+    file: "backend/server.py, backend/tests/test_invite_charge_terms.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Invite register requires charge_accepted and stores the terms text without the booking timestamp. Saving the card writes charge_authorization_accepted_at on the shop and the user. A signed agreement with no charge acceptance does not. POST /portal/book returns 403 for a missing, expired, or removed card, and for missing charge terms. Accepting the terms gets past that 403. Owner invites stay off GET /new-shops."
 
 frontend:
   - task: "App error screen reports crashes"
@@ -360,6 +371,17 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "New Assist.jsx floating chat widget mounted in Shell.jsx for the owner role only: launcher bubble → chat panel with suggestion chips, user/assistant messages, and confirmation cards (Confirm/Cancel wired to /api/assist/actions/{id}/confirm|cancel). Hides itself entirely when integrations/status reports assist disabled or REACT_APP_ASSIST_MODULE_ENABLED=false. Assist status row added to Settings → Integrations. Backend flows fully verified over HTTP; the widget itself has not been visually verified in a browser (CRA build only resolves inside Emergent) — needs UI testing."
+  - task: "Settings accepts charge terms for a signed shop with a card"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/PortalSettings.jsx, frontend/src/pages/PortalRegister.jsx, frontend/src/pages/PortalBook.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Invite setup shows the signup charge-terms text and will not continue without it. The register body sends charge_accepted. A card save that already recorded acceptance opens booking. Settings shows that same text and I accept the charge terms when the shop is signed, has a card, and has not accepted. Booking says Accept charge terms in that case and Update card when the card is missing. Covered by PortalRegister.test.jsx, PortalSettings.test.jsx, and PortalBook.test.jsx. Not clicked in a browser against the live API."
 
 metadata:
   created_by: "main_agent"
