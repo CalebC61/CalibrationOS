@@ -66,13 +66,14 @@ See `CHANGELOG.md` for the full log. Current state:
   on a job scheduled for today in America/Phoenix. Cancel, Complete, Xero
   drafts, billing, and the shop portal are unchanged. `BILLING_ENABLED` and
   `SHOP_EMAILS_ENABLED` are unchanged. No new env vars.
-- **Session (2026-11-18): day-before shop reminder, and booking address suggestions.**
-  At 5:00 PM America/Phoenix the existing background loop emails each shop that
-  has jobs tomorrow. Cancelled and declined jobs are skipped. The mail uses the
-  shop path, so it stays in Email preview while `SHOP_EMAILS_ENABLED` is false.
-  One marker per shop and day blocks a second send. No new env var.
-  `BILLING_ENABLED` is unchanged. On `/portal/book`, editing the prefilled shop
-  address shows Places suggestions. The Phoenix service-area check is unchanged.
+- **Session (2026-11-18): no nightly shop reminder. One booking confirmation.**
+  The 5:00 PM Phoenix day-before email is removed. A shop gets one confirmation
+  when a portal booking is booked, or when the owner approves a pending or
+  same-day job. It includes the date, arrival window, vehicle, address, ref,
+  and a link to the job in the portal. It stays in Email preview while
+  `SHOP_EMAILS_ENABLED` is false. No new env var. `BILLING_ENABLED` is unchanged.
+  On `/portal/book`, editing the prefilled shop address still shows Places
+  suggestions. The Phoenix service-area check is unchanged.
 - **Session (2026-11-18): 30-day warranty redos.** A job can be a redo of one
   of that shop's completed jobs. Within 30 Phoenix days of the original
   completion the redo is $0, and Complete skips the Xero draft and the card

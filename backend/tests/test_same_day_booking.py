@@ -332,3 +332,82 @@ def test_over_limit_can_be_hidden_and_today_closes_at_the_cutoff(monkeypatch):
             assert "1:00 PM" in closed.json()["message"]
 
     asyncio.run(run())
+
+
+def test_portal_booking_and_approval_each_send_one_confirmation(monkeypatch):
+    """A confirmed portal booking emails once. A pending job emails once, on approval."""
+    db = _db()
+    db.shops.docs[0]["contact_email"] = "shop@glass.example"
+    db.shop_users = _Store()
+    db.shop_users.docs.append({
+        "id": "su-1", "shop_id": "shop-1", "is_active": True, "email": "shop@glass.example",
+    })
+    db.email_outbox = _Store()
+    texts, emails = _install(monkeypatch, db, NOW)
+    monkeypatch.setenv("SHOP_EMAILS_ENABLED", "false")
+    monkeypatch.setattr(server, "FRONTEND_URL", "https://www.thecalibrationcrew.us")
+    day = datetime(2026, 11, 13).date()
+    seven_thirty, _ = zone_window(day, time(7, 30), time(17, 0))
+    ten, _ = zone_window(day, time(10, 0), time(17, 0))
+    portal = {"Authorization": f"Bearer {server.make_portal_token('su-1')}"}
+
+    def confirmations():
+        return [row for row in db.email_outbox.docs if row.get("kind") == "booking_confirmation"]
+
+    async def run():
+        async with _client() as client:
+            pending = await client.post("/api/portal/book", headers=portal, json={
+                **PAYLOAD, "job_address": "Surprise, AZ", "scheduled_start": seven_thirty.isoformat(),
+            })
+            assert pending.status_code == 200, pending.text
+            assert pending.json()["status"] == "requested"
+            assert confirmations() == []
+            assert texts == []
+            assert emails
+            owner = server.make_token("caleb", "owner")
+            approved = await client.post(
+                f"/api/jobs/{pending.json()['job_id']}/approve",
+                headers={"Authorization": f"Bearer {owner}"},
+            )
+            assert approved.status_code == 200, approved.text
+            assert len(confirmations()) == 1
+            again = await client.post(
+                f"/api/jobs/{pending.json()['job_id']}/approve",
+                headers={"Authorization": f"Bearer {owner}"},
+            )
+            assert again.status_code == 400
+            assert len(confirmations()) == 1
+            booked = await client.post("/api/portal/book", headers=portal, json={
+                **PAYLOAD, "job_address": "Mesa, AZ", "scheduled_start": ten.isoformat(),
+            })
+            assert booked.status_code == 200, booked.text
+            assert booked.json()["status"] == "booked"
+            assert booked.json()["requires_approval"] is False
+            assert len(confirmations()) == 2
+            repeat = await server.email_shop_confirmation(
+                next(job for job in db.jobs.docs if job["id"] == booked.json()["job_id"]),
+                db.shops.docs[0],
+            )
+            assert repeat is None
+            assert len(confirmations()) == 2
+            return pending.json(), booked.json()
+
+    pending, booked = asyncio.run(run())
+    kinds = {row["kind"] for row in db.email_outbox.docs}
+    assert "day_before_reminder" not in kinds
+    assert "booking_approved" not in kinds
+    held = {row["body"]: row for row in confirmations()}
+    early = next(body for body in held if "Surprise, AZ" in body)
+    later = next(body for body in held if "Mesa, AZ" in body)
+    assert "We have this job." in early
+    assert "Fri, Nov 13, 2026" in early
+    assert "7:30–7:50 AM Phoenix" in early
+    assert "2022 Honda Civic" in early
+    assert pending["booking_reference"] in early
+    assert f"/portal/jobs/{pending['job_id']}" in early
+    assert "We have this job." in later
+    assert "10:00–10:20 AM Phoenix" in later
+    assert booked["booking_reference"] in later
+    assert f"https://www.thecalibrationcrew.us/portal/jobs/{booked['job_id']}" in later
+    assert all(row["to"] == "shop@glass.example" for row in confirmations())
+    assert all(row["delivered"] is False for row in confirmations())

@@ -156,7 +156,6 @@ from error_alerts import (
     CLIENT_ERROR_IP_LIMIT, CLIENT_ERROR_MAX_BYTES, CLIENT_ERROR_WINDOW_SECONDS,
     prepare_client_report, prepare_server_alert,
 )
-from day_before import next_reminder_delay, run_reminders
 from days_off import closure_message, holiday_records, jobs_to_flag, parse_range
 from owner_links import assess_owner_link, mark_used, mint_owner_link, token_claims
 from business_time import (
@@ -2153,19 +2152,62 @@ async def _send_booking_message(message: dict | None, audience: str = "shop"):
     )
 
 
-async def email_shop_confirmation(job: dict, shop: dict | None, pending: bool):
+def _portal_job_url(job_id: str) -> str:
+    if not job_id:
+        return ""
+    try:
+        return app_link(FRONTEND_URL, f"/portal/jobs/{job_id}")
+    except ValueError:
+        return f"/portal/jobs/{job_id}"
+
+
+async def email_shop_confirmation(job: dict, shop: dict | None):
+    """One confirmation that we have the job. A second call for the same job does not send."""
+    job_id = str(job.get("id") or "")
+    if await _confirmation_already_sent(job_id):
+        return None
     message = booking_confirmation_email(
         to=_shop_email(job, shop) or "",
         reply_to=SEED_OWNER_EMAIL,
         when=_job_when(job),
+        window_end=job.get("scheduled_end"),
         vehicle=_vehicle_line(job),
         address=job.get("job_address") or "",
         calibration=job.get("calibration_label") or job.get("calibration_type") or "",
         price=job.get("price") or 0,
-        pending=pending,
+        reference=job_id[:8].upper(),
+        portal_url=_portal_job_url(job_id),
     )
     message["meta"] = {"job_id": job.get("id")}
-    return await _send_booking_message(message, audience="shop")
+    result = await _send_booking_message(message, audience="shop")
+    if result is not None and job_id:
+        await _mark_confirmation_sent(job_id)
+    return result
+
+
+async def _confirmation_already_sent(job_id: str) -> bool:
+    jobs = getattr(db, "jobs", None)
+    if jobs is None or not job_id:
+        return False
+    try:
+        row = await jobs.find_one({"id": job_id}, {"_id": 0, "booking_confirmation_sent_at": 1})
+    except Exception as exc:
+        logger.warning("booking confirmation lookup failed: %s", exc)
+        return False
+    return bool(row and row.get("booking_confirmation_sent_at"))
+
+
+async def _mark_confirmation_sent(job_id: str) -> None:
+    jobs = getattr(db, "jobs", None)
+    if jobs is None or not job_id:
+        return
+    try:
+        await jobs.update_one(
+            {"id": job_id},
+            {"$set": {"booking_confirmation_sent_at": iso(now_utc())}},
+        )
+    except Exception as exc:
+        logger.warning("booking confirmation marker failed: %s", exc)
 
 
 async def _issue_owner_link(job_id: str, action: str) -> dict:
@@ -2227,9 +2269,16 @@ async def _shop_for_job(job: dict) -> dict | None:
 
 
 async def notify_booking_approval(job: dict, event: str) -> None:
-    """Email the shop when the owner approves or declines. Does not text."""
-    if event in ("approved", "declined"):
-        await email_shop_event(job, await _shop_for_job(job), event)
+    """Email the shop when the owner approves or declines. Does not text.
+
+    Approval sends the same booking confirmation as a portal booking, once.
+    Decline still sends the declined note.
+    """
+    shop = await _shop_for_job(job)
+    if event == "approved":
+        await email_shop_confirmation(job, shop)
+    elif event == "declined":
+        await email_shop_event(job, shop, event)
     logger.info(
         "[NOTIFY] booking %s job=%s status=%s kind=%s reason=%s",
         event, job.get("id"), job.get("status"), job.get("booking_kind"), job.get("approval_reason"),
@@ -2590,7 +2639,7 @@ async def _book_job(shop: dict | None, data: BookingIn):
     await db.jobs.insert_one(job.copy())
 
     pending = job["status"] == "requested"
-    shop_mail = await email_shop_confirmation(job, shop, pending=pending)
+    shop_mail = None if pending else await email_shop_confirmation(job, shop)
     same_day = job.get("booking_kind") == "addon" or business_date(start_dt) == business_date(now)
     if owner_needs_alert(start_dt, job.get("booking_kind") or "", now):
         await email_owner_alert(job, shop, pending=pending, same_day=same_day)
@@ -2948,12 +2997,12 @@ async def patch_job(job_id: str, body: JobEditIn, tech=Depends(require_owner)):
 
 @api.post("/jobs/{job_id}/approve")
 async def approve_requested_job(job_id: str, tech=Depends(require_owner)):
-    """Owner confirms a time that was not auto-confirmed. No SMS or email."""
+    """Owner confirms a held time. The shop gets one booking confirmation. No SMS."""
     return await _decide_requested_job(job_id, tech, approve=True)
 
 @api.post("/jobs/{job_id}/decline")
 async def decline_requested_job(job_id: str, tech=Depends(require_owner)):
-    """Owner turns down a held time and frees it. No SMS or email."""
+    """Owner turns down a held time and frees it. The shop gets a declined note. No SMS."""
     return await _decide_requested_job(job_id, tech, approve=False)
 
 async def _decide_requested_job(job_id: str, tech: dict, *, approve: bool) -> dict:
@@ -6050,31 +6099,6 @@ async def _late_fee_loop():
         await asyncio.sleep(60 * 60)
 
 
-async def run_day_before_reminders(now: datetime | None = None) -> dict:
-    """Email each shop tomorrow's jobs. Shop mail is held while SHOP_EMAILS_ENABLED is off."""
-    return await run_reminders(
-        db,
-        now=now or now_utc(),
-        send=lambda message: _send_booking_message(message, "shop"),
-        portal_url=app_link(FRONTEND_URL, "/portal"),
-        reply_to=owner_notify_email(),
-    )
-
-
-async def _day_before_loop():
-    """Same in-process loop as the late-fee sweep. Wakes at 5:00 PM Phoenix."""
-    await asyncio.sleep(30)
-    while True:
-        delay = 300.0
-        try:
-            result = await run_day_before_reminders()
-            delay = next_reminder_delay(now_utc(), failed=int(result.get("failed") or 0))
-        except Exception:
-            logger.exception("[REMIND] day-before reminder failed")
-            delay = 300.0
-        await asyncio.sleep(delay)
-
-
 async def backfill_shop_cards() -> int:
     """Copy each billing user's card onto the shop once. Safe to run on every boot."""
     shops_col = getattr(db, "shops", None)
@@ -6106,7 +6130,6 @@ async def startup():
     except Exception:
         logger.exception("[BILLING] card backfill failed")
     asyncio.create_task(_late_fee_loop())
-    asyncio.create_task(_day_before_loop())
     # Essentials rows live up to 7 days. Pro rows set expires_at two hours out and the
     # reader ignores them after that. Drop the old 2-day cached_at TTL if it is still there,
     # because it would delete a 7-day row early. A conflicting drop is not fatal.
@@ -6216,7 +6239,7 @@ async def confirm_owner_action(token: str):
         message = "This job can no longer be declined."
     fresh = await db.jobs.find_one({"id": job["id"]}, {"_id": 0})
     if changed:
-        await email_shop_event(fresh, await _shop_for_job(fresh), "approved" if action == "approve" else "declined")
+        await notify_booking_approval(fresh, "approved" if action == "approve" else "declined")
     return {"ok": True, "message": message, "job": _owner_action_job(fresh or job)}
 
 

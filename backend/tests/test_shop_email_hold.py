@@ -91,7 +91,7 @@ def test_shop_confirmation_and_status_mail_do_not_call_resend_while_off(monkeypa
     sent = _install(monkeypatch, shop_on=False, owner_on=True)
 
     async def run():
-        await server.email_shop_confirmation(JOB, SHOP, pending=False)
+        await server.email_shop_confirmation(JOB, SHOP)
         for event in ("approved", "declined", "rescheduled", "cancelled"):
             await server.email_shop_event(JOB, SHOP, event)
 
@@ -114,7 +114,7 @@ def test_owner_alert_still_calls_resend_while_shop_mail_is_off(monkeypatch):
 
     async def run():
         await server.email_owner_alert(JOB, SHOP, pending=True, same_day=False)
-        await server.email_shop_confirmation(JOB, SHOP, pending=True)
+        await server.email_shop_confirmation(JOB, SHOP)
 
     asyncio.run(run())
     assert len(sent) == 1
@@ -125,7 +125,7 @@ def test_owner_alert_still_calls_resend_while_shop_mail_is_off(monkeypatch):
 
 def test_shop_mail_calls_resend_only_after_the_flag_is_on(monkeypatch):
     sent = _install(monkeypatch, shop_on=True, owner_on=True)
-    asyncio.run(server.email_shop_confirmation(JOB, SHOP, pending=False))
+    asyncio.run(server.email_shop_confirmation(JOB, SHOP))
     assert len(sent) == 1
     assert sent[0]["to"] == ["shop@glass.example"]
     assert server.db.email_outbox.docs == []

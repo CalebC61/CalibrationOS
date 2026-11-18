@@ -116,17 +116,17 @@ backend:
         - working: true
           agent: "main"
           comment: "GET /api/health pings Mongo and returns 503 {status:unavailable} when the ping fails or exceeds ~2.5s, and 200 {status:ok} when it answers. The body has no connection string. Unhandled exceptions return 500 and schedule one Resend alert via send_email even when SHOP_EMAILS_ENABLED is false. ALERT_EMAIL, else OWNER_EMAIL, else ADMIN_EMAIL. No address means no mail. Same error once per 15 minutes, 10 per hour. POST /api/client-errors is unauthenticated, 4KB cap, 8/minute per IP, and reuses that mail. Secrets, card numbers, auth headers, and request bodies are not in the note. 404 and 422 do not email."
-  - task: "Day-before shop reminder at 5:00 PM Phoenix"
+  - task: "Day-before shop reminder removed; one booking confirmation"
     implemented: true
     working: true
-    file: "backend/day_before.py, backend/server.py, backend/tests/test_day_before.py"
+    file: "backend/booking_mail.py, backend/server.py, backend/tests/test_booking_mail.py, backend/tests/test_same_day_booking.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
         - working: true
           agent: "main"
-          comment: "The in-process loop (same one that runs late fees) sends one shop email per shop for tomorrow's Phoenix jobs at or after 5:00 PM Phoenix. Cancelled and declined jobs are omitted. A marker in day_before_reminders blocks a second send. SHOP_EMAILS_ENABLED stays false, so the note is held in email_outbox and Resend is not called. No new env var. BILLING_ENABLED is unchanged."
+          comment: "The 5:00 PM Phoenix day-before loop, template, and day_before_reminders markers are removed. A portal booking that is booked immediately holds one booking_confirmation in email_outbox. A pending job holds none until the owner approves it, from dispatch or the owner link, and that approval sends the same confirmation once. The note has the Phoenix date, arrival window, vehicle, address, ref, and /portal/jobs/{id} link. SHOP_EMAILS_ENABLED stays false, so Resend is not called. BILLING_ENABLED is unchanged. No new env var."
   - task: "Xero draft on job complete matches the hand-built invoice"
     implemented: true
     working: true
