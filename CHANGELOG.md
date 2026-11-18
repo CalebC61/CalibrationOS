@@ -15,6 +15,34 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Added — day-before reminder for shops (2026-11-18)
+Each evening at 5:00 PM America/Phoenix, every shop with jobs the next Phoenix
+day gets one email. It lists each job's vehicle, customer, address, calibration
+type, and estimated arrival (the scheduled start through the scheduled end,
+Phoenix time), and a link to the shop portal. Cancelled and declined jobs are
+left out. A shop with only those jobs gets no email.
+
+The note goes through the same shop mail path as a booking confirmation. While
+`SHOP_EMAILS_ENABLED` is false, which is still the default, it is stored for
+Email preview and Resend is not called. `day_before_reminders` keeps one marker
+per shop and Phoenix day, so a second pass does not send again. If the send
+throws, that shop's marker is removed and the loop retries in five minutes.
+
+The pass uses the in-process loop that already runs the late-fee sweep. It
+sleeps until 5:00 PM Phoenix. If the process is down at 5:00 and comes back
+later that evening, it still sends, until midnight. No new environment
+variable. `BILLING_ENABLED` is unchanged.
+
+### Fixed — address suggestions when the booking address is already filled (2026-11-18)
+`/portal/book` starts with the shop's address. That box was plain text, so
+editing it never offered a Google suggestion. The Places widget also hides its
+list after a value is written onto it. The field now asks the Places
+autocomplete data for suggestions on every edit, whether or not the shop
+address was already there. A picked suggestion still fills the street. "In our
+Phoenix service area" still follows the shop-address shortcut and the geocode
+check, including while the address is being typed. Without
+`REACT_APP_GOOGLE_MAPS_API_KEY`, it stays a typed address.
+
 ### Added — 30-day warranty redos (2026-11-18)
 Every recalibration can be tied to an earlier completed job (`warranty_of_job_id`).
 The shop portal booking form has an optional "This is a redo of a past job"

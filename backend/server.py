@@ -150,6 +150,7 @@ from booking_mail import (
     booking_confirmation_email, mail_route, normalize_us_phone, owner_alert_email,
     owner_needs_alert, shop_emails_enabled, shop_event_email,
 )
+from day_before import next_reminder_delay, run_reminders
 from days_off import closure_message, holiday_records, jobs_to_flag, parse_range
 from owner_links import assess_owner_link, mark_used, mint_owner_link, token_claims
 from business_time import (
@@ -6154,6 +6155,31 @@ async def _late_fee_loop():
         await asyncio.sleep(60 * 60)
 
 
+async def run_day_before_reminders(now: datetime | None = None) -> dict:
+    """Email each shop tomorrow's jobs. Shop mail is held while SHOP_EMAILS_ENABLED is off."""
+    return await run_reminders(
+        db,
+        now=now or now_utc(),
+        send=lambda message: _send_booking_message(message, "shop"),
+        portal_url=app_link(FRONTEND_URL, "/portal"),
+        reply_to=owner_notify_email(),
+    )
+
+
+async def _day_before_loop():
+    """Same in-process loop as the late-fee sweep. Wakes at 5:00 PM Phoenix."""
+    await asyncio.sleep(30)
+    while True:
+        delay = 300.0
+        try:
+            result = await run_day_before_reminders()
+            delay = next_reminder_delay(now_utc(), failed=int(result.get("failed") or 0))
+        except Exception:
+            logger.exception("[REMIND] day-before reminder failed")
+            delay = 300.0
+        await asyncio.sleep(delay)
+
+
 async def backfill_shop_cards() -> int:
     """Copy each billing user's card onto the shop once. Safe to run on every boot."""
     shops_col = getattr(db, "shops", None)
@@ -6185,6 +6211,7 @@ async def startup():
     except Exception:
         logger.exception("[BILLING] card backfill failed")
     asyncio.create_task(_late_fee_loop())
+    asyncio.create_task(_day_before_loop())
     # Essentials rows live up to 7 days. Pro rows set expires_at two hours out and the
     # reader ignores them after that. Drop the old 2-day cached_at TTL if it is still there,
     # because it would delete a 7-day row early. A conflicting drop is not fatal.

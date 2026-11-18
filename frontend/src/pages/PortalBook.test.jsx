@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { resetPlacesLoader } from "../components/AddressField";
 
 jest.mock("react-router-dom", () => ({
   useNavigate: () => jest.fn(),
@@ -26,6 +27,9 @@ const shop = {
 };
 
 beforeEach(() => {
+  resetPlacesLoader();
+  delete window.google;
+  delete process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
   portalApi.get.mockImplementation((url) => {
     if (String(url).includes("/portal/me")) {
       return Promise.resolve({ data: { shop, setup: { allowed: true } } });
@@ -55,6 +59,52 @@ test("a changed address is checked while typing, before the field loses focus", 
   fireEvent.change(screen.getByTestId("b-date"), { target: { value: "2026-11-18" } });
   fireEvent.click(await screen.findByTestId("b-slot-2026-11-18T16:00:00Z"));
   expect(screen.getByTestId("b-next")).not.toBeDisabled();
+});
+
+test("editing the prefilled shop address shows suggestions and keeps the service-area check", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  const fetchSuggestions = jest.fn(async ({ input }) => ({
+    suggestions: [{
+      placePrediction: {
+        text: { text: input },
+        toPlace() {
+          return {
+            fetchFields: async () => {},
+            formattedAddress: "200 Other St, Mesa, AZ 85201, USA",
+            id: "ChIJmesa",
+            location: { lat: () => 33.42, lng: () => -111.83 },
+          };
+        },
+      },
+    }],
+  }));
+  window.google = {
+    maps: {
+      importLibrary: jest.fn(async () => ({
+        AutocompleteSuggestion: { fetchAutocompleteSuggestions: fetchSuggestions },
+      })),
+    },
+  };
+
+  render(<PortalBook />);
+  const address = await screen.findByTestId("b-addr");
+  await waitFor(() => expect(address.getAttribute("data-address-mode")).toBe("places"));
+  expect(address).toHaveValue(shop.address);
+  expect(screen.getByText("In our Phoenix service area.")).toBeInTheDocument();
+  expect(fetchSuggestions).not.toHaveBeenCalled();
+
+  fireEvent.change(address, { target: { value: "200 Other St, Mesa, AZ" } });
+  expect(screen.queryByText("In our Phoenix service area.")).not.toBeInTheDocument();
+  expect(screen.getByTestId("b-date")).toBeDisabled();
+  const option = await screen.findByRole("option");
+  expect(option).toHaveTextContent("200 Other St, Mesa, AZ");
+  expect(fetchSuggestions).toHaveBeenCalledWith(expect.objectContaining({
+    input: "200 Other St, Mesa, AZ",
+  }));
+
+  await waitFor(() => expect(screen.getByText("In our Phoenix service area.")).toBeInTheDocument());
+  expect(portalApi.post).toHaveBeenCalledWith("/geocode", { address: "200 Other St, Mesa, AZ" });
+  expect(screen.getByTestId("b-date")).not.toBeDisabled();
 });
 
 test("a redo of a past job is optional and is sent with that job", async () => {

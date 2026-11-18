@@ -105,6 +105,17 @@
 user_problem_statement: "Step 1 — make Xero invoicing real (OAuth + invoice + PDF attach + status poll), credential-optional with graceful fallback to the existing mock; target the Xero Demo Company first. Module 9 — build out the Partner Growth Engine (Power Connector 5+50+100 CRM + 3-D introductions) from its inert scaffold into a real, flagged-on v1; reels explicitly deferred (no video-generation capability available). Module 8 — a natural-language AI assistant built into the admin page that can DO anything on the admin surface by plain-English prompting, with reads answering instantly and every real action gated behind an owner confirmation; scoped to in-process Gemini (google-genai) rather than the original Cloud Run/ADK/Postgres concept."
 
 backend:
+  - task: "Day-before shop reminder at 5:00 PM Phoenix"
+    implemented: true
+    working: true
+    file: "backend/day_before.py, backend/server.py, backend/tests/test_day_before.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "The in-process loop (same one that runs late fees) sends one shop email per shop for tomorrow's Phoenix jobs at or after 5:00 PM Phoenix. Cancelled and declined jobs are omitted. A marker in day_before_reminders blocks a second send. SHOP_EMAILS_ENABLED stays false, so the note is held in email_outbox and Resend is not called. No new env var. BILLING_ENABLED is unchanged."
   - task: "Xero draft on job complete matches the hand-built invoice"
     implemented: true
     working: true
@@ -250,6 +261,17 @@ backend:
           comment: "Verified all three states: key set → 5 /api/assist routes registered + integrations/status.assist.mode=live; no key → 0 routes (404s); key set but ASSIST_MODULE_ENABLED=false → 0 routes."
 
 frontend:
+  - task: "Portal booking address suggestions when the shop address is already filled"
+    implemented: true
+    working: true
+    file: "frontend/src/components/AddressField.jsx, frontend/src/pages/PortalBook.jsx, frontend/src/pages/PortalBook.test.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "The portal book address uses AddressField. A prefilled shop address does not request suggestions until the user edits it. The edit requests Places suggestions for the full new text. In our Phoenix service area still follows the shop-address shortcut and the geocode check. Covered by AddressField.test.jsx and PortalBook.test.jsx."
   - task: "Settings → Integrations: Connect/Disconnect Xero + live status banner"
     implemented: true
     working: "NA"

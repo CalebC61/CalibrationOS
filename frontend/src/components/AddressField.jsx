@@ -113,42 +113,68 @@ export function postalAddressFromPlace(place) {
 function predictionLabel(prediction) {
   const text = prediction?.text;
   if (!text) return "";
-  return typeof text === "string" ? text : (text.text || "");
+  if (typeof text === "string") return text;
+  if (typeof text.text === "string") return text.text;
+  return "";
 }
 
-/** Phoenix Valley address. A picked suggestion is the confirmed address. Places failures stay a typed input. */
-export default function AddressField({ value, onChange, onPlace, onPlaces, className = "input", id, testId, placeholder, required }) {
-  const hostRef = useRef(null);
-  const widgetRef = useRef(null);
+/**
+ * Phoenix Valley address. Suggestions come from the autocomplete data API
+ * on each edit, including when the field already has the shop address.
+ * The Places widget hides its list after a value is set on it.
+ * A picked suggestion inside the valley is the confirmed address.
+ * Places failures stay a typed input.
+ */
+export default function AddressField({ value, onChange, onPlace, onPlaces, onBlur, className = "input", id, testId, placeholder, required }) {
   const onChangeRef = useRef(onChange);
   const onPlaceRef = useRef(onPlace);
   const onPlacesRef = useRef(onPlaces);
-  const valueRef = useRef(value);
+  const onBlurRef = useRef(onBlur);
   onChangeRef.current = onChange;
   onPlaceRef.current = onPlace;
   onPlacesRef.current = onPlaces;
-  valueRef.current = value;
+  onBlurRef.current = onBlur;
+  const placesRef = useRef(null);
+  const sessionRef = useRef(null);
+  const requestRef = useRef(0);
+  const readyRef = useRef(false);
   const [ready, setReady] = useState(false);
+  const [text, setText] = useState(value || "");
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
   const key = process.env.REACT_APP_GOOGLE_MAPS_API_KEY;
+  const listId = `${id || testId || "address"}-suggestions`;
+
+  useEffect(() => {
+    setText(value || "");
+  }, [value]);
+
+  useEffect(() => {
+    readyRef.current = ready;
+  }, [ready]);
 
   useEffect(() => {
     if (!key) {
+      placesRef.current = null;
+      readyRef.current = false;
       setReady(false);
+      setSuggestions([]);
+      setOpen(false);
       onPlacesRef.current?.(false);
       return undefined;
     }
     let cancelled = false;
-    let failed = false;
-    let element = null;
     const previousAuthFailure = window.gm_authFailure;
 
     function fail() {
-      failed = true;
-      element?.remove();
-      element = null;
-      widgetRef.current = null;
+      placesRef.current = null;
+      sessionRef.current = null;
+      readyRef.current = false;
       if (!cancelled) {
         setReady(false);
+        setSuggestions([]);
+        setOpen(false);
         onPlacesRef.current?.(false);
       }
     }
@@ -159,117 +185,160 @@ export default function AddressField({ value, onChange, onPlace, onPlaces, class
     };
 
     loadPlacesLibrary(key).then((places) => {
-      if (cancelled || failed) return;
-      const PlaceAutocompleteElement = places?.PlaceAutocompleteElement;
-      if (typeof PlaceAutocompleteElement !== "function" || !hostRef.current) {
+      if (cancelled) return;
+      const fetchSuggestions = places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions;
+      if (typeof fetchSuggestions !== "function") {
         fail();
         return;
       }
-      try {
-        element = new PlaceAutocompleteElement({
-          includedRegionCodes: ["us"],
-          locationRestriction: { ...VALLEY },
-        });
-      } catch {
-        fail();
-        return;
-      }
-      element.className = `address-places ${className || ""}`.trim();
-      element.placeholder = placeholder || "";
-      if (id) element.id = id;
-      if (testId) element.setAttribute("data-testid", testId);
-      element.setAttribute("data-address-mode", "places");
-      if (valueRef.current) element.value = valueRef.current;
-      let picked = "";
-      let echoed = new Set();
-      let restoring = false;
-
-      element.addEventListener("input", () => {
-        const text = element.value || "";
-        if (picked && text === picked) return;
-        if (picked && echoed.has(text)) {
-          if (!restoring && element.value !== picked) {
-            restoring = true;
-            element.value = picked;
-            restoring = false;
-          }
-          return;
-        }
-        picked = "";
-        echoed = new Set();
-        onChangeRef.current?.(text);
-      });
-      element.addEventListener("gmp-error", () => fail());
-      element.addEventListener("gmp-select", async (event) => {
-        try {
-          const prediction = event.placePrediction || event.detail?.placePrediction;
-          const place = prediction?.toPlace ? prediction.toPlace() : null;
-          if (!place?.fetchFields) return;
-          await place.fetchFields({
-            fields: ["formattedAddress", "addressComponents", "displayName", "location", "id"],
-          });
-          const formatted = place.formattedAddress || "";
-          const street = postalAddressFromPlace(place) || formatted;
-          const lat = coord(place.location?.lat);
-          const lng = coord(place.location?.lng);
-          if (!street || lat == null || lng == null) return;
-          picked = street;
-          echoed = new Set([formatted, predictionLabel(prediction), element.value].filter(Boolean));
-          if (element.value !== street) element.value = street;
-          if (!insideValley(lat, lng)) {
-            onChangeRef.current?.(street);
-            return;
-          }
-          onPlaceRef.current?.({
-            address: street,
-            placeId: place.id || null,
-            lat,
-            lng,
-          });
-        } catch {
-          fail();
-        }
-      });
-      hostRef.current.appendChild(element);
-      widgetRef.current = element;
-      if (cancelled || failed) {
-        element.remove();
-        return;
-      }
+      placesRef.current = places;
+      readyRef.current = true;
       setReady(true);
       onPlacesRef.current?.(true);
     }).catch(() => fail());
 
     return () => {
       cancelled = true;
-      element?.remove();
-      widgetRef.current = null;
+      placesRef.current = null;
       window.gm_authFailure = previousAuthFailure;
     };
-  }, [key, className, id, placeholder, testId]);
+  }, [key]);
 
-  useEffect(() => {
-    const element = widgetRef.current;
-    if (!element || element.value === value) return;
-    element.value = value || "";
-  }, [value, ready]);
+  async function query(next) {
+    const places = placesRef.current;
+    const fetchSuggestions = places?.AutocompleteSuggestion?.fetchAutocompleteSuggestions;
+    if (!readyRef.current || typeof fetchSuggestions !== "function") return;
+    if (!String(next || "").trim()) {
+      setSuggestions([]);
+      setOpen(false);
+      return;
+    }
+    const requestId = ++requestRef.current;
+    const body = {
+      input: next,
+      includedRegionCodes: ["us"],
+      locationRestriction: { ...VALLEY },
+    };
+    const Token = places.AutocompleteSessionToken;
+    if (typeof Token === "function") {
+      if (!sessionRef.current) sessionRef.current = new Token();
+      body.sessionToken = sessionRef.current;
+    }
+    try {
+      const result = await fetchSuggestions(body);
+      if (requestId !== requestRef.current) return;
+      const rows = (result?.suggestions || []).filter((row) => row?.placePrediction?.toPlace);
+      setSuggestions(rows);
+      setOpen(rows.length > 0);
+      setActive(0);
+    } catch {
+      if (requestId !== requestRef.current) return;
+      setSuggestions([]);
+      setOpen(false);
+    }
+  }
+
+  async function choose(suggestion) {
+    const prediction = suggestion?.placePrediction;
+    const place = prediction?.toPlace ? prediction.toPlace() : null;
+    if (!place?.fetchFields) return;
+    setOpen(false);
+    try {
+      await place.fetchFields({
+        fields: ["formattedAddress", "addressComponents", "displayName", "location", "id"],
+      });
+      const formatted = place.formattedAddress || "";
+      const street = postalAddressFromPlace(place) || formatted;
+      const lat = coord(place.location?.lat);
+      const lng = coord(place.location?.lng);
+      if (!street || lat == null || lng == null) return;
+      sessionRef.current = null;
+      setText(street);
+      onChangeRef.current?.(street);
+      if (!insideValley(lat, lng)) return;
+      onPlaceRef.current?.({
+        address: street,
+        placeId: place.id || null,
+        lat,
+        lng,
+      });
+    } catch {
+      setSuggestions([]);
+      setOpen(false);
+    }
+  }
+
+  function onKeyDown(event) {
+    if (!open || suggestions.length === 0) return;
+    if (event.key === "Escape") {
+      setOpen(false);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActive((index) => (index + 1) % suggestions.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActive((index) => (index - 1 + suggestions.length) % suggestions.length);
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const suggestion = suggestions[active] || suggestions[0];
+      if (suggestion) choose(suggestion);
+    }
+  }
+
+  const shown = open && suggestions.length > 0;
 
   return (
     <div className="address-field">
-      <div ref={hostRef} hidden={!ready} />
-      {!ready && (
-        <input
-          id={id}
-          className={className}
-          value={value}
-          required={required}
-          placeholder={placeholder}
-          autoComplete="off"
-          disabled={false}
-          onChange={event => onChange(event.target.value)}
-          data-testid={testId}
-          data-address-mode="typed"
-        />
+      <input
+        id={id}
+        className={className}
+        value={text}
+        required={required}
+        placeholder={placeholder}
+        autoComplete="off"
+        disabled={false}
+        aria-autocomplete={ready ? "list" : undefined}
+        aria-expanded={ready ? shown : undefined}
+        aria-controls={ready ? listId : undefined}
+        onChange={(event) => {
+          const next = event.target.value;
+          setText(next);
+          onChangeRef.current?.(next);
+          if (readyRef.current) query(next);
+        }}
+        onBlur={(event) => {
+          setOpen(false);
+          onBlurRef.current?.(event.target.value);
+        }}
+        onKeyDown={onKeyDown}
+        data-testid={testId}
+        data-address-mode={ready ? "places" : "typed"}
+      />
+      {shown && (
+        <ul id={listId} className="address-suggestions" role="listbox">
+          {suggestions.map((suggestion, index) => {
+            const label = predictionLabel(suggestion.placePrediction);
+            return (
+              <li key={`${label}-${index}`} role="presentation">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={index === active}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => choose(suggestion)}
+                >
+                  {label}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );

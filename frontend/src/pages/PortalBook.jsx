@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { phoenixTodayStr } from "../lib/api";
 import { portalApi } from "../lib/portalApi";
+import AddressField from "../components/AddressField";
 import { redoIsFree, warrantyOptionLabel, WARRANTY_BILLED, WARRANTY_FREE } from "../lib/warranty";
 import PortalShell from "../components/PortalShell";
 
@@ -62,17 +63,23 @@ export default function PortalBook() {
   useEffect(() => {
     if (!shop || !address.trim()) return undefined;
     if (sameAddress(address, shop.address) || sameAddress(address, shop.formatted_address)) return undefined;
+    let cancelled = false;
     const handle = setTimeout(() => {
       portalApi.post("/geocode", { address }).then(({ data }) => {
+        if (cancelled) return;
         setZoneInfo(data);
         setAddressError("");
       }).catch((e) => {
+        if (cancelled) return;
         setZoneInfo(null);
         const detail = e.response?.data?.detail;
         setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
       });
     }, 300);
-    return () => clearTimeout(handle);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
   }, [address, shop]);
 
   if (!shop || !setup) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
@@ -188,14 +195,30 @@ export default function PortalBook() {
       <div style={{ maxWidth: 640 }}>
         {step === 1 && (
           <Card title="Where and when?" sub="The shop address is already confirmed. Change it only if the vehicle is somewhere else.">
-            <input className="input" value={address} onChange={e => {
-              const value = e.target.value;
-              setAddress(value);
-              setChosen(null);
-              setSlots([]);
-              if (atShop(value)) setZoneInfo({ in_metro: true, reused: true });
-              else setZoneInfo(null);
-            }} onBlur={e => geo(e.target.value)} data-testid="b-addr" />
+            <AddressField
+              id="b-addr"
+              className="input"
+              value={address}
+              testId="b-addr"
+              placeholder="Street, city, AZ"
+              onChange={value => {
+                setAddress(value);
+                setChosen(null);
+                setSlots([]);
+                if (atShop(value)) setZoneInfo({ in_metro: true, reused: true });
+                else setZoneInfo(null);
+              }}
+              onPlace={place => {
+                setAddress(place.address);
+                setChosen(null);
+                setSlots([]);
+                if (atShop(place.address)) {
+                  setAddressError("");
+                  setZoneInfo({ in_metro: true, reused: true });
+                }
+              }}
+              onBlur={value => geo(value)}
+            />
             {zoneInfo?.in_metro && <div style={{ marginTop: 10, fontSize: 14 }}>In our Phoenix service area.</div>}
             {addressError && <div role="alert" style={{ color: "var(--red)", marginTop: 10, fontSize: 14 }}>{addressError}</div>}
             {zoneInfo && !zoneInfo.in_metro && <div style={{ color: "var(--red)", marginTop: 10, fontSize: 14 }}>That address is outside the Phoenix Valley.</div>}
