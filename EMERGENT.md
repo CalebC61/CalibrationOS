@@ -22,6 +22,12 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-18): the owner can delete a job.** `DELETE /api/jobs/{id}`
+  is owner-only (shop, technician, and contractor logins are 403). It removes
+  the job and its documents, alerts, offers, and action tokens. It does not
+  email, text, cancel, or call Xero or Stripe. Invoice rows stay. Dispatch
+  shows Delete with a confirmation. No new env vars. `SHOP_EMAILS_ENABLED`
+  and `BILLING_ENABLED` are unchanged.
 - **Session (2026-11-17): triple drafts and wholesale prices.** Triple files
   the Xero item Subaru MC Calibration (code 8), with Triple/Subaru Calibration
   as the fallback name. Booking and Complete price the job at the shop's

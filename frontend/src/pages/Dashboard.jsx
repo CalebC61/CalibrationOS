@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
-import { api, formatTime, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, jobStatusLabel } from "../lib/api";
+import { api, formatTime, formatDate, phoenixTodayStr, dateStr, getStoredAuth, isOnDayBoard, jobStatusLabel } from "../lib/api";
 import Shell from "../components/Shell";
 import DispatchModal from "../components/DispatchModal";
 import RouteMap from "../components/RouteMap";
@@ -30,6 +30,10 @@ export default function Dashboard() {
   const [refreshResult, setRefreshResult] = useState(null);
   const [refreshError, setRefreshError] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const removedJobIds = useRef(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -39,7 +43,9 @@ export default function Dashboard() {
         api.get(`/notifications/new-bookings`),
         api.get(`/contractor-offers`),
       ]);
-      setJobs(j.data); setSummary(s.data); setAlerts(a.data); setOffers(o.data);
+      const visible = (j.data || []).filter(job => !removedJobIds.current.has(job.id));
+      const alertRows = (a.data?.alerts || []).filter(alert => !removedJobIds.current.has(alert.job_id));
+      setJobs(visible); setSummary(s.data); setAlerts({ count: alertRows.length, alerts: alertRows }); setOffers(o.data);
       try {
         const t = await api.get("/routing-techs");
         setTechs(t.data || []);
@@ -106,6 +112,39 @@ export default function Dashboard() {
       return;
     }
     load();
+  }
+  function askDelete(job) {
+    setDeleteError("");
+    setDeleteTarget(job);
+  }
+  async function confirmDelete() {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await api.delete(`/jobs/${deleteTarget.id}`);
+      const removed = deleteTarget;
+      removedJobIds.current.add(removed.id);
+      setJobs(current => current.filter(job => job.id !== removed.id));
+      setAlerts(current => {
+        const next = (current.alerts || []).filter(alert => alert.job_id !== removed.id);
+        return { count: next.length, alerts: next };
+      });
+      setSummary(current => {
+        if (!current) return current;
+        const revenue = Number(current.revenue || 0) - Number(removed.price || 0);
+        return {
+          ...current,
+          job_count: Math.max(0, Number(current.job_count || 0) - 1),
+          revenue: revenue < 0 ? 0 : revenue,
+        };
+      });
+      setDeleteTarget(null);
+    } catch (err) {
+      setDeleteError(err.response?.data?.detail || "Could not delete this job.");
+    } finally {
+      setDeleting(false);
+    }
   }
   async function decideApproval(jobId, approve) {
     try {
@@ -264,6 +303,7 @@ export default function Dashboard() {
             onDispatch={setDispatchTarget} onRespond={manualRespond}
             onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
             onEdit={isOwner ? setEditTarget : null}
+            onDelete={isOwner ? askDelete : null}
             onDecide={isOwner ? decideApproval : null}
             dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
         ))}
@@ -312,11 +352,92 @@ export default function Dashboard() {
         onClose={() => setDispatchTarget(null)} onDone={load} />
       <JobEditModal open={!!editTarget} job={editTarget}
         onClose={() => setEditTarget(null)} onDone={load} />
+      <DeleteJobDialog job={deleteTarget} busy={deleting} error={deleteError}
+        onCancel={() => { if (!deleting) setDeleteTarget(null); }}
+        onConfirm={confirmDelete} />
       <RescheduleCancelModal open={!!rescheduleTarget} job={rescheduleTarget?.job}
         mode={rescheduleTarget?.mode}
         onClose={() => setRescheduleTarget(null)} onDone={load} />
       <TomorrowStrip baseDate={date} />
     </Shell>
+  );
+}
+
+function jobTitle(job) {
+  const vehicle = [job.vehicle_year, job.vehicle_make, job.vehicle_model]
+    .filter(part => part !== null && part !== undefined && String(part).trim() !== "")
+    .join(" ");
+  return vehicle || job.calibration_label || "This job";
+}
+
+function jobDeleteWarnings(job) {
+  const lines = [];
+  const xero = job.xero_invoice_number || job.xero_invoice_id;
+  if (xero) {
+    lines.push(`This job has Xero draft ${xero}; deleting the job does not delete it in Xero`);
+  }
+  const stripeId = job.stripe_invoice_id
+    || (String(job.invoice_id || "").startsWith("in_") ? job.invoice_id : "");
+  if (stripeId) {
+    lines.push(`This job has Stripe invoice ${stripeId}; deleting the job does not delete it in Stripe`);
+  }
+  const late = job.stripe_late_fee_invoice_id;
+  if (late && late !== stripeId) {
+    lines.push(`This job has Stripe invoice ${late}; deleting the job does not delete it in Stripe`);
+  }
+  return lines;
+}
+
+function DeleteJobDialog({ job, busy, error, onCancel, onConfirm }) {
+  if (!job) return null;
+  const warnings = jobDeleteWarnings(job);
+  return (
+    <div
+      onClick={onCancel}
+      onKeyDown={(e) => { if (e.key === "Escape") onCancel(); }}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 50,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+      }}
+      data-testid="job-delete-dialog"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="job-delete-title"
+        onClick={(e) => e.stopPropagation()}
+        className="surface page-fade"
+        style={{ padding: 24, maxWidth: 480, width: "100%" }}
+      >
+        <h2 id="job-delete-title" className="h2" style={{ marginBottom: 12 }}>
+          Are you sure you want to delete this job?
+        </h2>
+        <div className="elevated" style={{ padding: 12, marginBottom: 16, fontSize: 14 }}>
+          <div data-testid="job-delete-name" style={{ fontWeight: 600 }}>{jobTitle(job)}</div>
+          <div data-testid="job-delete-shop">{job.shop_name}</div>
+          <div data-testid="job-delete-date" className="muted">
+            {job.scheduled_start ? formatDate(job.scheduled_start) : "—"}
+          </div>
+        </div>
+        {warnings.map(line => (
+          <p key={line} data-testid="job-delete-warning" style={{ color: "#FCA5A5", fontSize: 14, lineHeight: 1.45, margin: "0 0 10px" }}>
+            {line}
+          </p>
+        ))}
+        {error && (
+          <div role="alert" style={{ color: "#FCA5A5", fontSize: 14, marginBottom: 12 }}>{error}</div>
+        )}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button type="button" className="btn btn-ghost" onClick={onCancel} autoFocus disabled={busy}
+            data-testid="job-delete-cancel">Cancel</button>
+          <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={busy}
+            data-testid="job-delete-confirm"
+            style={{ color: "#FCA5A5", borderColor: "rgba(252, 165, 165, 0.45)" }}>
+            {busy ? "Deleting…" : "Yes, delete"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -339,7 +460,7 @@ function Metric({ label, value, highlight }) {
 }
 
 function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, accent, newJobIds, offerByJob,
-                    onDispatch, onRespond, onReschedule, onEdit, onDecide, dragOver, setDragOver, onDrop }) {
+                    onDispatch, onRespond, onReschedule, onEdit, onDelete, onDecide, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className="zone-header">
@@ -359,7 +480,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPaymen
             onOutside={onOutside} onTripFee={onTripFee} onRetryXero={onRetryXero}
             isNew={newJobIds?.has(j.id)} offer={offerByJob?.[j.id]}
             onDispatch={onDispatch} onRespond={onRespond} onReschedule={onReschedule} onEdit={onEdit}
-            onDecide={onDecide}
+            onDelete={onDelete} onDecide={onDecide}
             zone={zone} dropIndex={idx}
             isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
             onDragOver={(e) => { e.preventDefault(); setDragOver({ zone, idx }); }}
@@ -413,7 +534,7 @@ function TripFeeControls({ job, onOutside, onTripFee }) {
   );
 }
 
-function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDecide,
+function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, offer, onDispatch, onRespond, onReschedule, onEdit, onDelete, onDecide,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
   const [completeOpen, setCompleteOpen] = useState(false);
@@ -496,6 +617,11 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
         {onEdit && (
           <button className="btn btn-ghost" onClick={() => onEdit(job)}
             data-testid={`job-edit-${job.id}`}>Edit</button>
+        )}
+        {onDelete && (
+          <button type="button" className="btn btn-danger" onClick={() => onDelete(job)}
+            data-testid={`job-delete-${job.id}`}
+            style={{ color: "#FCA5A5", borderColor: "rgba(252, 165, 165, 0.45)" }}>Delete</button>
         )}
         {onDecide && job.status === "requested" && (
           <>
