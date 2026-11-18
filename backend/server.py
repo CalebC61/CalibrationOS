@@ -159,7 +159,7 @@ from regeocode import (
     regeocode_scope, zone_for_geocode,
 )
 from routing import (
-    assign_technician, contractor_routing_updates,
+    assign_technician,
     is_routing_tech, next_tech_color, owner_routing_updates, tech_schedule,
 )
 from scheduling import (
@@ -281,19 +281,16 @@ IS_PRODUCTION = APP_ENV in ("production", "prod")
 # Seed credentials are env-driven so no real password ships in the repo. When an env password
 # is set it is also the source of truth: security-hardened seed_data() rotates an already-seeded
 # account whose stored password no longer matches, so the historically-exposed default can be
-# fixed by setting OWNER_PASSWORD / CONTRACTOR_PASSWORD in Emergent and restarting.
+# fixed by setting OWNER_PASSWORD in Emergent and restarting.
 SEED_OWNER_EMAIL = _env("OWNER_EMAIL", "caleb@thecalibrationcrew.us")
 
 
 def owner_notify_email() -> str:
     return _env("OWNER_EMAIL", "caleb@thecalibrationcrew.us")
 SEED_OWNER_PASSWORD = _env("OWNER_PASSWORD")
-SEED_CONTRACTOR_EMAIL = _env("CONTRACTOR_EMAIL", "contractor@thecalibrationcrew.us")
-SEED_CONTRACTOR_PASSWORD = _env("CONTRACTOR_PASSWORD")
-# Dev-only fallback passwords: used only outside production when no env password is given, so the
+# Dev-only fallback password: used only outside production when no env password is given, so the
 # local dev flow and the existing test suite are unchanged.
 _DEV_OWNER_PASSWORD = "Owner123!"
-_DEV_CONTRACTOR_PASSWORD = "Contractor123!"
 
 # Demo shops / partner-contacts seed in development by default, never in production unless asked.
 SEED_DEMO_DATA = os.environ.get(
@@ -332,6 +329,8 @@ async def get_current_tech(token: Optional[str] = Depends(oauth2_scheme)):
         tech = await db.technicians.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
         if not tech:
             raise HTTPException(status_code=401, detail="User not found")
+        if tech.get("role") == "contractor":
+            raise HTTPException(status_code=403, detail="Contractor accounts are no longer used.")
         return tech
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -1356,12 +1355,6 @@ class JobComplete(BaseModel):
     calibration_type: Optional[Literal["static", "dynamic", "dual", "triple", "tesla"]] = None
     pop: Optional[str] = None
 
-class DispatchIn(BaseModel):
-    contractor_id: str
-
-class OfferResponseIn(BaseModel):
-    accept: bool
-
 class RoutingTechIn(BaseModel):
     name: str
     phone: Optional[str] = None
@@ -1428,12 +1421,6 @@ class ZoneUpdate(BaseModel):
     max_jobs: Optional[int] = None
     slot_minutes: Optional[int] = None
     buffer_minutes: Optional[int] = None
-
-class ContractorUpdate(BaseModel):
-    name: Optional[str] = None
-    phone: Optional[str] = None
-    home_address: Optional[str] = None
-    is_active: Optional[bool] = None
 
 class RescheduleIn(BaseModel):
     scheduled_start: str  # ISO datetime
@@ -1544,6 +1531,8 @@ async def login(data: LoginIn, request: Request):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     if not tech.get("is_active", True):
         raise HTTPException(status_code=403, detail="Account is disabled")
+    if tech.get("role") == "contractor":
+        raise HTTPException(status_code=403, detail="Contractor accounts are no longer used.")
     token = make_token(tech["id"], tech["role"])
     return TokenOut(token=token, role=tech["role"], name=tech["name"], tech_id=tech["id"])
 
@@ -2694,8 +2683,8 @@ async def list_jobs(
 
     Cancelled and declined jobs stay in the database and are left off the day
     list. Pass include_cancelled=true to put cancelled jobs back in the
-    response for a history view. Declined jobs stay out. Contractors only see
-    their own jobs. The shop portal list is a different route and is unchanged.
+    response for a history view. Declined jobs stay out. The shop portal list
+    is a different route and is unchanged.
     """
     if date_str:
         try:
@@ -2710,8 +2699,6 @@ async def list_jobs(
         "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
         "status": {"$nin": hidden},
     }
-    if tech["role"] == "contractor":
-        q["technician_id"] = tech["id"]
     jobs = await owner_documents(db.jobs, query=q, limit=500, sort_key="scheduled_start")
     return annotate_at_risk(jobs)
 
@@ -2720,8 +2707,6 @@ async def get_job(job_id: str, tech=Depends(get_current_tech)):
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
-    if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
-        raise HTTPException(403, "Not your job")
     return job
 
 _VEHICLE_FIELD_MAP = {
@@ -2825,7 +2810,7 @@ async def _apply_job_edit(job: dict, fields: dict, who: dict) -> dict:
 
 @api.patch("/jobs/{job_id}")
 async def patch_job(job_id: str, body: JobEditIn, tech=Depends(require_owner)):
-    """Owner edit. Technicians and contractors cannot change a job. No messages, no status change."""
+    """Owner edit. A technician cannot change a job. No messages, no status change."""
     job = await db.jobs.find_one({"id": job_id}, {"_id": 0})
     if not job:
         raise HTTPException(404, "Job not found")
@@ -2880,6 +2865,20 @@ async def set_payment_mode(job_id: str, body: PaymentModeIn, tech=Depends(requir
     return await db.jobs.find_one({"id": job_id}, {"_id": 0})
 
 
+def _job_on_phoenix_today(job: dict) -> bool:
+    """True when scheduled_start falls on today's America/Phoenix civil date."""
+    raw = job.get("scheduled_start")
+    if not raw:
+        return False
+    try:
+        start = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    return business_date(start) == business_date()
+
+
 @api.post("/jobs/{job_id}/status")
 async def update_status(job_id: str, body: JobStatusUpdate, tech=Depends(get_current_tech)):
     job = await db.jobs.find_one({"id": job_id})
@@ -2887,10 +2886,10 @@ async def update_status(job_id: str, body: JobStatusUpdate, tech=Depends(get_cur
         raise HTTPException(404, "Job not found")
     if tech["role"] != "owner":
         raise HTTPException(403, "Only the owner can change a job.")
-    if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
-        raise HTTPException(403, "Not your job")
     if job.get("status") in ("requested", "declined"):
         raise HTTPException(400, "The owner has to approve this time before the job can move.")
+    if body.status in ("driving", "on_site") and not _job_on_phoenix_today(job):
+        raise HTTPException(400, "Available on the day of the job")
     update = {"status": body.status, "updated_at": iso(now_utc())}
     if body.status == "driving":
         msg = (f"Your technician is on the way to {job['job_address']}. "
@@ -3284,8 +3283,6 @@ async def complete_job(job_id: str, body: JobComplete, tech=Depends(get_current_
         raise HTTPException(404, "Job not found")
     if tech["role"] != "owner":
         raise HTTPException(403, "Only the owner can complete a job.")
-    if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
-        raise HTTPException(403, "Not your job")
 
     if body.pop is not None:
         try:
@@ -3436,7 +3433,6 @@ async def cancel_job(job_id: str, body: CancelIn, tech=Depends(require_owner)):
 _JOB_CHILD_COLLECTIONS = (
     "documents",
     "new_booking_alerts",
-    "contractor_offers",
     "owner_action_tokens",
 )
 
@@ -3517,8 +3513,6 @@ async def list_job_documents(job_id: str, tech=Depends(get_current_tech)):
     job = await db.jobs.find_one({"id": job_id})
     if not job:
         raise HTTPException(404, "Job not found")
-    if tech["role"] == "contractor" and job.get("technician_id") != tech["id"]:
-        raise HTTPException(403, "Not your job")
     docs = await db.documents.find({"job_id": job_id}, {"_id": 0, "data_b64": 0}).to_list(50)
     return docs
 
@@ -3527,11 +3521,6 @@ async def download_document(doc_id: str, tech=Depends(get_current_tech)):
     doc = await db.documents.find_one({"id": doc_id})
     if not doc or "data_b64" not in doc:
         raise HTTPException(404, "Document not found")
-    # Permission: owner sees all; contractor only theirs
-    if tech["role"] == "contractor":
-        job = await db.jobs.find_one({"id": doc["job_id"]})
-        if not job or job.get("technician_id") != tech["id"]:
-            raise HTTPException(403, "Not your document")
     binary = base64.b64decode(doc["data_b64"])
     # RFC 5987 — handles non-Latin-1 filenames (em-dashes, accents, etc.) without crashing
     quoted = quote(doc["file_name"])
@@ -3790,118 +3779,6 @@ async def mark_alerts_seen(tech=Depends(require_owner)):
     )
     return {"marked": res.modified_count}
 
-# ---------- Contractor dispatch ----------
-async def expire_stale_offers():
-    """Expire offers past their 30-min window. Called on each list-offers / list-jobs read."""
-    now = iso(now_utc())
-    stale = await db.contractor_offers.find(
-        {"status": "pending", "expires_at": {"$lt": now}}, {"_id": 0}
-    ).to_list(100)
-    for offer in stale:
-        await db.contractor_offers.update_one({"id": offer["id"]}, {"$set": {"status": "expired", "responded_at": now}})
-        # Revert job back to booked + assign to owner
-        owner = await db.technicians.find_one({"role": "owner"})
-        await db.jobs.update_one(
-            {"id": offer["job_id"]},
-            {"$set": {"status": "booked", "technician_id": owner["id"] if owner else None, "updated_at": now}}
-        )
-        # Mock SMS to owner
-        if owner and owner.get("phone"):
-            await mock_send_sms(owner["phone"],
-                f"Contractor did not respond. Job {offer['job_id'][:8].upper()} is back on your board.",
-                kind="offer_expired", job_id=offer["job_id"])
-
-@api.post("/jobs/{job_id}/dispatch")
-async def dispatch_job(job_id: str, data: DispatchIn, tech=Depends(require_owner)):
-    job = await db.jobs.find_one({"id": job_id})
-    if not job:
-        raise HTTPException(404, "Job not found")
-    if job["status"] not in ("booked",):
-        raise HTTPException(400, f"Cannot dispatch a job in '{job['status']}' state")
-    contractor = await db.technicians.find_one({"id": data.contractor_id, "role": "contractor", "is_active": True})
-    if not contractor:
-        raise HTTPException(400, "Active contractor not found")
-    now = now_utc()
-    offer = {
-        "id": gen_id(),
-        "job_id": job_id,
-        "contractor_id": contractor["id"],
-        "contractor_name": contractor["name"],
-        "offered_at": iso(now),
-        "expires_at": iso(now + timedelta(minutes=30)),
-        "status": "pending",
-        "responded_at": None,
-        "sms_sent": True,
-        "shop_name": job["shop_name"],
-        "scheduled_start": job["scheduled_start"],
-        "job_address": job["job_address"],
-        "vehicle": f"{job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}",
-        "calibration_label": job["calibration_label"],
-        "price": job["price"],
-    }
-    await db.contractor_offers.insert_one(offer.copy())
-    await db.jobs.update_one({"id": job_id}, {"$set": {"status": "dispatched_to_contractor", "technician_id": contractor["id"], "updated_at": iso(now)}})
-    # Mock SMS to contractor
-    msg = (f"New job available: {job['shop_name']} at {job['job_address']}. "
-           f"{job['vehicle_year']} {job['vehicle_make']} {job['vehicle_model']}. "
-           f"{job['calibration_label']} at {datetime.fromisoformat(job['scheduled_start']).strftime('%-I:%M %p')}. "
-           f"Reply YES to accept, NO to decline. Offer expires in 30 minutes.")
-    if contractor.get("phone"):
-        await mock_send_sms(contractor["phone"], msg, kind="contractor_offer", job_id=job_id)
-    return offer
-
-@api.get("/contractor-offers")
-async def list_offers(tech=Depends(get_current_tech)):
-    await expire_stale_offers()
-    q = {}
-    if tech["role"] == "contractor":
-        q["contractor_id"] = tech["id"]
-        q["status"] = "pending"
-    offers = await db.contractor_offers.find(q, {"_id": 0}).sort("offered_at", -1).limit(100).to_list(100)
-    return offers
-
-@api.post("/contractor-offers/{offer_id}/respond")
-async def respond_to_offer(offer_id: str, body: OfferResponseIn, tech=Depends(get_current_tech)):
-    """Contractor accepts/declines; also callable by owner as manual override (simulating SMS reply)."""
-    offer = await db.contractor_offers.find_one({"id": offer_id})
-    if not offer:
-        raise HTTPException(404, "Offer not found")
-    if offer["status"] != "pending":
-        raise HTTPException(400, f"Offer already {offer['status']}")
-    # Auth check: contractor on own offer, or owner
-    if tech["role"] == "contractor" and offer["contractor_id"] != tech["id"]:
-        raise HTTPException(403, "Not your offer")
-    now = iso(now_utc())
-    new_status = "accepted" if body.accept else "declined"
-    await db.contractor_offers.update_one({"id": offer_id},
-        {"$set": {"status": new_status, "responded_at": now}})
-    if body.accept:
-        # Confirm assignment
-        await db.jobs.update_one({"id": offer["job_id"]},
-            {"$set": {"technician_id": offer["contractor_id"], "updated_at": now}})
-        owner = await db.technicians.find_one({"role": "owner"})
-        if owner and owner.get("phone"):
-            await mock_send_sms(owner["phone"],
-                f"✓ {offer['contractor_name']} accepted job {offer['job_id'][:8].upper()} ({offer['shop_name']}).",
-                kind="offer_accepted", job_id=offer["job_id"])
-    else:
-        # Revert to owner
-        owner = await db.technicians.find_one({"role": "owner"})
-        await db.jobs.update_one({"id": offer["job_id"]},
-            {"$set": {"status": "booked", "technician_id": owner["id"] if owner else None, "updated_at": now}})
-        if owner and owner.get("phone"):
-            await mock_send_sms(owner["phone"],
-                f"✗ {offer['contractor_name']} declined job {offer['job_id'][:8].upper()}. Back on your board.",
-                kind="offer_declined", job_id=offer["job_id"])
-    return {"status": new_status}
-
-@api.get("/contractors")
-async def list_contractors(tech=Depends(require_owner)):
-    techs = await db.technicians.find(
-        {"role": "contractor"}, {"_id": 0, "password_hash": 0}
-    ).to_list(50)
-    return [public_staff(person) for person in techs]
-
 def _tech_public(person: dict) -> dict:
     return public_staff(person)
 
@@ -4012,7 +3889,7 @@ async def create_routing_tech(body: RoutingTechIn, tech=Depends(require_owner)):
 
 @api.put("/routing-techs/{tech_id}")
 async def update_routing_tech(tech_id: str, body: RoutingTechUpdate, tech=Depends(require_owner)):
-    """Edit a home base or service area. Contractors are not changed here. No messages."""
+    """Edit a home base or service area. Only an owner or hired technician. No messages."""
     person = await db.technicians.find_one({"id": tech_id}, {"_id": 0})
     if not person or person.get("role") not in ("owner", "technician"):
         raise HTTPException(404, "Technician not found")
@@ -4188,21 +4065,6 @@ async def update_zone(zone_key: str, body: ZoneUpdate, tech=Depends(require_owne
             ZONES[zone_key][k] = v
     await save_zones()
     return list(ZONES.values())
-
-@api.put("/contractors/{contractor_id}")
-async def update_contractor(contractor_id: str, body: ContractorUpdate, tech=Depends(require_owner)):
-    c = await db.technicians.find_one({"id": contractor_id, "role": "contractor"})
-    if not c:
-        raise HTTPException(404, "Contractor not found")
-    update = body.model_dump(exclude_unset=True)
-    if "home_address" in update and update["home_address"]:
-        geo = await geocode_address(update["home_address"])
-        update["home_lat"] = geo["lat"]
-        update["home_lng"] = geo["lng"]
-    update["updated_at"] = iso(now_utc())
-    await db.technicians.update_one({"id": contractor_id}, {"$set": update})
-    fresh = await db.technicians.find_one({"id": contractor_id}, {"_id": 0, "password_hash": 0})
-    return public_staff(fresh)
 
 # ---------- Email (Resend) ----------
 async def send_email(to: str, subject: str, html: str, kind: str = "transactional", meta: Optional[dict] = None, reply_to: Optional[str] = None):
@@ -5662,36 +5524,6 @@ async def seed_data():
             {"$or": [{"technician_id": None}, {"technician_id": {"$exists": False}}]},
             {"$set": {"technician_id": owner_doc["id"]}},
         )
-
-    # Contractor — demo/starter account. Seeds with CONTRACTOR_PASSWORD when set (any env), or the
-    # dev default when demo data is enabled; skipped in production if neither applies.
-    contractor_email = SEED_CONTRACTOR_EMAIL
-    contractor_pw = SEED_CONTRACTOR_PASSWORD or (_DEV_CONTRACTOR_PASSWORD if SEED_DEMO_DATA else None)
-    existing_c = await db.technicians.find_one({"email": contractor_email})
-    if not existing_c:
-        if contractor_pw is not None:
-            contractor = {
-                "id": gen_id(), "name": "West-Side Contractor", "email": contractor_email,
-                "phone": "+16025550199", "role": "contractor",
-                "home_zone": "west", "home_address": "Goodyear, AZ",
-                "home_lat": 33.4353, "home_lng": -112.3576,
-                "is_active": True,
-                "password_hash": hash_password(contractor_pw),
-                "created_at": iso(now_utc()),
-            }
-            await db.technicians.insert_one(contractor)
-            logger.info(f"Seeded contractor account: {contractor_email}")
-    elif SEED_CONTRACTOR_PASSWORD and not verify_password(SEED_CONTRACTOR_PASSWORD, existing_c.get("password_hash", "")):
-        await db.technicians.update_one(
-            {"id": existing_c["id"]}, {"$set": {"password_hash": hash_password(SEED_CONTRACTOR_PASSWORD)}}
-        )
-        logger.warning(f"[SECURITY] Rotated contractor password to match CONTRACTOR_PASSWORD env for {contractor_email}.")
-
-    # Contractors stay off the automatic route. Existing jobs keep their times.
-    for person in await db.technicians.find({"role": "contractor"}, {"_id": 0}).to_list(20):
-        routing_updates = contractor_routing_updates(person)
-        if routing_updates:
-            await db.technicians.update_one({"id": person["id"]}, {"$set": routing_updates})
 
     # Demo shops (gated: on in dev, off in production unless SEED_DEMO_DATA=true)
     shop_count = await db.shops.count_documents({})

@@ -29,8 +29,6 @@ services:
       - { key: OWNER_EMAIL, sync: false }
       - { key: OWNER_PASSWORD, sync: false }
       - { key: ADMIN_EMAIL, sync: false }
-      - { key: CONTRACTOR_EMAIL, sync: false }
-      - { key: CONTRACTOR_PASSWORD, sync: false }
       # Shop and customer mail stays in the outbox until this is true.
       - key: SHOP_EMAILS_ENABLED
         value: "false"

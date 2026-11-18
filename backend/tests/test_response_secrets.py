@@ -211,7 +211,7 @@ def test_shop_view_keeps_the_booking_link_and_drops_stripe_ids():
     _assert_clean(view)
 
 
-def test_auth_me_contractors_shops_and_portal_omit_secrets():
+def test_auth_me_shops_and_portal_omit_secrets():
     _install()
     owner = server.make_token("owner-1", "owner")
     portal = server.make_portal_token("user-1")
@@ -222,19 +222,14 @@ def test_auth_me_contractors_shops_and_portal_omit_secrets():
         async with _client() as client:
             me = await client.get("/api/auth/me", headers=owner_headers)
             contractors = await client.get("/api/contractors", headers=owner_headers)
-            updated = await client.put(
-                "/api/contractors/west",
-                headers=owner_headers,
-                json={"is_active": True},
-            )
             routing = await client.get("/api/routing-techs", headers=owner_headers)
             shops = await client.get("/api/shops", headers=owner_headers)
             shop = await client.get("/api/shops/shop-1", headers=owner_headers)
             fresh = await client.get("/api/new-shops", headers=owner_headers)
             portal_me = await client.get("/api/portal/me", headers=portal_headers)
-            return me, contractors, updated, routing, shops, shop, fresh, portal_me
+            return me, contractors, routing, shops, shop, fresh, portal_me
 
-    me, contractors, updated, routing, shops, shop, fresh, portal_me = asyncio.run(run())
+    me, contractors, routing, shops, shop, fresh, portal_me = asyncio.run(run())
 
     assert me.status_code == 200, me.text
     body = me.json()
@@ -245,21 +240,12 @@ def test_auth_me_contractors_shops_and_portal_omit_secrets():
     assert "agreement_ip" not in body
     _assert_clean(body)
 
-    assert contractors.status_code == 200, contractors.text
-    rows = contractors.json()
-    assert rows and rows[0]["email"] == "west@thecalibrationcrew.us"
-    assert rows[0]["xero_connected"] is True
-    assert rows[0]["xero_org_name"] is None
-    _assert_clean(rows)
-
-    assert updated.status_code == 200, updated.text
-    assert updated.json()["id"] == "west"
-    assert updated.json()["is_active"] is True
-    _assert_clean(updated.json())
+    assert contractors.status_code == 404
 
     assert routing.status_code == 200, routing.text
     routed = routing.json()
     assert any(person["id"] == "owner-1" for person in routed)
+    assert all(person["id"] != "west" for person in routed)
     owner_row = next(person for person in routed if person["id"] == "owner-1")
     assert owner_row["xero_connected"] is True
     assert owner_row["xero_org_name"] == "The Calibration Crew"

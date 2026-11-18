@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class StaffPublic(BaseModel):
-    """Owner, contractor, or technician as the client may see them."""
+    """Owner or hired technician as the client may see them."""
 
     model_config = ConfigDict(extra="ignore")
 

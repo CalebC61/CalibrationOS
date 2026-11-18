@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from routing import (  # noqa: E402
     assign_technician,
     availability_windows,
-    contractor_routing_updates,
     owner_routing_updates,
     tech_schedule,
 )
@@ -122,7 +121,3 @@ def test_owner_missing_home_defaults_to_gilbert_and_routes_jobs():
     assert updates["day_start"] == "08:00"
     assert updates["day_end"] == "19:00"
 
-
-def test_existing_contractor_does_not_start_routing():
-    assert contractor_routing_updates({"role": "contractor"}) == {"routes_jobs": False}
-    assert contractor_routing_updates({"role": "contractor", "routes_jobs": False}) == {}

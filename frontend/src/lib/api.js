@@ -76,6 +76,13 @@ export function phoenixTodayStr(instant = new Date()) {
   const get = (type) => parts.find((p) => p.type === type).value;
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
+
+export function isPhoenixToday(iso, now = new Date()) {
+  if (!iso) return false;
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return false;
+  return phoenixTodayStr(when) === phoenixTodayStr(now);
+}
 export function dateStr(d) {
   const y = d.getFullYear(); const m = String(d.getMonth()+1).padStart(2,"0"); const day = String(d.getDate()).padStart(2,"0");
   return `${y}-${m}-${day}`;
