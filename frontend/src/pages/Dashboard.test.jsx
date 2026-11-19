@@ -974,6 +974,34 @@ test("a deep link shows the job when it is assigned to someone else", async () =
   await waitFor(() => expect(scroll).toHaveBeenCalled());
 });
 
+test("a deep link rings an at-risk card without replacing the risk border", async () => {
+  window.history.pushState({}, "", "/dashboard?date=2026-11-13&job=job-glass");
+  const glass = {
+    ...job,
+    id: "job-glass",
+    status: "booked",
+    shop_name: "Preferred Auto Glass",
+    scheduled_start: "2026-11-13T21:00:00+00:00",
+    is_at_risk: true,
+    risk_reason: "Running late",
+    price: 150,
+  };
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [glass] });
+    if (path.includes("/dashboard/summary")) return summaryGet();
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/routing-techs")) return Promise.resolve({ data: [] });
+    return Promise.resolve({ data: [] });
+  });
+
+  render(<Dashboard />);
+  const card = await screen.findByTestId("job-card-job-glass");
+  expect(card).toHaveClass("card-job-focus");
+  expect(card).toHaveClass("card-job-at-risk");
+  expect(screen.getByTestId("badge-at-risk-job-glass")).toBeInTheDocument();
+});
+
 test("a deep link still shows the job when the day list missed it", async () => {
   window.history.pushState({}, "", "/dashboard?date=2026-11-14&job=job-glass");
   const glass = {

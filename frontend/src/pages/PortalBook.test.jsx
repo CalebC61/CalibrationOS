@@ -6,12 +6,14 @@ jest.mock("react-router-dom", () => ({
 }), { virtual: true });
 
 jest.mock("../components/PortalShell", () => ({ children }) => <div>{children}</div>);
+jest.mock("../components/Shell", () => ({ children }) => <div>{children}</div>);
 
 jest.mock("../lib/portalApi", () => ({
   portalApi: { get: jest.fn(), post: jest.fn() },
 }));
 
 jest.mock("../lib/api", () => ({
+  api: { get: jest.fn(), post: jest.fn() },
   phoenixTodayStr: (instant) => (instant ? "2026-12-09" : "2026-11-18"),
 }));
 
@@ -393,4 +395,107 @@ test("a nonsense address shows the geocode error on blur", async () => {
   fireEvent.blur(address);
   expect(await screen.findByText("We couldn't find that address, please check it")).toBeInTheDocument();
   expect(screen.getByTestId("b-date")).toBeDisabled();
+});
+
+test("an unreadable date is not sent and does not show Invalid date", async () => {
+  render(<PortalBook />);
+  const input = await screen.findByTestId("b-date");
+  fireEvent.change(input, { target: { value: "Invalid date" } });
+  fireEvent.change(input, { target: { value: "not-a-date" } });
+  expect(portalApi.post).not.toHaveBeenCalledWith("/portal/availability", expect.anything());
+  expect(screen.queryByText("Invalid date")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("portal-slots-message")).not.toBeInTheDocument();
+  expect(screen.getByTestId("b-next")).toBeDisabled();
+  expect(input).toHaveValue("");
+});
+
+test("a date set on the input element loads that day", async () => {
+  render(<PortalBook />);
+  const input = await screen.findByTestId("b-date");
+  expect(input).toHaveAttribute("min", "2026-11-18");
+  expect(input).toHaveAttribute("max", "2026-12-09");
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+  await act(async () => {
+    setter.call(input, "2026-11-18");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(await screen.findByTestId("b-slot-2026-11-18T16:00:00Z")).toBeInTheDocument();
+  expect(input).toHaveValue("2026-11-18");
+  expect(portalApi.post).toHaveBeenCalledWith("/portal/availability", expect.objectContaining({
+    date: "2026-11-18",
+    job_address: shop.address,
+  }));
+
+  await act(async () => {
+    setter.call(input, "11/18/2026");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const dates = portalApi.post.mock.calls
+    .filter((call) => String(call[0]).includes("/portal/availability"))
+    .map((call) => call[1].date);
+  expect(dates.every((day) => /^\d{4}-\d{2}-\d{2}$/.test(day))).toBe(true);
+  expect(dates).not.toContain("11/18/2026");
+  expect(dates).not.toContain("Invalid date");
+  expect(screen.queryByText("Invalid date")).not.toBeInTheDocument();
+});
+
+test("a past-date message clears once a later valid date has slots", async () => {
+  const pastResponses = [];
+  portalApi.post.mockImplementation((url, body) => {
+    if (String(url).includes("/portal/availability")) {
+      if (body.date === "2020-01-01") {
+        return new Promise((resolve) => {
+          pastResponses.push(resolve);
+        });
+      }
+      return Promise.resolve({ data: { slots: [{ start: "2026-11-18T16:00:00Z", requires_approval: false }] } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  render(<PortalBook />);
+  const input = await screen.findByTestId("b-date");
+
+  fireEvent.change(input, { target: { value: "2020-01-01" } });
+  await act(async () => {
+    pastResponses.shift()({ data: { slots: [], message: "That date is in the past." } });
+  });
+  expect(screen.getByTestId("portal-slots-message")).toHaveTextContent("That date is in the past.");
+
+  fireEvent.change(input, { target: { value: "2026-11-18" } });
+  expect(screen.queryByText("That date is in the past.")).not.toBeInTheDocument();
+  expect(await screen.findByTestId("b-slot-2026-11-18T16:00:00Z")).toBeInTheDocument();
+
+  fireEvent.change(input, { target: { value: "2020-01-01" } });
+  fireEvent.change(input, { target: { value: "2026-11-18" } });
+  expect(await screen.findByTestId("b-slot-2026-11-18T16:00:00Z")).toBeInTheDocument();
+  await act(async () => {
+    pastResponses.shift()({ data: { slots: [], message: "That date is in the past." } });
+  });
+  expect(screen.queryByText("That date is in the past.")).not.toBeInTheDocument();
+  expect(screen.getByTestId("b-slot-2026-11-18T16:00:00Z")).toBeInTheDocument();
+  expect(screen.getByTestId("b-next")).toBeDisabled();
+});
+
+test("a shop still sees pending approval, the warranty redo, and invoice me", async () => {
+  portalApi.post.mockImplementation((url) => {
+    if (String(url).includes("/portal/availability")) {
+      return Promise.resolve({ data: { slots: [{ start: "2026-11-18T14:00:00Z", requires_approval: true }] } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  render(<PortalBook />);
+  fireEvent.change(await screen.findByTestId("b-date"), { target: { value: "2026-11-18" } });
+  const slot = await screen.findByTestId("b-slot-2026-11-18T14:00:00Z");
+  expect(slot).toHaveTextContent("Pending approval");
+  fireEvent.click(slot);
+  fireEvent.click(screen.getByTestId("b-next"));
+  expect(screen.getByTestId("approval-note")).toHaveTextContent("This time is held until the owner approves it.");
+  expect(screen.getByTestId("invoice-instead")).toBeInTheDocument();
+  expect(screen.getByText("Please invoice me instead")).toBeInTheDocument();
+  expect(screen.getByTestId("warranty-redo")).toBeInTheDocument();
+  expect(screen.getByTestId("b-next")).toHaveTextContent("Request this time");
+  expect(screen.queryByTestId("owner-custom-time")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("owner-shop")).not.toBeInTheDocument();
 });
