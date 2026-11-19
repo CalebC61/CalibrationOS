@@ -65,7 +65,7 @@ The `starter` plan (~$7/mo) avoids free-tier sleep, which would make the field a
    - `REACT_APP_BACKEND_URL=https://api.thecalibrationcrew.us` — required. The UI calls `${REACT_APP_BACKEND_URL}/api`.
    - `REACT_APP_STRIPE_PUBLISHABLE_KEY` — Stripe test publishable key (`pk_test_`). Baked in at build time.
    - `REACT_APP_GOOGLE_MAPS_API_KEY` — browser key for Places autocomplete on signup. Restrict it by HTTP referrer. Not the server maps key.
-   - `REACT_APP_GROWTH_MODULE_ENABLED=true` — optional. The Growth page renders only when this is the string `true`. The nav link stays visible unless the value is `false`.
+   - `REACT_APP_GROWTH_MODULE_ENABLED=true` — optional. Growth is a section of Settings. The tools render only when this is the string `true`; any other value shows the off notice in that section. `/growth` redirects there.
    - `REACT_APP_ASSIST_MODULE_ENABLED` — optional. Leave unset (the widget shows when the API has `GOOGLE_API_KEY`). Set `false` to hide it.
 4. Deploy, then **Settings → Domains** → add `thecalibrationcrew.us` and `www.thecalibrationcrew.us`. Set the apex as the primary domain so `www` redirects to it. Copy the DNS records Vercel shows for this project. Do not reuse another project's CNAME. Vercel's apex record is an A record (their docs use `76.76.21.21`); `www` is a CNAME to a project-specific `*.vercel-dns-*.com` host.
 

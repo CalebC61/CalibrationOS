@@ -847,7 +847,7 @@ test("new bookings show the current time and status, not an older booking time",
   expect(screen.getByTestId("new-bookings-panel")).not.toHaveTextContent("T08:00");
 });
 
-test("held shop mail uses plain words and still opens Email preview", async () => {
+test("held shop mail uses plain words and still opens the held-email list", async () => {
   api.get.mockImplementation((url) => {
     const path = String(url);
     if (path.startsWith("/jobs?")) return Promise.resolve({ data: [] });
@@ -862,7 +862,7 @@ test("held shop mail uses plain words and still opens Email preview", async () =
   render(<Dashboard />);
   const link = await screen.findByTestId("shop-emails-off");
   expect(link).toHaveTextContent("Shop emails are on hold — view held emails");
-  expect(link).toHaveAttribute("href", "/email-preview");
+  expect(link).toHaveAttribute("href", "/settings?section=email");
   expect(screen.queryByText(/OFF \(testing\)/)).not.toBeInTheDocument();
 });
 

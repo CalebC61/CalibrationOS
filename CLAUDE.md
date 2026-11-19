@@ -65,7 +65,8 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
 - **Shipped, flagged on:** **Module 9 — Partner Growth Engine v1** (`docs/module9/README.md`) —
   Judy Robinett Power Connector CRM (Top 5 / Key 50 / Vital 100, cap-enforced), deterministic daily
   nurture-touch nudges, touch/intro approve→send with real dispatch via the existing
-  `mock_send_sms`/`send_email` helpers, `/growth` owner nav page. `GROWTH_MODULE_ENABLED=true` by
+  `mock_send_sms`/`send_email` helpers. Growth is a Settings section; `/growth` redirects
+  there. `GROWTH_MODULE_ENABLED=true` by
   default. **Reels are explicitly deferred** — no video-generation capability exists; the
   `ReelAsset` model and `/api/growth/reels/generate` are not implemented.
 
@@ -154,7 +155,7 @@ Check there before starting work on either:
 - **`docs/module9/README.md` — Partner Growth Engine.** v1 shipped and flagged **on**
   (`GROWTH_MODULE_ENABLED=true` by default): `backend/growth/models.py` + `backend/growth/routes.py`
   (contacts/grid/nudges/touches/intros, all real) and `frontend/src/pages/growth/Growth.jsx`
-  (routed at `/growth`, owner nav). Reels are deferred — see the doc's "Deferred" section before
+  (a Settings section; `/growth` redirects there). Reels are deferred — see the doc's "Deferred" section before
   picking that up.
 
 ## Emergent runtime rules (CRITICAL — breaking these breaks hosting)

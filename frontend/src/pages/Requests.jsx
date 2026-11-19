@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import Shell from "../components/Shell";
+import OwnerPage, { OwnerTitle } from "../components/OwnerPage";
 
 function asList(data) {
   if (Array.isArray(data)) return data;
@@ -8,7 +8,7 @@ function asList(data) {
   return null;
 }
 
-export default function Requests() {
+export default function Requests({ bare = false }) {
   const [shops, setShops] = useState([]);
   const [requests, setRequests] = useState([]);
   const [loadError, setLoadError] = useState("");
@@ -90,8 +90,8 @@ export default function Requests() {
   const pending = requests.filter(row => row.status === "pending");
 
   return (
-    <Shell>
-      <h1 className="h1" style={{ marginBottom: 8 }}>New shops</h1>
+    <OwnerPage bare={bare}>
+      <OwnerTitle bare={bare} style={{ marginBottom: 8 }}>New shops</OwnerTitle>
       <p className="muted" style={{ marginBottom: 16 }}>
         These shops created their own accounts. Flag one to look at later. Suspend one to stop booking. You do not approve them first.
       </p>
@@ -168,7 +168,7 @@ export default function Requests() {
           </tbody>
         </table>
       </div>
-    </Shell>
+    </OwnerPage>
   );
 }
 

@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import Shell from "../components/Shell";
+import SectionSwitch from "../components/SectionSwitch";
+import { useOwnerSection } from "../lib/ownerSections";
+import Requests from "./Requests";
+import Invites from "./Invites";
+
+const SHOP_SECTIONS = ["list", "signups", "invites"];
 
 export default function ShopsList() {
+  const [section, choose] = useOwnerSection("/shops", SHOP_SECTIONS, "list");
   const [shops, setShops] = useState([]);
   const [q, setQ] = useState("");
   const [loadError, setLoadError] = useState("");
-  const nav = useNavigate();
 
   async function load() {
     setLoadError("");
@@ -24,16 +30,34 @@ export default function ShopsList() {
       setLoadError(typeof detail === "string" ? detail : "Couldn't load shops. Reload the page.");
     }
   }
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (section === "list") load();
+  }, [section]);
 
   const filtered = shops.filter(s => String(s.name || "").toLowerCase().includes(q.toLowerCase()));
 
   return (
     <Shell>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
         <h1 className="h1">Shops</h1>
-        <Link to="/shops/new" className="btn btn-primary" data-testid="add-shop-btn">+ Add Shop</Link>
+        {section === "list" && (
+          <Link to="/shops/new" className="btn btn-primary" data-testid="add-shop-btn">+ Add Shop</Link>
+        )}
       </div>
+      <SectionSwitch
+        label="Shops"
+        value={section}
+        onChange={choose}
+        options={[
+          { id: "list", label: "Shops" },
+          { id: "signups", label: "New signups" },
+          { id: "invites", label: "Invites" },
+        ]}
+      />
+      {section === "signups" && <Requests bare />}
+      {section === "invites" && <Invites bare />}
+      {section === "list" && (
+      <>
       <input className="input" placeholder="Search shops…" value={q} onChange={e => setQ(e.target.value)}
         style={{ maxWidth: 320, marginBottom: 16 }} data-testid="shop-search" />
       {loadError && (
@@ -71,6 +95,8 @@ export default function ShopsList() {
           </tbody>
         </table>
       </div>
+      </>
+      )}
     </Shell>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import Shell from "../components/Shell";
+import OwnerPage, { OwnerTitle } from "../components/OwnerPage";
 
 function phoenixStamp(iso) {
   if (!iso) return "";
@@ -14,7 +14,7 @@ function phoenixStamp(iso) {
   });
 }
 
-export default function EmailPreview() {
+export default function EmailPreview({ bare = false }) {
   const [rows, setRows] = useState([]);
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState("");
@@ -26,9 +26,9 @@ export default function EmailPreview() {
   }, []);
 
   return (
-    <Shell>
+    <OwnerPage bare={bare}>
       <div style={{ maxWidth: 760 }}>
-        <h1 className="h1" style={{ marginBottom: 8 }}>Email preview</h1>
+        <OwnerTitle bare={bare} style={{ marginBottom: 8 }}>Email preview</OwnerTitle>
         <p className="muted" style={{ marginTop: 0, marginBottom: 20, maxWidth: "62ch" }}>
           These messages were not sent. Shop and customer mail stays here while
           shop emails are off for testing. Nothing on this page sends mail.
@@ -65,6 +65,6 @@ export default function EmailPreview() {
           })}
         </div>
       </div>
-    </Shell>
+    </OwnerPage>
   );
 }

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useRefreshOnShow } from "../lib/refreshOnShow";
-import Shell from "../components/Shell";
+import OwnerPage, { OwnerTitle } from "../components/OwnerPage";
 
-export default function Invoices() {
+export default function Invoices({ bare = false }) {
   const [invs, setInvs] = useState([]);
   const [fees, setFees] = useState([]);
   const load = useCallback(() => {
@@ -13,8 +13,8 @@ export default function Invoices() {
   useEffect(() => { load(); }, [load]);
   useRefreshOnShow(load);
   return (
-    <Shell>
-      <h1 className="h1" style={{ marginBottom: 8 }}>Invoices</h1>
+    <OwnerPage bare={bare}>
+      <OwnerTitle bare={bare} style={{ marginBottom: 8 }}>Invoices</OwnerTitle>
       <div className="muted" style={{ marginBottom: 20, fontSize: 14 }}>
         Each completed job gets one invoice, emailed to the shop as proof of purchase when shop mail is on. Completing a job also files one Xero draft for review. That draft stays a draft until someone sends it in Xero. A $25 late fee is added once to an unpaid invoice-mode job after 7 days.
       </div>
@@ -53,7 +53,7 @@ export default function Invoices() {
           </tbody>
         </table>
       </div>
-    </Shell>
+    </OwnerPage>
   );
 }
 function invoiceStatusLabel(status) {

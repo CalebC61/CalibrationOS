@@ -1,8 +1,17 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+jest.mock("react-router-dom", () => {
+  const React = require("react");
+  return {
+    Link: ({ children, to, ...rest }) => React.createElement("a", { href: typeof to === "string" ? to : "", ...rest }, children),
+  };
+}, { virtual: true });
+
 jest.mock("../components/Shell", () => ({ children }) => <div>{children}</div>);
 jest.mock("../lib/api", () => ({
   api: { get: jest.fn(), post: jest.fn(), put: jest.fn() },
+  formatDate: (value) => String(value || ""),
+  formatTime: (value) => String(value || ""),
 }));
 
 import Settings from "./Settings";

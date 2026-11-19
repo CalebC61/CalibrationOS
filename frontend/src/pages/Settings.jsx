@@ -1,31 +1,54 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useRefreshOnShow } from "../lib/refreshOnShow";
+import { useOwnerSection } from "../lib/ownerSections";
 import Shell from "../components/Shell";
+import SectionSwitch from "../components/SectionSwitch";
+import DaysOff from "./DaysOff";
+import EmailPreview from "./EmailPreview";
+import Messages from "./Messages";
+import Growth from "./growth/Growth";
 
-const TABS = ["pricing", "technicians", "schedule", "integrations"];
+const SETTINGS_TABS = [
+  { id: "pricing", label: "Pricing" },
+  { id: "technicians", label: "Technicians" },
+  { id: "schedule", label: "Schedule" },
+  { id: "integrations", label: "Integrations" },
+  { id: "days-off", label: "Days off" },
+  { id: "email", label: "Held email" },
+  { id: "messages", label: "Messages" },
+  { id: "growth", label: "Growth" },
+];
+const SETTINGS_SECTIONS = SETTINGS_TABS.map((tab) => tab.id);
 
-function xeroReturnTab() {
-  const flag = new URLSearchParams(window.location.search).get("xero");
-  return flag === "connected" || flag === "error" ? "integrations" : "pricing";
+function settingsTabFromLocation() {
+  const params = new URLSearchParams(window.location.search);
+  const flag = params.get("xero");
+  if (flag === "connected" || flag === "error") return "integrations";
+  const section = params.get("section");
+  return SETTINGS_SECTIONS.includes(section) ? section : "pricing";
 }
 
 export default function Settings() {
-  const [tab, setTab] = useState(xeroReturnTab);
+  const [tab, chooseTab] = useOwnerSection("/settings", SETTINGS_SECTIONS, "pricing", settingsTabFromLocation);
   return (
     <Shell>
       <h1 className="h1" style={{ marginBottom: 16 }}>Settings</h1>
-      <div style={{ display: "flex", gap: 4, marginBottom: 20, borderBottom: "1px solid var(--border)" }}>
-        {TABS.map(t => (
-          <button key={t} className={"tab-btn" + (tab === t ? " active" : "")}
-            onClick={() => setTab(t)} data-testid={`tab-${t}`}
-            style={{ textTransform: "capitalize" }}>{t}</button>
-        ))}
-      </div>
+      <SectionSwitch
+        label="Settings"
+        value={tab}
+        onChange={chooseTab}
+        testIdPrefix="tab"
+        options={SETTINGS_TABS}
+      />
       {tab === "pricing" && <PricingTab />}
       {tab === "technicians" && <TechniciansTab />}
       {tab === "schedule" && <ScheduleTab />}
-      {tab === "integrations" && <IntegrationsTab />}
+      {tab === "integrations" && <IntegrationsTab onOpenGrowth={() => chooseTab("growth")} />}
+      {tab === "days-off" && <DaysOff bare />}
+      {tab === "email" && <EmailPreview bare />}
+      {tab === "messages" && <Messages bare />}
+      {tab === "growth" && <Growth bare />}
     </Shell>
   );
 }
@@ -406,7 +429,7 @@ function ScheduleTab() {
   );
 }
 
-function IntegrationsTab() {
+function IntegrationsTab({ onOpenGrowth }) {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState(null);
@@ -516,7 +539,7 @@ function IntegrationsTab() {
           </div>
         </div>
         {status?.growth?.enabled && (
-          <a href="/growth" className="btn btn-ghost" data-testid="growth-open-link">Open Growth</a>
+          <button type="button" className="btn btn-ghost" data-testid="growth-open-link" onClick={onOpenGrowth}>Open Growth</button>
         )}
       </div>
 
