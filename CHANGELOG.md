@@ -15,6 +15,28 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — one booking form (2026-11-19)
+`/portal/book` is the booking form. The owner screen at `/shops/:id/book` uses
+that same component. The owner picks the shop and can type a time. The typed
+time is any clock time. The date field keeps the same 21-day bounds it already
+had for both the shop and the owner. The server still decides before-8:00 AM,
+same-day limits, and whether a time is held. Nothing in billing, Stripe, email,
+or Xero changed.
+
+The owner screen does not say "Please invoice me instead" or "until the owner
+approves it." A held owner booking says "Pending approval." The shop screen
+still shows the warranty redo, the invoice checkbox, "Request this time," and
+"This time is held until the owner approves it." Card-on-file and charge-terms
+gates are unchanged.
+
+The date field treats a partial or unreadable value as not a day, so it does
+not ask for slots with "Invalid date." A slow "That date is in the past."
+answer cannot stay on screen after a later valid date has slots.
+
+A Dispatch link (`/dashboard?date=&job=<id>`) draws an orange `#FF5F1F` ring,
+a short pulse, and an orange tint on that card. An AT RISK card keeps its red
+border. The ring sits outside it. No new env var.
+
 ### Changed — the desk card shows one next action (2026-11-19)
 The owner Dispatch job card (`/dashboard`) keeps a single next step on the
 face of the card: Approve while a time is pending, Start Driving or I've

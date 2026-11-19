@@ -294,6 +294,17 @@ backend:
           comment: "Invite register requires charge_accepted and stores the terms text without the booking timestamp. Saving the card writes charge_authorization_accepted_at on the shop and the user. A signed agreement with no charge acceptance does not. POST /portal/book returns 403 for a missing, expired, or removed card, and for missing charge terms. Accepting the terms gets past that 403. Owner invites stay off GET /new-shops."
 
 frontend:
+  - task: "One booking form for the shop and the owner"
+    implemented: true
+    working: true
+    file: "frontend/src/components/BookingForm.jsx, frontend/src/pages/PortalBook.jsx, frontend/src/pages/PublicBooking.jsx, frontend/src/lib/dateInput.js, frontend/src/pages/Dashboard.jsx, frontend/src/index.css"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Portal book and /shops/:id/book share BookingForm. The owner picks the shop and can type a time. The owner screen has no invoice-me checkbox and no 'until the owner approves it' sentence. Shop warranty, 21-day min/max, pending-approval slots, card gate, and confirmation stay. An unreadable date is not posted. A late 'That date is in the past.' response does not cover later slots. A dashboard job link adds card-job-focus (orange ring) as well as card-job-at-risk. Jest. Billing flags untouched."
   - task: "Owner day header recomputes miles and Done by from the jobs still on the board"
     implemented: true
     working: true

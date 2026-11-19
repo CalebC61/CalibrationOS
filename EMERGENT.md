@@ -22,6 +22,14 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-19): one booking form.** The shop two-step form is also
+  the owner form. The owner picks the shop and can type a time. Shop rules
+  (21 days, before 8:00 AM, warranty, card on file, confirmation) are
+  unchanged. The owner copy drops "invoice me" and "until the owner approves
+  it." The date field ignores an unreadable value, and a stale past-date
+  message cannot sit on top of later slots. A linked Dispatch card has an
+  orange ring and a short pulse, separate from the red AT RISK border. No
+  new env var. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
 - **Session (2026-11-19): the desk card has one next action.** Charge, delete,
   trip fee, Xero, reschedule, and cancel sit under More. The card links to
   the phone screen for that job. A shop job link opens and highlights that
