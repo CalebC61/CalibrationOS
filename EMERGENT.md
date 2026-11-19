@@ -22,6 +22,11 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-19): owner bar is four tabs.** Today, Shops, Money, and
+  Settings. New signups and invites live on Shops. Charges and invoices live
+  on Money. Days off, held email, the text log, and Growth live in Settings.
+  The old paths redirect. Invite and Growth Send are unchanged. No new env
+  var. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
 - **Session (2026-11-19): one booking form.** The shop two-step form is also
   the owner form. The owner picks the shop and can type a time. Shop rules
   (21 days, before 8:00 AM, warranty, card on file, confirmation) are

@@ -34,7 +34,7 @@ ADAS calibration B2B sublet growth (glass shops → collision radar).
   on Module 8 existing; Module 8 can read from it later.
 - **Seed data** — grounded in the real 3 demo shops + the owner as `top5` contacts. `key50`/
   `vital100` start empty; real partners get added through the Growth UI, not fabricated.
-- **Frontend** — `/growth` page (owner nav), circle-grouped grid + add-contact form, Today's Nudges
+- **Frontend** — Growth section of Settings (`/growth` redirects there), circle-grouped grid + add-contact form, Today's Nudges
   panel with Approve/Send, a simple intro creator/list. Settings → Integrations shows a Growth
   status row.
 

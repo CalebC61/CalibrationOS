@@ -15,15 +15,10 @@ import OwnerBook from "@/pages/PublicBooking";
 import PortalScorecard from "@/pages/PortalScorecard";
 import OwnerAction from "@/pages/OwnerAction";
 import Field from "@/pages/Field";
-import Invoices from "@/pages/Invoices";
-import Growth from "@/pages/growth/Growth";
-import Messages from "@/pages/Messages";
+import Money from "@/pages/Money";
 import Settings from "@/pages/Settings";
-import DaysOff from "@/pages/DaysOff";
 import MapPins from "@/pages/MapPins";
-import EmailPreview from "@/pages/EmailPreview";
-import Invites from "@/pages/Invites";
-import ChargeQueue from "@/pages/ChargeQueue";
+import { OWNER_REDIRECTS } from "@/ownerNav";
 import PortalLogin from "@/pages/PortalLogin";
 import PortalRegister from "@/pages/PortalRegister";
 import PortalSetupReturn from "@/pages/PortalSetupReturn";
@@ -35,7 +30,6 @@ import PortalSettings from "@/pages/PortalSettings";
 import PortalReady from "@/pages/PortalReady";
 import PortalForgot from "@/pages/PortalForgot";
 import PortalReset from "@/pages/PortalReset";
-import Requests from "@/pages/Requests";
 
 function Protected({ children, ownerOnly }) {
   const loc = useLocation();
@@ -99,20 +93,20 @@ function App() {
 
           {/* Owner dashboard */}
           <Route path="/dashboard" element={<Protected ownerOnly><Dashboard /></Protected>} />
-          <Route path="/requests" element={<Protected ownerOnly><Requests /></Protected>} />
-          <Route path="/email-preview" element={<Protected ownerOnly><EmailPreview /></Protected>} />
           <Route path="/shops" element={<Protected ownerOnly><ShopsList /></Protected>} />
           <Route path="/shops/new" element={<Protected ownerOnly><ShopNew /></Protected>} />
           <Route path="/shops/:id/book" element={<Protected ownerOnly><OwnerBook /></Protected>} />
           <Route path="/shops/:id" element={<Protected ownerOnly><ShopDetail /></Protected>} />
-          <Route path="/invites" element={<Protected ownerOnly><Invites /></Protected>} />
-          <Route path="/charges" element={<Protected ownerOnly><ChargeQueue /></Protected>} />
-          <Route path="/growth" element={<Protected ownerOnly><Growth /></Protected>} />
-          <Route path="/invoices" element={<Protected ownerOnly><Invoices /></Protected>} />
-          <Route path="/messages" element={<Protected ownerOnly><Messages /></Protected>} />
+          <Route path="/money" element={<Protected ownerOnly><Money /></Protected>} />
           <Route path="/settings" element={<Protected ownerOnly><Settings /></Protected>} />
-          <Route path="/days-off" element={<Protected ownerOnly><DaysOff /></Protected>} />
           <Route path="/map-pins" element={<Protected ownerOnly><MapPins /></Protected>} />
+          {OWNER_REDIRECTS.map((item) => (
+            <Route
+              key={item.path}
+              path={item.path}
+              element={<Protected ownerOnly><Navigate to={item.to} replace /></Protected>}
+            />
+          ))}
           <Route path="/field" element={<Protected><Field /></Protected>} />
           <Route path="*" element={<RoleRedirect />} />
         </Routes>

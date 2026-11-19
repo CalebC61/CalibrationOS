@@ -15,6 +15,24 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — owner bar is Today, Shops, Money, Settings (2026-11-19)
+The owner bar in `Shell.jsx` is four tabs. Today is the dispatch board at
+`/dashboard` (new-bookings pill and the held-email notice stay on that board).
+Shops is the shop list, with New signups and Invites as sections on that page.
+Money is Charges and Invoices on `/money`. Settings keeps Pricing, Technicians,
+Schedule, and Integrations, and adds Days off, Held email, Messages, and Growth.
+
+Old paths redirect for an owner: `/requests` → `/shops?section=signups`,
+`/invites` → `/shops?section=invites`, `/charges` → `/money`,
+`/invoices` → `/money?section=invoices`, `/days-off` → `/settings?section=days-off`,
+`/email-preview` → `/settings?section=email`, `/messages` → `/settings?section=messages`,
+`/growth` → `/settings?section=growth`. A signed-out visit still goes to login.
+The phone bar collapses to a Menu button, same idea as the shop portal.
+
+Invite, Resend, and Growth Send are the same buttons and the same calls.
+Nothing on the held-email list sends mail. No billing, Stripe, Xero, permission,
+or env change.
+
 ### Changed — shop portal on a phone (2026-11-19)
 The shop bar is Today, Jobs, Book, and Account. Today is the day map at
 `/portal`, plus the four last-30-days counts that used to be the Scorecard

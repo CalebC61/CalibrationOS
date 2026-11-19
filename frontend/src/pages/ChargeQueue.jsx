@@ -1,10 +1,10 @@
 import { useState, useCallback, useEffect } from "react";
 import { api } from "../lib/api";
-import Shell from "../components/Shell";
+import OwnerPage, { OwnerTitle } from "../components/OwnerPage";
 
 const fmt = (iso) => iso ? new Date(iso).toLocaleString() : "—";
 
-export default function ChargeQueue() {
+export default function ChargeQueue({ bare = false }) {
   const [queue, setQueue] = useState([]);
   const [busyId, setBusyId] = useState(null);
   const [errors, setErrors] = useState({}); // job_id -> message
@@ -41,8 +41,8 @@ export default function ChargeQueue() {
   }
 
   return (
-    <Shell>
-      <h1 className="h1" style={{ marginBottom: 8 }}>Charge Queue</h1>
+    <OwnerPage bare={bare}>
+      <OwnerTitle bare={bare} style={{ marginBottom: 8 }}>Charge Queue</OwnerTitle>
       <div className="muted" style={{ marginBottom: 16, fontSize: 14 }}>
         Completed portal-shop jobs awaiting card charge. Click <b>Charge Now</b> to bill the card on file.
       </div>
@@ -97,7 +97,7 @@ export default function ChargeQueue() {
           })}
         </div>
       )}
-    </Shell>
+    </OwnerPage>
   );
 }
 const Metric = ({ label, value }) => (

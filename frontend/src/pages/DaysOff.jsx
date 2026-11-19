@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, formatDate, formatTime } from "../lib/api";
-import Shell from "../components/Shell";
+import OwnerPage, { OwnerTitle } from "../components/OwnerPage";
 
 function prettyDay(iso) {
   if (!iso) return "";
@@ -11,7 +11,7 @@ function prettyDay(iso) {
   });
 }
 
-export default function DaysOff() {
+export default function DaysOff({ bare = false }) {
   const [days, setDays] = useState([]);
   const [conflicts, setConflicts] = useState([]);
   const [error, setError] = useState("");
@@ -71,9 +71,9 @@ export default function DaysOff() {
   const custom = days.filter(row => row.kind !== "holiday");
 
   return (
-    <Shell>
+    <OwnerPage bare={bare}>
       <div style={{ maxWidth: 720 }}>
-        <h1 className="h1" style={{ marginBottom: 8 }}>Days off</h1>
+        <OwnerTitle bare={bare} style={{ marginBottom: 8 }}>Days off</OwnerTitle>
         <p className="muted" style={{ marginTop: 0, marginBottom: 20, maxWidth: "62ch" }}>
           Shops cannot book a closed day. A job already on the board stays there.
           It is listed below so you can move it. Nothing is cancelled for you.
@@ -187,6 +187,6 @@ export default function DaysOff() {
           <Link to="/map-pins" data-testid="map-pins-link">Addresses saved with a guessed pin</Link>
         </p>
       </div>
-    </Shell>
+    </OwnerPage>
   );
 }

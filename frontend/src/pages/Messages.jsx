@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import Shell from "../components/Shell";
+import OwnerPage, { OwnerTitle } from "../components/OwnerPage";
 
 const KIND_LABEL = {
   booking_confirmed: "Booking Confirmed", on_my_way: "On My Way",
   completed: "Completed", cancelled: "Cancelled", generic: "Generic",
 };
 
-export default function Messages() {
+export default function Messages({ bare = false }) {
   const [logs, setLogs] = useState([]);
   useEffect(() => { api.get("/sms-log").then(r => setLogs(r.data)); }, []);
   return (
-    <Shell>
-      <h1 className="h1" style={{ marginBottom: 8 }}>Messages</h1>
+    <OwnerPage bare={bare}>
+      <OwnerTitle bare={bare} style={{ marginBottom: 8 }}>Messages</OwnerTitle>
       <div className="muted" style={{ marginBottom: 20, fontSize: 14 }}>
         Mock SMS log — these would send via Twilio in production.
       </div>
@@ -29,6 +29,6 @@ export default function Messages() {
         ))}
         {logs.length === 0 && <div className="muted">No messages yet.</div>}
       </div>
-    </Shell>
+    </OwnerPage>
   );
 }

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import Shell from "../components/Shell";
+import OwnerPage, { OwnerTitle } from "../components/OwnerPage";
 
-export default function Invites() {
+export default function Invites({ bare = false }) {
   const [shops, setShops] = useState([]);
   const [invites, setInvites] = useState([]);
   const [emailLog, setEmailLog] = useState({ sent: [], pending_manual: [] });
@@ -56,8 +56,8 @@ export default function Invites() {
   }
 
   return (
-    <Shell>
-      <h1 className="h1" style={{ marginBottom: 16 }}>Portal Invitations</h1>
+    <OwnerPage bare={bare}>
+      <OwnerTitle bare={bare} style={{ marginBottom: 16 }}>Portal Invitations</OwnerTitle>
       {loadError && (
         <div role="alert" data-testid="invites-load-error" style={{ color: "var(--red)", marginBottom: 16 }}>
           {loadError}
@@ -145,7 +145,7 @@ export default function Invites() {
           </div>
         </>
       )}
-    </Shell>
+    </OwnerPage>
   );
 }
 const Th = ({ children }) => <th style={{ padding: "10px 14px", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)", fontWeight: 600 }}>{children}</th>;

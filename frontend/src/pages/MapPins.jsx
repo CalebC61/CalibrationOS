@@ -49,7 +49,7 @@ export default function MapPins() {
           keep a guess. Look the address up again, or open the shop and correct it.
         </p>
         <p style={{ marginTop: 0 }}>
-          <Link to="/days-off">Back to days off</Link>
+          <Link to="/settings?section=days-off">Back to days off</Link>
         </p>
         {error && <div role="alert" style={{ color: "var(--red)", marginBottom: 16 }} data-testid="pins-error">{error}</div>}
         {notice && <div style={{ marginBottom: 16 }} data-testid="pins-notice">{notice}</div>}

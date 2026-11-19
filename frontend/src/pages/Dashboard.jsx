@@ -382,7 +382,7 @@ export default function Dashboard() {
       )}
 
       {summary && summary.shop_emails_enabled === false && (
-        <Link to="/email-preview" data-testid="shop-emails-off" style={{
+        <Link to="/settings?section=email" data-testid="shop-emails-off" style={{
           display: "inline-block", marginBottom: 12, padding: "4px 10px", borderRadius: 999,
           background: "rgba(245, 158, 11, 0.16)", color: "var(--yellow)",
           fontSize: 13, fontWeight: 600, textDecoration: "none",

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
-import Shell from "@/components/Shell";
+import { api } from "../../lib/api";
+import OwnerPage, { OwnerTitle } from "../../components/OwnerPage";
 
 const CIRCLE_LABELS = { top5: "Top 5", key50: "Key 50", vital100: "Vital 100", prospect: "Prospect" };
 const CIRCLE_ORDER = ["top5", "key50", "vital100", "prospect"];
@@ -9,26 +9,36 @@ const CHANNEL_LABEL = {
   in_person: "In Person", video_reel: "Reel",
 };
 
-export default function Growth() {
-  const enabled = process.env.REACT_APP_GROWTH_MODULE_ENABLED === 'true';
-  if (!enabled) {
-    return (<div className="min-h-screen bg-[#2A2E37] text-[#E8E8E8] flex items-center justify-center p-8" style={{ fontFamily: 'DM Sans, sans-serif' }}>
-      <div className="max-w-xl text-center border border-[#404653] rounded-2xl p-10 bg-[#343843]">
-        <h1 style={{ fontFamily: 'Saira Stencil One, sans-serif' }} className="text-4xl text-[#FF7E1E] mb-2 tracking-wider">CALIBRATION<span className="bg-[#FF5F1F] text-[#0a0a0a] px-2 ml-2 rounded">OS</span></h1>
-        <div style={{ fontFamily: 'Saira Stencil One, sans-serif' }} className="text-2xl mb-4">PARTNER GROWTH ENGINE</div>
-        <p className="text-[#9AA0A6]">Power Connector 5+50+100<br />Module 9 – feature-flagged OFF</p>
-        <div className="mt-6 text-left bg-[#2A2E37] rounded-xl p-4 text-sm" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
-          Top 5 → daily<br />Key 50 → weekly<br />Vital 100 → monthly<br /><br />
-          <span className="text-[#FF7E1E]">favors_given ≥ 2 before ask</span>
-        </div>
-        <p className="text-xs text-[#6B7280] mt-4">GROWTH_MODULE_ENABLED=false · see docs/module9/README.md</p>
+function GrowthOff({ bare = false }) {
+  const BrandLockup = bare ? "div" : "h1";
+  return (
+    <div className="max-w-xl text-center border border-[#404653] rounded-2xl p-10 bg-[#343843]" data-testid="growth-off">
+      <BrandLockup style={{ fontFamily: 'Saira Stencil One, sans-serif' }} className="text-4xl text-[#FF7E1E] mb-2 tracking-wider">CALIBRATION<span className="bg-[#FF5F1F] text-[#0a0a0a] px-2 ml-2 rounded">OS</span></BrandLockup>
+      <div style={{ fontFamily: 'Saira Stencil One, sans-serif' }} className="text-2xl mb-4">PARTNER GROWTH ENGINE</div>
+      <p className="text-[#9AA0A6]">Power Connector 5+50+100<br />Module 9 – feature-flagged OFF</p>
+      <div className="mt-6 text-left bg-[#2A2E37] rounded-xl p-4 text-sm" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+        Top 5 → daily<br />Key 50 → weekly<br />Vital 100 → monthly<br /><br />
+        <span className="text-[#FF7E1E]">favors_given ≥ 2 before ask</span>
       </div>
-    </div>);
-  }
-  return <GrowthEnabled />;
+      <p className="text-xs text-[#6B7280] mt-4">GROWTH_MODULE_ENABLED=false · see docs/module9/README.md</p>
+    </div>
+  );
 }
 
-function GrowthEnabled() {
+export default function Growth({ bare = false }) {
+  const enabled = process.env.REACT_APP_GROWTH_MODULE_ENABLED === 'true';
+  if (!enabled) {
+    if (bare) return <GrowthOff bare />;
+    return (
+      <div className="min-h-screen bg-[#2A2E37] text-[#E8E8E8] flex items-center justify-center p-8" style={{ fontFamily: 'DM Sans, sans-serif' }}>
+        <GrowthOff />
+      </div>
+    );
+  }
+  return <GrowthEnabled bare={bare} />;
+}
+
+function GrowthEnabled({ bare = false }) {
   const [grid, setGrid] = useState(null);
   const [nudges, setNudges] = useState([]);
   const [intros, setIntros] = useState([]);
@@ -106,12 +116,17 @@ function GrowthEnabled() {
   }
 
   if (loading) {
-    return (<Shell><h1 className="h1" style={{ marginBottom: 8 }}>Partner Growth</h1><div className="muted">Loading…</div></Shell>);
+    return (
+      <OwnerPage bare={bare}>
+        <OwnerTitle bare={bare} style={{ marginBottom: 8 }}>Partner Growth</OwnerTitle>
+        <div className="muted">Loading…</div>
+      </OwnerPage>
+    );
   }
 
   return (
-    <Shell>
-      <h1 className="h1" style={{ marginBottom: 8 }}>Partner Growth</h1>
+    <OwnerPage bare={bare}>
+      <OwnerTitle bare={bare} style={{ marginBottom: 8 }}>Partner Growth</OwnerTitle>
       <div className="muted" style={{ marginBottom: 20, fontSize: 14 }}>
         Power Connector 5+50+100 — Top 5 daily, Key 50 weekly, Vital 100 monthly. Give two favors before asking.
       </div>
@@ -253,6 +268,6 @@ function GrowthEnabled() {
           })}
         </div>
       </section>
-    </Shell>
+    </OwnerPage>
   );
 }
