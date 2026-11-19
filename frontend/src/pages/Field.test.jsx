@@ -202,3 +202,23 @@ test("a free warranty redo shows its badge and does not offer a Xero retry", asy
   expect(screen.getByTestId("xero-draft-status")).toHaveTextContent("no Xero draft is filed");
   expect(screen.queryByTestId("retry-xero-draft")).not.toBeInTheDocument();
 });
+
+test("a desk link opens that job on the phone even when it is not on today's list", async () => {
+  window.history.pushState({}, "", "/field?job=job-glass");
+  const glass = {
+    ...attentionJob,
+    id: "job-glass",
+    status: "booked",
+    shop_name: "Preferred Auto Glass",
+  };
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [] });
+    if (path === "/jobs/job-glass") return Promise.resolve({ data: glass });
+    return Promise.resolve({ data: [] });
+  });
+
+  render(<Field />);
+  expect(await screen.findByTestId("job-detail")).toHaveTextContent("Preferred Auto Glass");
+  window.history.pushState({}, "", "/");
+});

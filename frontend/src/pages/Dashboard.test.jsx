@@ -51,6 +51,7 @@ import { api } from "../lib/api";
 
 afterEach(() => {
   mockAuth = { role: "owner", name: "Caleb" };
+  window.history.pushState({}, "", "/");
 });
 
 const job = {
@@ -910,4 +911,96 @@ test("Charge card now keeps the paid job when the day list is still unpaid", asy
   expect(await screen.findByTestId("job-paid-job-1")).toHaveTextContent("Paid $125.00 · 9:00 AM");
   expect(screen.queryByText("Invoice — hold charge")).not.toBeInTheDocument();
   expect(screen.queryByTestId("job-charge-job-1")).not.toBeInTheDocument();
+});
+
+test("the desk card shows one next action and keeps the rest under More", async () => {
+  mockGets([], { ...job, status: "booked", scheduled_start: "2026-11-18T02:00:00Z" });
+  render(<Dashboard />);
+  const card = await screen.findByTestId("job-card-job-1");
+  const next = card.querySelector(".job-next");
+  expect(next).toHaveTextContent("Start Driving");
+  expect(next).toHaveTextContent("Open on the phone");
+  expect(next).not.toHaveTextContent("Delete");
+  expect(next).not.toHaveTextContent("Reschedule");
+  expect(next).not.toHaveTextContent("Cancel");
+  expect(screen.getByTestId("job-phone-job-1")).toHaveAttribute("href", "/field?job=job-1");
+  const more = screen.getByTestId("job-more-job-1");
+  expect(more).toHaveTextContent("Delete");
+  expect(more).toHaveTextContent("Reschedule");
+  expect(more).toHaveTextContent("Cancel");
+  expect(more).toHaveTextContent("More");
+});
+
+test("a failed next action stays on the board instead of a browser alert", async () => {
+  window.alert = jest.fn();
+  mockGets([], { ...job, status: "booked", scheduled_start: "2026-11-18T02:00:00Z" });
+  api.post.mockRejectedValue({ response: { data: { detail: "Not today." } } });
+  render(<Dashboard />);
+  fireEvent.click(await screen.findByTestId("job-action-job-1"));
+  expect(await screen.findByTestId("board-notice")).toHaveTextContent("Not today.");
+  expect(window.alert).not.toHaveBeenCalled();
+});
+
+test("a deep link shows the job when it is assigned to someone else", async () => {
+  window.history.pushState({}, "", "/dashboard?date=2026-11-13&job=job-glass");
+  const glass = {
+    ...job,
+    id: "job-glass",
+    status: "booked",
+    shop_name: "Preferred Auto Glass",
+    scheduled_start: "2026-11-13T21:00:00+00:00",
+    technician_id: "not-on-the-board",
+    price: 150,
+  };
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [glass] });
+    if (path.includes("/dashboard/summary")) return summaryGet();
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/routing-techs")) {
+      return Promise.resolve({ data: [{ id: "caleb", name: "Caleb", role: "owner", routes_jobs: true, is_active: true }] });
+    }
+    return Promise.resolve({ data: [] });
+  });
+  const scroll = jest.fn();
+  window.HTMLElement.prototype.scrollIntoView = scroll;
+
+  render(<Dashboard />);
+  const card = await screen.findByTestId("job-card-job-glass");
+  expect(card).toHaveTextContent("Preferred Auto Glass");
+  expect(card).toHaveClass("card-job-focus");
+  expect(screen.queryByText("No jobs for this technician yet")).not.toBeInTheDocument();
+  expect(screen.queryByText("No jobs on this day")).not.toBeInTheDocument();
+  await waitFor(() => expect(scroll).toHaveBeenCalled());
+});
+
+test("a deep link still shows the job when the day list missed it", async () => {
+  window.history.pushState({}, "", "/dashboard?date=2026-11-14&job=job-glass");
+  const glass = {
+    ...job,
+    id: "job-glass",
+    status: "booked",
+    shop_name: "Preferred Auto Glass",
+    scheduled_start: "2026-11-13T21:00:00+00:00",
+    technician_id: "not-on-the-board",
+    price: 150,
+  };
+  api.get.mockImplementation((url) => {
+    const path = String(url);
+    if (path.startsWith("/jobs?")) return Promise.resolve({ data: [] });
+    if (path === "/jobs/job-glass") return Promise.resolve({ data: glass });
+    if (path.includes("/dashboard/summary")) return summaryGet();
+    if (path.includes("/notifications")) return Promise.resolve({ data: { count: 0, alerts: [] } });
+    if (path.includes("/routing-techs")) {
+      return Promise.resolve({ data: [{ id: "caleb", name: "Caleb", role: "owner", routes_jobs: true, is_active: true }] });
+    }
+    return Promise.resolve({ data: [] });
+  });
+
+  render(<Dashboard />);
+  expect(await screen.findByTestId("job-card-job-glass")).toHaveTextContent("Preferred Auto Glass");
+  expect(screen.queryByText("No jobs for this technician yet")).not.toBeInTheDocument();
+  expect(screen.queryByText("No jobs on this day")).not.toBeInTheDocument();
+  expect(api.get).toHaveBeenCalledWith("/jobs?date_str=2026-11-13");
+  expect(api.get).toHaveBeenCalledWith("/jobs/job-glass");
 });

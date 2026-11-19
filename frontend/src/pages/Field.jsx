@@ -21,6 +21,12 @@ function isPdfDoc(doc) {
   return name.endsWith(".pdf") || type.includes("pdf");
 }
 
+function fieldJobFromSearch() {
+  if (typeof window === "undefined") return "";
+  const value = new URLSearchParams(window.location.search).get("job") || "";
+  return /^[\w-]+$/.test(value) ? value : "";
+}
+
 /** Mobile-optimized PWA technician field view. Works on phone or desktop. */
 export default function Field() {
   const nav = useNavigate();
@@ -41,11 +47,36 @@ export default function Field() {
       const j = await api.get(`/jobs?date_str=${phoenixTodayStr()}`);
       if (gen !== loadGen.current) return;
       const visible = (j.data || []).filter(isOnDayBoard);
-      setJobs(current => mergeJobList(current, visible));
+      const pin = fieldJobFromSearch();
+      setJobs(current => {
+        const merged = mergeJobList(current, visible);
+        if (!pin || merged.some(item => item.id === pin)) return merged;
+        const kept = (current || []).find(item => item.id === pin);
+        return kept ? [...merged, kept] : merged;
+      });
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
   useRefreshOnShow(load);
+
+  const openedPin = useRef("");
+  useEffect(() => {
+    const pin = fieldJobFromSearch();
+    if (!pin || openedPin.current === pin) return undefined;
+    if (jobs.some(item => item.id === pin)) {
+      openedPin.current = pin;
+      setActive(pin);
+      return undefined;
+    }
+    let cancel = false;
+    api.get(`/jobs/${pin}`).then(({ data }) => {
+      if (cancel || !data?.id || !isOnDayBoard(data)) return;
+      openedPin.current = pin;
+      setJobs(current => current.some(item => item.id === data.id) ? current : [...current, data]);
+      setActive(data.id);
+    }).catch(() => {});
+    return () => { cancel = true; };
+  }, [jobs]);
 
   function showJob(job) {
     if (!job?.id) return;
@@ -300,11 +331,11 @@ export default function Field() {
         </h1>
         {loading && <div className="muted">Loading…</div>}
 
-        {!loading && jobs.length === 0 && (
+        {!loading && jobs.filter(j => isPhoenixToday(j.scheduled_start)).length === 0 && (
           <div className="surface muted" style={{ padding: 24, textAlign: "center" }}>No jobs today.</div>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {jobs.map((j, idx) => (
+          {jobs.filter(j => isPhoenixToday(j.scheduled_start)).map((j, idx) => (
             <button key={j.id} className="card-job" style={{ textAlign: "left", width: "100%", cursor: "pointer", background: "var(--bg-surface)" }}
               onClick={() => setActive(j.id)} data-testid={`field-job-${j.id}`}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

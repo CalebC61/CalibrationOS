@@ -164,7 +164,7 @@ from days_off import closure_message, holiday_records, jobs_to_flag, parse_range
 from owner_links import assess_owner_link, mark_used, mint_owner_link, token_claims
 from business_time import (
     BUSINESS_TZ, business_date, business_day_bounds, clamp_start_to_business_day,
-    offered_slot_starts, zone_window,
+    in_business_day, offered_slot_starts, zone_window,
 )
 from booking_fields import completion_notes, job_customer_fields
 from job_edits import changed_keys, prepare_edit, shift_scheduled_end, values_differ
@@ -1851,15 +1851,28 @@ def owner_status_label(status) -> str:
 
 
 def _job_instant(value):
-    if not value:
+    """UTC instant for a stored start. Strings and datetimes both count.
+
+    A space instead of 'T' is still an ISO instant. Naive values are UTC,
+    matching the rest of the backend.
+    """
+    if isinstance(value, datetime):
+        parsed = value
+    elif not value:
         return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _on_business_day(value, day: date) -> bool:
+    instant = _job_instant(value)
+    return bool(instant) and in_business_day(instant, day)
 
 
 def _owner_job_summary(job: dict) -> dict:
@@ -2853,22 +2866,61 @@ def annotate_at_risk(jobs: List[dict]) -> List[dict]:
         j["is_at_risk"] = False
         j["risk_reason"] = None
         if j["status"] in ("driving", "on_site"):
-            sched_end = datetime.fromisoformat(j["scheduled_end"])
-            if sched_end.tzinfo is None:
-                sched_end = sched_end.replace(tzinfo=timezone.utc)
-            if now > sched_end:
+            sched_end = _job_instant(j.get("scheduled_end"))
+            if sched_end and now > sched_end:
                 overrun = int((now - sched_end).total_seconds() / 60)
                 j["is_at_risk"] = True
                 j["risk_reason"] = f"Running {overrun} min over scheduled end"
         elif j["status"] == "booked":
-            sched_start = datetime.fromisoformat(j["scheduled_start"])
-            if sched_start.tzinfo is None:
-                sched_start = sched_start.replace(tzinfo=timezone.utc)
-            if now > sched_start + timedelta(minutes=10):
+            sched_start = _job_instant(j.get("scheduled_start"))
+            if sched_start and now > sched_start + timedelta(minutes=10):
                 late = int((now - sched_start).total_seconds() / 60)
                 j["is_at_risk"] = True
                 j["risk_reason"] = f"Start {late} min past scheduled time"
     return jobs
+
+
+async def _jobs_for_phoenix_day(day: date, hidden) -> list:
+    """Jobs whose start falls on this Phoenix day.
+
+    The shop page dates a job with the same Phoenix calendar day. The desk
+    asks for that day. A start stored as a UTC ISO string with 'T' matches a
+    string range. A space instead of 'T' sorts before 'T' and falls out of
+    that range. A datetime value does not match a string range at all. Read
+    a wider string window and a datetime window, then keep the instants that
+    are actually on `day`.
+    """
+    day_start, day_end = business_day_bounds(day)
+    pad = timedelta(days=1)
+    hidden_q = {"status": {"$nin": list(hidden)}}
+    queries = [
+        {
+            **hidden_q,
+            "scheduled_start": {"$gte": iso(day_start - pad), "$lt": iso(day_end + pad)},
+        },
+        {
+            **hidden_q,
+            "scheduled_start": {"$gte": day_start, "$lt": day_end},
+        },
+    ]
+    found = []
+    seen = set()
+    for query in queries:
+        try:
+            rows = await owner_documents(db.jobs, query=query, limit=500, sort_key="scheduled_start")
+        except TypeError:
+            continue
+        for row in rows or []:
+            key = row.get("id")
+            if key in seen:
+                continue
+            if not _on_business_day(row.get("scheduled_start"), day):
+                continue
+            seen.add(key)
+            found.append(row)
+    found.sort(key=lambda row: (_job_instant(row.get("scheduled_start")) or datetime.min.replace(tzinfo=timezone.utc)).isoformat())
+    return found
+
 
 @api.get("/jobs")
 async def list_jobs(
@@ -2906,13 +2958,8 @@ async def list_jobs(
             raise HTTPException(400, "Invalid date")
     else:
         d = business_date()
-    day_start, day_end = business_day_bounds(d)
     hidden = ["declined"] if include_cancelled else ["cancelled", "declined"]
-    q = {
-        "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
-        "status": {"$nin": hidden},
-    }
-    jobs = await owner_documents(db.jobs, query=q, limit=500, sort_key="scheduled_start")
+    jobs = await _jobs_for_phoenix_day(d, hidden)
     return annotate_at_risk(jobs)
 
 @api.get("/jobs/{job_id}")
@@ -3797,15 +3844,18 @@ async def dashboard_summary(date_str: Optional[str] = None, tech=Depends(require
         d = datetime.strptime(date_str, "%Y-%m-%d").date()
     else:
         d = business_date()
-    day_start, day_end = business_day_bounds(d)
-    jobs = await db.jobs.find({
-        "scheduled_start": {"$gte": iso(day_start), "$lt": iso(day_end)},
-        "status": {"$nin": ["cancelled", "declined"]},
-    }, {"_id": 0}).to_list(500)
+    jobs = await _jobs_for_phoenix_day(d, ["cancelled", "declined"])
     revenue = sum(j["price"] for j in jobs)
     drive_min = sum((j.get("drive_time_minutes") or 0) for j in jobs)
     miles = round(drive_min * 0.5, 1)  # ~30 mph average
-    done_by = max((j["scheduled_end"] for j in jobs), default=None)
+    ends = []
+    for job in jobs:
+        end = job.get("scheduled_end")
+        if isinstance(end, datetime):
+            ends.append(iso(end if end.tzinfo else end.replace(tzinfo=timezone.utc)))
+        elif end:
+            ends.append(end)
+    done_by = max(ends, default=None)
     annotated = annotate_at_risk(jobs)
     at_risk = sum(1 for j in annotated if j["is_at_risk"])
     return {

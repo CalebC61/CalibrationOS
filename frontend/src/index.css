@@ -222,8 +222,39 @@ html, body, #root {
 }
 .card-job:hover { border-color: var(--border-active); }
 
-.card-job-new {
+.card-job-new,
+.card-job-focus {
   border-color: var(--accent);
+  scroll-margin-block: 24px;
+}
+.job-next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+.job-phone {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  text-underline-offset: 3px;
+}
+.job-more { margin-top: 12px; }
+.job-more > summary {
+  display: inline-flex;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+  width: fit-content;
+}
+.job-more > summary::-webkit-details-marker { display: none; }
+.job-more-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
 }
 .card-job-dropzone {
   border-color: var(--accent) !important;

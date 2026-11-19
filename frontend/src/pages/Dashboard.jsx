@@ -16,6 +16,19 @@ function boardDateFromSearch() {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
 }
 
+function boardJobFromSearch() {
+  if (typeof window === "undefined") return "";
+  const value = new URLSearchParams(window.location.search).get("job") || "";
+  return /^[\w-]+$/.test(value) ? value : "";
+}
+
+function phoenixDayOf(iso) {
+  if (!iso) return "";
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return "";
+  return phoenixTodayStr(when);
+}
+
 const STATUS_FLOW = {
   booked: { next: "driving", label: "Start Driving" },
   driving: { next: "on_site", label: "I've Arrived" },
@@ -43,9 +56,12 @@ export default function Dashboard() {
   const [closedJobs, setClosedJobs] = useState([]);
   const [closedStatus, setClosedStatus] = useState("idle");
   const [closedError, setClosedError] = useState("");
+  const [notice, setNotice] = useState("");
   const removedJobIds = useRef(new Set());
   const silencedAlertJobs = useRef(new Set());
   const loadGen = useRef(0);
+  const followedPin = useRef(false);
+  const scrolledJob = useRef("");
 
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
@@ -56,7 +72,27 @@ export default function Dashboard() {
         api.get(`/notifications/new-bookings`),
       ]);
       if (gen !== loadGen.current) return;
-      const visible = (j.data || []).filter(job => !removedJobIds.current.has(job.id));
+      let visible = (j.data || []).filter(job => !removedJobIds.current.has(job.id));
+      const pin = boardJobFromSearch();
+      if (pin && !removedJobIds.current.has(pin) && !visible.some(job => job.id === pin)) {
+        try {
+          const one = await api.get(`/jobs/${pin}`);
+          if (gen !== loadGen.current) return;
+          const extra = one.data;
+          const jobDay = phoenixDayOf(extra?.scheduled_start);
+          if (extra?.id && isOnDayBoard(extra) && jobDay) {
+            if (jobDay !== date && !followedPin.current) {
+              followedPin.current = true;
+              setDate(jobDay);
+              return;
+            }
+            if (jobDay === date) visible = [...visible, extra];
+          }
+        } catch {
+          // The day list stands when the single job cannot be read.
+        }
+      }
+      if (gen !== loadGen.current) return;
       const alertRows = (a.data?.alerts || []).filter(alert =>
         !removedJobIds.current.has(alert.job_id) && !silencedAlertJobs.current.has(alert.job_id)
       );
@@ -70,10 +106,14 @@ export default function Dashboard() {
   }, [date]);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
   useEffect(() => {
-    const jobId = new URLSearchParams(window.location.search).get("job") || "";
-    if (!jobId || !/^[\w-]+$/.test(jobId)) return;
+    const jobId = boardJobFromSearch();
+    if (!jobId) return;
+    const token = `${date}:${jobId}`;
+    if (scrolledJob.current === token) return;
     const node = document.querySelector(`[data-testid="job-card-${jobId}"]`);
-    if (node && typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "center" });
+    if (!node) return;
+    scrolledJob.current = token;
+    if (typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "center" });
   }, [jobs, date]);
   useRefreshOnShow(load);
 
@@ -81,6 +121,11 @@ export default function Dashboard() {
     if (!job?.id) return;
     loadGen.current += 1;
     setJobs(current => current.map(item => item.id === job.id ? fresherJob(item, job) : item));
+  }
+
+  function report(err, fallback) {
+    const detail = err?.response?.data?.detail;
+    setNotice(typeof detail === "string" && detail ? detail : fallback);
   }
 
   async function markSeen() {
@@ -93,7 +138,7 @@ export default function Dashboard() {
       await api.post(`/jobs/${jobId}/payment-mode`, { mode });
       load();
     } catch (err) {
-      alert(err.response?.data?.detail || "Could not change how this job is billed.");
+      report(err, "Could not change how this job is billed.");
     }
   }
   async function setOutside(jobId, enabled) {
@@ -101,7 +146,7 @@ export default function Dashboard() {
       await api.post(`/jobs/${jobId}/outside-service-area`, { enabled });
       load();
     } catch (err) {
-      alert(err.response?.data?.detail || "Could not update the trip fee.");
+      report(err, "Could not update the trip fee.");
     }
   }
   async function chargeTripFee(jobId, reason) {
@@ -109,7 +154,7 @@ export default function Dashboard() {
       await api.post(`/jobs/${jobId}/trip-fee`, { reason });
       load();
     } catch (err) {
-      alert(err.response?.data?.detail || "Could not charge the trip fee.");
+      report(err, "Could not charge the trip fee.");
     }
   }
   async function retryXero(jobId) {
@@ -118,7 +163,7 @@ export default function Dashboard() {
       showJob(data?.job);
       load();
     } catch (err) {
-      alert(err.response?.data?.detail || "Could not retry the Xero draft.");
+      report(err, "Could not retry the Xero draft.");
     }
   }
   async function chargeNow(jobId) {
@@ -127,7 +172,7 @@ export default function Dashboard() {
       showJob(data?.job);
       load();
     } catch (err) {
-      alert(err.response?.data?.detail || "The card was not charged.");
+      report(err, "The card was not charged.");
       load();
     }
   }
@@ -136,7 +181,7 @@ export default function Dashboard() {
       await api.post(`/jobs/${jobId}/status`, { status });
       load();
     } catch (err) {
-      alert(err.response?.data?.detail || "Could not update this job.");
+      report(err, "Could not update this job.");
     }
   }
   async function completeJob(jobId, body) {
@@ -144,7 +189,7 @@ export default function Dashboard() {
       const { data } = await api.post(`/jobs/${jobId}/complete`, body);
       showJob(data?.job);
     } catch (err) {
-      alert(err.response?.data?.detail || "Could not complete the job.");
+      report(err, "Could not complete the job.");
       return;
     }
     load();
@@ -221,7 +266,7 @@ export default function Dashboard() {
       if (!approve) silenceBookingAlert(jobId);
       load();
     } catch (e) {
-      alert(e.response?.data?.detail || "Could not update that request.");
+      report(e, "Could not update that request.");
     }
   }
   const newJobIds = new Set(alerts.alerts.map(a => a.job_id));
@@ -236,13 +281,19 @@ export default function Dashboard() {
     technician_color: j.technician_color || colorById[j.technician_id] || "#FF5F1F",
     technician_name: j.technician_name || nameById[j.technician_id] || "",
   }));
+  const focusId = boardJobFromSearch();
+  const ownerPanelId = (routingTechs.find(t => t.role === "owner") || routingTechs[0])?.id;
   function jobsFor(tech) {
     return painted
-      .filter(j => j.technician_id === tech.id || (!j.technician_id && tech.role === "owner"))
-      .sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start));
+      .filter(j => {
+        const known = routingTechs.some(t => t.id === j.technician_id);
+        if (known) return j.technician_id === tech.id;
+        return tech.id === ownerPanelId;
+      })
+      .sort((a, b) => String(a.scheduled_start).localeCompare(String(b.scheduled_start)));
   }
   const panels = (routingTechs.length ? routingTechs : [{ id: "unassigned", name: "Today", role: "owner", color: "#FF5F1F", home_address: "" }])
-    .map(tech => ({ tech, jobs: tech.id === "unassigned" ? painted.slice().sort((a, b) => a.scheduled_start.localeCompare(b.scheduled_start)) : jobsFor(tech) }));
+    .map(tech => ({ tech, jobs: tech.id === "unassigned" ? painted.slice().sort((a, b) => String(a.scheduled_start).localeCompare(String(b.scheduled_start))) : jobsFor(tech) }));
 
   function shiftDate(days) {
     const d = new Date(date + "T00:00:00");
@@ -276,7 +327,7 @@ export default function Dashboard() {
       await api.post("/jobs/reorder", { technician_id: techId, date, ordered_job_ids: ids });
       load();
     } catch (e) {
-      alert(e.response?.data?.detail || "Reorder failed");
+      report(e, "Reorder failed");
     }
     setDragOver(null);
   }
@@ -339,6 +390,17 @@ export default function Dashboard() {
           Shop emails are on hold — view held emails
         </Link>
       )}
+      {notice && (
+        <div role="alert" data-testid="board-notice" style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
+          marginBottom: 12, padding: "10px 12px", borderRadius: 10,
+          background: "rgba(239, 68, 68, 0.12)", color: "#FCA5A5", fontSize: 14,
+        }}>
+          <span>{notice}</span>
+          <button type="button" className="btn btn-ghost" onClick={() => setNotice("")}
+            data-testid="board-notice-dismiss" style={{ padding: "4px 10px", fontSize: 13 }}>Dismiss</button>
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>
         <div>
           <h1 className="h1" style={{ margin: "4px 0" }}>
@@ -385,6 +447,7 @@ export default function Dashboard() {
             onEdit={isOwner ? setEditTarget : null}
             onDelete={isOwner ? askDelete : null}
             onDecide={isOwner ? decideApproval : null}
+            focusId={focusId}
             dragOver={dragOver} setDragOver={setDragOver} onDrop={handleDrop} />
         ))}
       </div>
@@ -631,7 +694,7 @@ function Metric({ label, value, highlight }) {
 }
 
 function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, accent, newJobIds,
-                    onReschedule, onEdit, onDelete, onDecide, dragOver, setDragOver, onDrop }) {
+                    onReschedule, onEdit, onDelete, onDecide, focusId, dragOver, setDragOver, onDrop }) {
   return (
     <section data-testid={`zone-panel-${zone}`}>
       <div className="zone-header">
@@ -652,6 +715,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPaymen
             isNew={newJobIds?.has(j.id)}
             onReschedule={onReschedule} onEdit={onEdit}
             onDelete={onDelete} onDecide={onDecide}
+            focused={focusId === j.id}
             zone={zone} dropIndex={idx}
             isDragOver={dragOver?.zone === zone && dragOver?.idx === idx}
             onDragOver={(e) => { e.preventDefault(); setDragOver({ zone, idx }); }}
@@ -706,16 +770,31 @@ function paidAmount(job) {
   return Number.isFinite(amount) ? amount.toFixed(2) : "0.00";
 }
 
-function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, onReschedule, onEdit, onDelete, onDecide,
+function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, isNew, onReschedule, onEdit, onDelete, onDecide, focused,
                    zone, dropIndex, isDragOver, onDragOver, onDragLeave, onHandleDrop }) {
   const flow = STATUS_FLOW[job.status];
   const travelStep = flow && (flow.next === "driving" || flow.next === "on_site");
   const travelToday = isPhoenixToday(job.scheduled_start);
   const [completeOpen, setCompleteOpen] = useState(false);
   const isLocked = job.status === "complete" || job.status === "cancelled" || job.status === "declined" || job.status === "requested";
+  const showTravelWait = Boolean(flow && travelStep && !travelToday);
+  const showFlow = Boolean(flow && !showTravelWait);
+  const showApprove = Boolean(onDecide && job.status === "requested");
+  const showDecline = showApprove;
+  const showTrip = !job.warranty_eligible && !job.invoice_id && !job.charged_at && job.payment_status !== "paid" && job.status !== "cancelled" && job.status !== "declined";
+  const showInvoice = !job.warranty_eligible && job.payment_mode !== "invoice_hold" && !jobIsPaid(job);
+  const showCharge = !job.warranty_eligible && job.status === "complete" && !jobIsPaid(job);
+  const showXeroDraft = job.status === "complete" && job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id);
+  const showXeroAttention = job.status === "complete" && job.xero_draft_status === "needs_attention";
+  const showSchedule = job.status === "booked";
+  const hasMore = Boolean(
+    onEdit || onDelete || showDecline || showTrip || showInvoice || showCharge
+    || showXeroDraft || showXeroAttention || showSchedule
+  );
   return (
     <div
-      className={"card-job" + (isNew ? " card-job-new" : "") + (isDragOver ? " card-job-dropzone" : "") + (job.is_at_risk ? " card-job-at-risk" : "")}
+      className={"card-job" + (isNew ? " card-job-new" : "") + (isDragOver ? " card-job-dropzone" : "") + (job.is_at_risk ? " card-job-at-risk" : "") + (focused ? " card-job-focus" : "")}
+      aria-current={focused ? "true" : undefined}
       draggable={!isLocked}
       onDragStart={(e) => e.dataTransfer.setData("text/plain", job.id)}
       onDragOver={onDragOver}
@@ -788,55 +867,12 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
           {job.warranty_skip_reason}
         </div>
       )}
-      {job.status === "complete" && job.xero_draft_status === "needs_attention" && job.xero_attention_reason && (
-        <div className="muted" style={{ fontSize: 13, marginTop: 8 }} data-testid={`xero-reason-${job.id}`}>
-          {job.xero_attention_reason}
-        </div>
-      )}
-      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-        {onEdit && (
-          <button className="btn btn-ghost" onClick={() => onEdit(job)}
-            data-testid={`job-edit-${job.id}`}>Edit</button>
+      <div className="job-next">
+        {showApprove && (
+          <button className="btn btn-primary" type="button" onClick={() => onDecide(job.id, true)}
+            data-testid={`job-approve-${job.id}`}>Approve</button>
         )}
-        {onDelete && (
-          <button type="button" className="btn btn-danger" onClick={() => onDelete(job)}
-            data-testid={`job-delete-${job.id}`}
-            style={{ color: "#FCA5A5", borderColor: "rgba(252, 165, 165, 0.45)" }}>Delete</button>
-        )}
-        {onDecide && job.status === "requested" && (
-          <>
-            <button className="btn btn-primary" onClick={() => onDecide(job.id, true)}
-              data-testid={`job-approve-${job.id}`}>Approve</button>
-            <button className="btn btn-ghost" onClick={() => onDecide(job.id, false)}
-              data-testid={`job-decline-${job.id}`}>Decline</button>
-          </>
-        )}
-        {!job.warranty_eligible && !job.invoice_id && !job.charged_at && job.payment_status !== "paid" && job.status !== "cancelled" && job.status !== "declined" && (
-          <TripFeeControls job={job} onOutside={onOutside} onTripFee={onTripFee} />
-        )}
-        {!job.warranty_eligible && job.payment_mode !== "invoice_hold" && !jobIsPaid(job) && (
-          <button className="btn btn-ghost" onClick={() => onPayment(job.id, "invoice_hold")}>Invoice this job</button>
-        )}
-        {!job.warranty_eligible && job.status === "complete" && !jobIsPaid(job) && (
-          <button className="btn btn-primary" onClick={() => onCharge(job.id)} data-testid={`job-charge-${job.id}`}>Charge card now</button>
-        )}
-        {job.status === "complete" && job.xero_draft_status === "draft" && (job.xero_invoice_number || job.xero_invoice_id) && (
-          <span className="badge badge-draft" data-testid={`xero-draft-${job.id}`}>
-            {job.xero_invoice_url ? (
-              <a href={job.xero_invoice_url} target="_blank" rel="noreferrer" style={{ color: "inherit" }}>
-                Xero draft {job.xero_invoice_number || job.xero_invoice_id}
-              </a>
-            ) : `Xero draft ${job.xero_invoice_number || job.xero_invoice_id}`}
-          </span>
-        )}
-        {job.status === "complete" && job.xero_draft_status === "needs_attention" && (
-          <>
-            <span className="badge badge-draft" data-testid={`xero-attention-${job.id}`}>Xero needs attention</span>
-            <button className="btn btn-ghost" type="button" onClick={() => onRetryXero(job.id)}
-              data-testid={`xero-retry-${job.id}`}>Retry Xero draft</button>
-          </>
-        )}
-        {flow && travelStep && !travelToday && (
+        {showTravelWait && (
           <>
             <button className="btn btn-primary" type="button" disabled
               data-testid={`job-action-${job.id}`}
@@ -845,23 +881,73 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
               data-testid={`job-travel-wait-${job.id}`}>Available on the day of the job</span>
           </>
         )}
-        {flow && !(travelStep && !travelToday) && (
-          <button className="btn btn-primary" onClick={() => {
+        {showFlow && (
+          <button className="btn btn-primary" type="button" onClick={() => {
             if (flow.next === "complete") setCompleteOpen(true);
             else onStatus(job.id, flow.next);
           }} data-testid={`job-action-${job.id}`}>{flow.label}</button>
         )}
-        {job.status === "booked" && (
-          <>
-            <button className="btn btn-ghost" onClick={() => onReschedule(job, "reschedule")}
-              data-testid={`job-reschedule-${job.id}`}>Reschedule</button>
-            <button className="btn btn-ghost" onClick={() => onReschedule(job, "cancel")}
-              data-testid={`job-cancel-${job.id}`}>Cancel</button>
-          </>
-        )}
+        <Link to={`/field?job=${encodeURIComponent(job.id)}`} className="job-phone"
+          data-testid={`job-phone-${job.id}`}>Open on the phone</Link>
       </div>
       {completeOpen && flow?.next === "complete" && (
         <CompleteFields job={job} onSubmit={onComplete} />
+      )}
+      {hasMore && (
+        <details className="job-more" data-testid={`job-more-${job.id}`}>
+          <summary className="btn btn-ghost">More</summary>
+          <div className="job-more-body">
+            {onEdit && (
+              <button className="btn btn-ghost" type="button" onClick={() => onEdit(job)}
+                data-testid={`job-edit-${job.id}`}>Edit</button>
+            )}
+            {onDelete && (
+              <button type="button" className="btn btn-danger" onClick={() => onDelete(job)}
+                data-testid={`job-delete-${job.id}`}
+                style={{ color: "#FCA5A5", borderColor: "rgba(252, 165, 165, 0.45)" }}>Delete</button>
+            )}
+            {showDecline && (
+              <button className="btn btn-ghost" type="button" onClick={() => onDecide(job.id, false)}
+                data-testid={`job-decline-${job.id}`}>Decline</button>
+            )}
+            {showSchedule && (
+              <>
+                <button className="btn btn-ghost" type="button" onClick={() => onReschedule(job, "reschedule")}
+                  data-testid={`job-reschedule-${job.id}`}>Reschedule</button>
+                <button className="btn btn-ghost" type="button" onClick={() => onReschedule(job, "cancel")}
+                  data-testid={`job-cancel-${job.id}`}>Cancel</button>
+              </>
+            )}
+            {showTrip && <TripFeeControls job={job} onOutside={onOutside} onTripFee={onTripFee} />}
+            {showInvoice && (
+              <button className="btn btn-ghost" type="button" onClick={() => onPayment(job.id, "invoice_hold")}>Invoice this job</button>
+            )}
+            {showCharge && (
+              <button className="btn btn-primary" type="button" onClick={() => onCharge(job.id)} data-testid={`job-charge-${job.id}`}>Charge card now</button>
+            )}
+            {showXeroAttention && job.xero_attention_reason && (
+              <div className="muted" style={{ fontSize: 13, flexBasis: "100%" }} data-testid={`xero-reason-${job.id}`}>
+                {job.xero_attention_reason}
+              </div>
+            )}
+            {showXeroDraft && (
+              <span className="badge badge-draft" data-testid={`xero-draft-${job.id}`}>
+                {job.xero_invoice_url ? (
+                  <a href={job.xero_invoice_url} target="_blank" rel="noreferrer" style={{ color: "inherit" }}>
+                    Xero draft {job.xero_invoice_number || job.xero_invoice_id}
+                  </a>
+                ) : `Xero draft ${job.xero_invoice_number || job.xero_invoice_id}`}
+              </span>
+            )}
+            {showXeroAttention && (
+              <>
+                <span className="badge badge-draft" data-testid={`xero-attention-${job.id}`}>Xero needs attention</span>
+                <button className="btn btn-ghost" type="button" onClick={() => onRetryXero(job.id)}
+                  data-testid={`xero-retry-${job.id}`}>Retry Xero draft</button>
+              </>
+            )}
+          </div>
+        </details>
       )}
     </div>
   );
@@ -894,6 +980,7 @@ function CompleteFields({ job, onSubmit }) {
   const [popAmount, setPopAmount] = useState("");
   const [uploadedDoc, setUploadedDoc] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const ready = canCompleteDraft(uploadedDoc, calType, popChoice, popAmount);
 
@@ -910,6 +997,7 @@ function CompleteFields({ job, onSubmit }) {
   async function upload(file) {
     if (!file) return;
     setUploading(true);
+    setUploadError("");
     try {
       const form = new FormData();
       form.append("file", file);
@@ -918,7 +1006,8 @@ function CompleteFields({ job, onSubmit }) {
       });
       setUploadedDoc(data);
     } catch (err) {
-      alert(err.response?.data?.detail || "Upload failed");
+      const detail = err.response?.data?.detail;
+      setUploadError(typeof detail === "string" && detail ? detail : "Upload failed");
     } finally {
       setUploading(false);
     }
@@ -981,6 +1070,9 @@ function CompleteFields({ job, onSubmit }) {
             <button type="button" className="btn btn-ghost" style={{ padding: "4px 10px", fontSize: 12 }}
               onClick={() => setUploadedDoc(null)} data-testid={`doc-remove-${job.id}`}>Replace</button>
           </div>
+        )}
+        {uploadError && (
+          <div role="alert" data-testid={`doc-upload-error-${job.id}`} style={{ color: "#FCA5A5", fontSize: 13, marginTop: 8 }}>{uploadError}</div>
         )}
       </div>
       {!ready && (

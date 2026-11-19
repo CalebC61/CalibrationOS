@@ -22,6 +22,12 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-19): the desk card has one next action.** Charge, delete,
+  trip fee, Xero, reschedule, and cancel sit under More. The card links to
+  the phone screen for that job. A shop job link opens and highlights that
+  card, including when the day list or the technician column would have hidden
+  it. Card errors use an in-page notice. No new env var. `BILLING_ENABLED`
+  and `SHOP_EMAILS_ENABLED` are unchanged.
 - **Session (2026-11-18): an empty day no longer keeps Est. miles and Done by.**
   The day header follows the jobs still on the board. Delete, and a slow
   summary response, cannot leave the previous drive or finish time up.
