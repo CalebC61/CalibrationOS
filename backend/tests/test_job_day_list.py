@@ -8,7 +8,7 @@ The shop portal uses GET /api/portal/jobs and still returns cancelled jobs.
 import asyncio
 import os
 import sys
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
@@ -36,9 +36,15 @@ def _match(doc, query):
         if isinstance(expected, dict):
             for op, operand in expected.items():
                 if op == "$gte":
-                    ok = value is not None and value >= operand
+                    try:
+                        ok = value is not None and value >= operand
+                    except TypeError:
+                        ok = False
                 elif op == "$lt":
-                    ok = value is not None and value < operand
+                    try:
+                        ok = value is not None and value < operand
+                    except TypeError:
+                        ok = False
                 elif op == "$nin":
                     ok = value not in operand
                 elif op == "$in":
@@ -265,5 +271,56 @@ def test_shop_portal_still_lists_cancelled_jobs(monkeypatch):
         assert "job-cancelled" in ids
         assert "job-tech-cancelled" in ids
         assert "job-other-shop" not in ids
+
+    asyncio.run(run())
+
+
+def test_a_2pm_phoenix_job_lists_on_that_day_whatever_the_stored_shape(monkeypatch):
+    """Fri Nov 13 2026 2:00 PM Phoenix is 21:00 UTC.
+
+    The shop page links Dispatch to that Phoenix date. A start stored with a
+    space, or as a datetime, used to miss the string range and the day looked
+    empty.
+    """
+    day = date(2026, 11, 13)
+    db = _world(monkeypatch)
+    db.jobs.docs.append(_job(
+        id="job-space",
+        shop_name="Preferred Auto Glass",
+        scheduled_start="2026-11-13 21:00:00+00:00",
+        scheduled_end="2026-11-13 22:00:00+00:00",
+        technician_id="someone-else",
+    ))
+    db.jobs.docs.append(_job(
+        id="job-clock",
+        shop_name="Preferred Auto Glass",
+        scheduled_start=datetime(2026, 11, 13, 21, 0, tzinfo=timezone.utc),
+        scheduled_end=datetime(2026, 11, 13, 22, 0, tzinfo=timezone.utc),
+        technician_id="someone-else",
+    ))
+    db.jobs.docs.append(_job(
+        id="job-next-space",
+        scheduled_start="2026-11-14 21:00:00+00:00",
+        scheduled_end="2026-11-14 22:00:00+00:00",
+    ))
+    owner = server.make_token("tech-owner", "owner")
+
+    async def run():
+        transport = httpx.ASGITransport(app=server.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            that_day = await client.get(
+                f"/api/jobs?date_str={day.isoformat()}",
+                headers={"Authorization": f"Bearer {owner}"},
+            )
+            next_day = await client.get(
+                "/api/jobs?date_str=2026-11-14",
+                headers={"Authorization": f"Bearer {owner}"},
+            )
+        listed = _ids(that_day)
+        assert "job-space" in listed
+        assert "job-clock" in listed
+        assert "job-next-space" not in listed
+        assert "job-next-space" in _ids(next_day)
+        assert "job-space" not in _ids(next_day)
 
     asyncio.run(run())

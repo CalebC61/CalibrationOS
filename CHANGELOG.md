@@ -15,6 +15,37 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — the desk card shows one next action (2026-11-19)
+The owner Dispatch job card (`/dashboard`) keeps a single next step on the
+face of the card: Approve while a time is pending, Start Driving or I've
+Arrived on the Phoenix day of the job (still disabled, with the same “Available
+on the day of the job” line, on any other day), and Complete Job once the
+technician is on site. Charge, delete, the trip fee, the Xero draft or
+“needs attention” line, reschedule, cancel, decline, edit, and “Invoice this
+job” sit under More on that card. Nothing was removed. The closed-jobs list
+still deletes from its own row. The Yes, delete dialog is unchanged.
+
+The card links to the phone screen for that job (`/field?job=<id>`, “Open on
+the phone”). The phone opens that job. If it is not on today's Phoenix list,
+it is loaded by id and is not mixed into the today list when the technician
+goes back.
+
+Errors from those card actions (including a failed upload on Complete and a
+failed reorder) show in a dismissible notice on the board. They no longer use
+the browser `alert()`. The delete confirmation is still the in-page dialog.
+
+A shop-page job link (`/dashboard?date=YYYY-MM-DD&job=<id>`) highlights and
+scrolls to that card. A job whose technician is not one of the columns still
+shows, on the owner column. If the day list does not contain the id, Dispatch
+reads `GET /api/jobs/{id}` and, when that job's Phoenix day differs from the
+link, moves the board to that day once.
+
+`GET /api/jobs?date_str=` and `GET /api/dashboard/summary` keep a job whose
+start is on that Phoenix day when the stored value is a datetime or uses a
+space instead of `T`. A 2:00 PM Phoenix start (21:00 UTC) stays on that
+calendar day. Billing, Stripe, email, and Xero behavior are unchanged. No new
+env var. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+
 ### Fixed — owner screens show the rate card, the card on file, and the current booking time (2026-11-18)
 The Shops list printed Tier from `pricing_tier`. Website signup stores Standard
 there, so a Preferred or Real Fast shop still said Standard. The column is now
