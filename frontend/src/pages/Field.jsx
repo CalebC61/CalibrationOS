@@ -14,6 +14,31 @@ const CAL_TYPES = [
   ["tesla", "Tesla"],
 ];
 
+function FieldIcon({ children }) {
+  return (
+    <svg className="field-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {children}
+    </svg>
+  );
+}
+
+function PinIcon() {
+  return (
+    <FieldIcon>
+      <path fill="none" stroke="currentColor" strokeWidth="1.75" d="M12 21s7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11z" />
+      <circle cx="12" cy="10" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.75" />
+    </FieldIcon>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <FieldIcon>
+      <path fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" d="M8 4.5h2.2l1.1 2.6-1.5 1a12 12 0 0 0 5.1 5.1l1-1.5 2.6 1.1V15a2 2 0 0 1-2.2 2A14.5 14.5 0 0 1 6 6.7 2 2 0 0 1 8 4.5z" />
+    </FieldIcon>
+  );
+}
+
 function isPdfDoc(doc) {
   if (!doc) return false;
   const name = (doc.file_name || "").toLowerCase();
@@ -39,6 +64,7 @@ export default function Field() {
   const [docName, setDocName] = useState("");
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [notice, setNotice] = useState("");
 
   const loadGen = useRef(0);
   const load = useCallback(async () => {
@@ -122,7 +148,7 @@ export default function Field() {
       });
       setUploadedDoc(data);
     } catch (e) {
-      alert(e.response?.data?.detail || "Upload failed");
+      setNotice(typeof e.response?.data?.detail === "string" ? e.response.data.detail : "Upload failed");
     } finally { setUploading(false); }
   }
 
@@ -131,7 +157,7 @@ export default function Field() {
       await api.post(`/jobs/${jobId}/status`, { status });
       load();
     } catch (e) {
-      alert(e.response?.data?.detail || "Could not update this job.");
+      setNotice(typeof e.response?.data?.detail === "string" ? e.response.data.detail : "Could not update this job.");
     }
   }
   async function complete(jobId) {
@@ -146,7 +172,7 @@ export default function Field() {
       showJob(data?.job);
       await load();
     } catch (e) {
-      alert(e.response?.data?.detail || "Could not complete the job.");
+      setNotice(typeof e.response?.data?.detail === "string" ? e.response.data.detail : "Could not complete the job.");
     } finally { setCompleting(false); }
   }
 
@@ -157,7 +183,7 @@ export default function Field() {
       showJob(data?.job);
       await load();
     } catch (e) {
-      alert(e.response?.data?.detail || "Could not retry the Xero draft.");
+      setNotice(typeof e.response?.data?.detail === "string" ? e.response.data.detail : "Could not retry the Xero draft.");
     } finally { setRetrying(false); }
   }
 
@@ -167,6 +193,12 @@ export default function Field() {
     return (
       <Phone>
         <Header name={auth?.name} onLogout={logout} back={() => setActive(null)} />
+        {notice && (
+          <div role="alert" className="field-notice" data-testid="field-notice">
+            <p>{notice}</p>
+            <button type="button" className="btn btn-ghost" onClick={() => setNotice("")}>Dismiss</button>
+          </div>
+        )}
         <div className="surface page-fade" style={{ padding: 18, margin: 12 }} data-testid="job-detail">
           <div className="muted" style={{ fontSize: 12 }}>{formatTime(j.scheduled_start)}</div>
           <div className="h2" style={{ marginTop: 4 }}>{j.shop_name}</div>
@@ -179,9 +211,15 @@ export default function Field() {
           </div>
           <a className="btn btn-ghost" style={{ marginTop: 12, width: "100%" }}
             href={`https://maps.google.com/?q=${encodeURIComponent(j.job_address)}`} target="_blank" rel="noreferrer">
-            📍 {j.job_address}
+            <PinIcon />
+            <span>{j.job_address}</span>
           </a>
-          {j.notification_phone && <a className="btn btn-ghost" style={{ marginTop: 8, width: "100%" }} href={`tel:${j.notification_phone}`}>📞 Call shop</a>}
+          {j.notification_phone && (
+            <a className="btn btn-ghost" style={{ marginTop: 8, width: "100%" }} href={`tel:${j.notification_phone}`}>
+              <PhoneIcon />
+              <span>Call shop</span>
+            </a>
+          )}
           <div style={{ marginTop: 16, fontSize: 14, padding: 10, background: "var(--bg-elevated)", borderRadius: 8 }}>
             {(j.customer_first_name || j.customer_last_name) && (
               <div><b>Customer:</b> {[j.customer_first_name, j.customer_last_name].filter(Boolean).join(" ")}</div>
@@ -285,7 +323,7 @@ export default function Field() {
                     await api.post(`/jobs/${j.id}/outside-service-area`, { enabled: !j.outside_service_area });
                     load();
                   } catch (err) {
-                    alert(err.response?.data?.detail || "Could not update the trip fee.");
+                    setNotice(typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Could not update the trip fee.");
                   }
                 }}
                 data-testid="field-outside">
@@ -302,7 +340,7 @@ export default function Field() {
                     await api.post(`/jobs/${j.id}/trip-fee`, { reason: tripReason });
                     load();
                   } catch (err) {
-                    alert(err.response?.data?.detail || "Could not charge the trip fee.");
+                    setNotice(typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Could not charge the trip fee.");
                   }
                 }}
                 data-testid="field-trip-fee">
@@ -324,8 +362,13 @@ export default function Field() {
   return (
     <Phone>
       <Header name={auth?.name} onLogout={logout} />
+      {notice && (
+        <div role="alert" className="field-notice" data-testid="field-notice">
+          <p>{notice}</p>
+          <button type="button" className="btn btn-ghost" onClick={() => setNotice("")}>Dismiss</button>
+        </div>
+      )}
       <div style={{ padding: 12 }}>
-        <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4 }}>Today</div>
         <h1 className="h1" style={{ marginBottom: 12, fontSize: 28 }}>
           {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/Phoenix" })}
         </h1>
