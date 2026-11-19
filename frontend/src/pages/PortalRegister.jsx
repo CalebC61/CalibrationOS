@@ -121,7 +121,7 @@ export default function PortalRegister() {
           </button>
           {requestNote && <p style={{ marginTop: 12 }}>{requestNote}</p>}
           {ownerPhone && <p className="muted" style={{ marginTop: 12 }}>Or call {ownerPhone}.</p>}
-          <p style={{ marginTop: 12 }}><Link to="/portal/login">Shop login</Link></p>
+          <p style={{ marginTop: 12 }}><Link className="portal-tap" to="/portal/login">Shop login</Link></p>
         </div>
       </Center>
     );
@@ -132,7 +132,7 @@ export default function PortalRegister() {
   const sections = invite.agreement_sections || [];
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", padding: "32px 16px" }}>
+    <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)", padding: "32px 16px" }}>
       <div style={{ maxWidth: 560, margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 8 }}><Brand size={28} /></div>
         <div style={{ textAlign: "center", marginBottom: 20 }}>Set up <b>{invite.shop_name}</b></div>
@@ -189,7 +189,7 @@ export default function PortalRegister() {
 }
 
 const Center = ({ children }) => (
-  <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>{children}</div>
+  <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>{children}</div>
 );
 const Field = ({ label, children }) => (
   <div style={{ marginBottom: 14 }}><label className="label">{label}</label>{children}</div>

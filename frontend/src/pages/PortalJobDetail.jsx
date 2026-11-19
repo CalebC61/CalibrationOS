@@ -60,7 +60,7 @@ export default function PortalJobDetail() {
 
   return (
     <PortalShell>
-      <Link to="/portal/jobs" className="muted" style={{ fontSize: 14 }}>← Back to jobs</Link>
+      <Link to="/portal/jobs" className="muted portal-tap" style={{ fontSize: 14 }}>← Back to jobs</Link>
       <h1 className="h1" style={{ marginTop: 8, marginBottom: 8 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</h1>
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
         <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
@@ -112,7 +112,7 @@ export default function PortalJobDetail() {
           )}
           {data.documents.map(d => (
             <button key={d.id} type="button" className="surface"
-              style={{ padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", textAlign: "left", cursor: "pointer", color: "inherit", font: "inherit" }}
+              style={{ padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", width: "100%", minWidth: 0, textAlign: "left", cursor: "pointer", color: "inherit", font: "inherit" }}
               onClick={() => downloadReport(d)}
               data-testid={`portal-doc-${d.id}`}>
               <div>
@@ -129,7 +129,7 @@ export default function PortalJobDetail() {
 }
 
 const Row = ({ k, v }) => (
-  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+  <div className="portal-kv">
     <span className="muted">{k}</span><span style={{ fontWeight: 500 }}>{v}</span>
   </div>
 );

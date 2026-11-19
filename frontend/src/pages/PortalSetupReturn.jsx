@@ -83,5 +83,5 @@ export default function PortalSetupReturn() {
 }
 
 const Center = ({ children }) => (
-  <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>{children}</div>
+  <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>{children}</div>
 );

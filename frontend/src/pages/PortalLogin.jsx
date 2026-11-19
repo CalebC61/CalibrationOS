@@ -32,7 +32,7 @@ export default function PortalLogin() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+    <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ width: "100%", maxWidth: 420 }} className="page-fade">
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <Brand size={28} tag="Shop Portal" />
@@ -58,7 +58,7 @@ export default function PortalLogin() {
             {loading ? "Signing in…" : "Sign In"}
           </button>
           <div className="muted" style={{ fontSize: 13, marginTop: 16, textAlign: "center" }}>
-            <Link to="/portal/forgot" data-testid="forgot-password">Forgot password</Link>
+            <Link className="portal-tap" to="/portal/forgot" data-testid="forgot-password">Forgot password</Link>
             <div style={{ marginTop: 8 }}>New here? Your invitation email contains a registration link.</div>
           </div>
         </form>

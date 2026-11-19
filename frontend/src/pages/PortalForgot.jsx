@@ -21,7 +21,7 @@ export default function PortalForgot() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+    <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <form className="surface" style={{ padding: 28, width: "100%", maxWidth: 420 }} onSubmit={submit} data-testid="forgot-form">
         <h1 className="h2" style={{ marginBottom: 8 }}>Reset your password</h1>
         <p className="muted" style={{ marginBottom: 16 }}>We'll email a one-time link to the address on the account.</p>
@@ -31,7 +31,7 @@ export default function PortalForgot() {
           {busy ? "Sending…" : "Email me a link"}
         </button>
         {message && <p style={{ marginTop: 12 }} data-testid="forgot-message">{message}</p>}
-        <p style={{ marginTop: 16 }}><Link to="/portal/login">Back to login</Link></p>
+        <p style={{ marginTop: 16 }}><Link className="portal-tap" to="/portal/login">Back to login</Link></p>
       </form>
     </div>
   );

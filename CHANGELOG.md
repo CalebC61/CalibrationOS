@@ -15,6 +15,23 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — shop portal on a phone (2026-11-19)
+The shop bar is Today, Jobs, Book, and Account. Today is the day map at
+`/portal`, plus the four last-30-days counts that used to be the Scorecard
+tab (jobs, completed, upcoming, total spent). Jobs is the history. Book is
+unchanged. Account is the old Settings page: name, address, valley when the
+shop has one, card, charge terms, and the agreement. `/portal/scorecard`
+redirects to Today. `/portal/settings` is still the account page.
+
+On a narrow screen the bar is a Menu button. Shop pages use at least a 44px
+tap target, and the booking form stacks its two-column fields so a phone
+does not scroll sideways.
+
+Picking a Places suggestion on Book, or otherwise changing the address while
+a date is set, loads that address's times again. The date does not have to
+be changed away and back. Billing, Stripe, email, Xero, warranty, and the
+booking rules are unchanged. No new env var.
+
 ### Changed — one booking form (2026-11-19)
 `/portal/book` is the booking form. The owner screen at `/shops/:id/book` uses
 that same component. The owner picks the shop and can type a time. The typed

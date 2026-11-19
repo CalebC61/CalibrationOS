@@ -75,20 +75,20 @@ export default function PortalSettings() {
 
   return (
     <PortalShell>
-      <h1 className="h1" style={{ marginBottom: 16 }}>Settings</h1>
+      <h1 className="h1" style={{ marginBottom: 16 }}>Account</h1>
       <div className="surface" style={{ padding: 20, marginBottom: 16, maxWidth: 560 }}>
-        <div className="h3" style={{ marginBottom: 12 }}>Account</div>
         <Row k="Name" v={su.full_name} />
         <Row k="Email" v={su.email} />
         <Row k="Shop" v={su.shop_name} />
         <Row k="Address" v={me.shop?.address || "—"} testId="shop-address" />
+        {me.shop?.zone && <Row k="Area" v={valleyName(me.shop.zone)} testId="shop-zone" />}
       </div>
 
       <div className="surface" style={{ padding: 20, marginBottom: 16, maxWidth: 560 }} data-testid="payment-method-section">
         <div className="h3" style={{ marginBottom: 12 }}>Payment method</div>
         {su.has_payment_method ? (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: 12, background: "var(--bg-elevated)", borderRadius: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", padding: 12, background: "var(--bg-elevated)", borderRadius: 8 }}>
               <div>
                 <div style={{ fontWeight: 600, textTransform: "uppercase" }}>{su.card_brand} •••• {su.card_last4}</div>
                 <div className="muted" style={{ fontSize: 12 }}>Expires {String(su.card_exp_month).padStart(2,"0")}/{su.card_exp_year}</div>
@@ -143,8 +143,14 @@ export default function PortalSettings() {
   );
 }
 
+function valleyName(zone) {
+  if (zone === "west") return "West Valley";
+  if (zone === "east") return "East Valley";
+  return zone;
+}
+
 const Row = ({ k, v, testId }) => (
-  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-    <span className="muted">{k}</span><span style={{ fontWeight: 500, textAlign: "right" }} data-testid={testId}>{v}</span>
+  <div className="portal-kv">
+    <span className="muted">{k}</span><span style={{ fontWeight: 500 }} data-testid={testId}>{v}</span>
   </div>
 );
