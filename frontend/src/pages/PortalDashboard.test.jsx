@@ -133,6 +133,32 @@ test("a free warranty redo is marked on the shop day list", async () => {
   expect(banner).toHaveTextContent("not charged");
 });
 
+test("today shows the last 30 days counts from the scorecard", async () => {
+  portalApi.get.mockImplementation((url) => {
+    if (String(url).includes("day-map")) return Promise.resolve({ data: { own: [], others: [], date: "2026-11-18" } });
+    if (String(url).includes("scorecard")) {
+      return Promise.resolve({
+        data: {
+          stats: {
+            jobs_last_30_days: 12,
+            completed_count: 8,
+            upcoming_count: 3,
+            total_spent_last_30_days: 1240,
+          },
+        },
+      });
+    }
+    return Promise.resolve({ data: { setup: null } });
+  });
+  render(<PortalDashboard />);
+  expect(await screen.findByTestId("portal-scorecard")).toBeInTheDocument();
+  expect(screen.getByTestId("stat-jobs")).toHaveTextContent("12");
+  expect(screen.getByTestId("stat-completed")).toHaveTextContent("8");
+  expect(screen.getByTestId("stat-upcoming")).toHaveTextContent("3");
+  expect(screen.getByTestId("stat-spent")).toHaveTextContent("$1240");
+  expect(screen.getByText("Last 30 days")).toBeInTheDocument();
+});
+
 test("a shop with no jobs of its own still sees the rest of the route", async () => {
   show({
     own: [],

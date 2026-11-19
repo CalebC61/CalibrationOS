@@ -31,6 +31,7 @@ const fmt = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeri
 export default function PortalDashboard() {
   const [data, setData] = useState(null);
   const [setup, setSetup] = useState(null);
+  const [stats, setStats] = useState(null);
   const [date, setDate] = useState(() => phoenixTodayStr());
 
   useEffect(() => {
@@ -38,6 +39,15 @@ export default function PortalDashboard() {
   }, [date]);
   useEffect(() => {
     portalApi.get("/portal/me").then(r => setSetup(r.data.setup));
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    portalApi.get("/portal/scorecard").then(r => {
+      if (!cancelled) setStats(r.data?.stats || null);
+    }).catch(() => {
+      if (!cancelled) setStats(null);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   if (!data) return <PortalShell><div className="muted">Loading…</div></PortalShell>;
@@ -64,14 +74,23 @@ export default function PortalDashboard() {
       )}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase" }}>Day map</div>
-          <h1 className="h1" style={{ margin: "4px 0" }}>
-            {new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
-          </h1>
-        </div>
-        <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} style={{ width: 200 }} data-testid="day-map-date" />
+        <h1 className="h1" style={{ margin: 0 }}>
+          {new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+        </h1>
+        <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} style={{ width: "100%", maxWidth: 220 }} data-testid="day-map-date" />
       </div>
+
+      {stats && (
+        <section className="portal-stats" data-testid="portal-scorecard" aria-label="Last 30 days">
+          <h2 className="portal-stats-title">Last 30 days</h2>
+          <dl className="portal-stats-row">
+            <div><dt>Jobs</dt><dd data-testid="stat-jobs">{stats.jobs_last_30_days}</dd></div>
+            <div><dt>Completed</dt><dd data-testid="stat-completed">{stats.completed_count}</dd></div>
+            <div><dt>Upcoming</dt><dd data-testid="stat-upcoming">{stats.upcoming_count}</dd></div>
+            <div><dt>Total spent</dt><dd data-testid="stat-spent">${Number(stats.total_spent_last_30_days || 0).toFixed(0)}</dd></div>
+          </dl>
+        </section>
+      )}
 
       {points.length === 0 ? (
         <div className="surface" data-testid="portal-day-empty" style={{ padding: "28px 20px", marginBottom: 20, textAlign: "center" }}>

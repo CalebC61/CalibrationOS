@@ -155,6 +155,59 @@ test("editing the prefilled shop address shows suggestions and keeps the service
   expect(screen.getByTestId("b-date")).not.toBeDisabled();
 });
 
+test("picking a place reloads times when a date is already set", async () => {
+  process.env.REACT_APP_GOOGLE_MAPS_API_KEY = "test-maps-key";
+  const street = "200 Other St, Mesa, AZ 85201, USA";
+  portalApi.post.mockImplementation((url, body) => {
+    if (String(url).includes("/geocode")) return Promise.resolve({ data: { in_metro: true } });
+    if (String(url).includes("/portal/availability")) {
+      const start = body?.job_address === street ? "2026-11-18T18:00:00Z" : "2026-11-18T16:00:00Z";
+      return Promise.resolve({ data: { slots: [{ start, requires_approval: false }] } });
+    }
+    return Promise.resolve({ data: {} });
+  });
+  window.google = {
+    maps: {
+      importLibrary: jest.fn(async () => ({
+        AutocompleteSuggestion: {
+          fetchAutocompleteSuggestions: jest.fn(async ({ input }) => ({
+            suggestions: [{
+              placePrediction: {
+                text: { text: input },
+                toPlace() {
+                  return {
+                    fetchFields: async () => {},
+                    formattedAddress: street,
+                    id: "ChIJmesa",
+                    location: { lat: () => 33.42, lng: () => -111.83 },
+                  };
+                },
+              },
+            }],
+          })),
+        },
+      })),
+    },
+  };
+
+  render(<PortalBook />);
+  const address = await screen.findByTestId("b-addr");
+  await waitFor(() => expect(address.getAttribute("data-address-mode")).toBe("places"));
+  fireEvent.change(screen.getByTestId("b-date"), { target: { value: "2026-11-18" } });
+  expect(await screen.findByTestId("b-slot-2026-11-18T16:00:00Z")).toBeInTheDocument();
+
+  fireEvent.change(address, { target: { value: "200 Other" } });
+  fireEvent.click(await screen.findByRole("option"));
+
+  expect(await screen.findByTestId("b-slot-2026-11-18T18:00:00Z")).toBeInTheDocument();
+  expect(screen.queryByTestId("b-slot-2026-11-18T16:00:00Z")).not.toBeInTheDocument();
+  expect(screen.getByTestId("b-date")).toHaveValue("2026-11-18");
+  expect(portalApi.post).toHaveBeenCalledWith("/portal/availability", {
+    job_address: street,
+    date: "2026-11-18",
+  });
+});
+
 test("a redo of a past job is optional and is sent with that job", async () => {
   portalApi.get.mockImplementation((url) => {
     if (String(url).includes("/portal/me")) {

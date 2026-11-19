@@ -30,6 +30,13 @@ See `CHANGELOG.md` for the full log. Current state:
   message cannot sit on top of later slots. A linked Dispatch card has an
   orange ring and a short pulse, separate from the red AT RISK border. No
   new env var. `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
+- **Session (2026-11-19): the shop portal fits a phone.** The shop bar is
+  Today, Jobs, Book, and Account. Today keeps the day map and shows the four
+  scorecard counts. `/portal/scorecard` redirects to Today. Account is the
+  card and charge-terms page (`/portal/settings`). A Menu button opens the
+  bar on a narrow screen. Changing the booking address reloads the times
+  when a date is already set. No new env var. `BILLING_ENABLED` and
+  `SHOP_EMAILS_ENABLED` are unchanged.
 - **Session (2026-11-19): the desk card has one next action.** Charge, delete,
   trip fee, Xero, reschedule, and cancel sit under More. The card links to
   the phone screen for that job. A shop job link opens and highlights that

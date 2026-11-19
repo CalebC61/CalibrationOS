@@ -358,6 +358,161 @@ html, body, #root {
   .owner-nav { display: none; width: 100%; }
   .owner-nav.open { display: flex; flex-direction: column; }
 }
+
+/* Shop portal. The bar is Today, Jobs, Book, Account. A phone opens it from Menu. */
+.portal-app { min-width: 0; max-width: 100%; overflow-wrap: break-word; }
+.portal-app .container-app,
+.portal-app main { min-width: 0; max-width: 100%; }
+.portal-header {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  background: var(--bg-primary);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+.portal-header-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+.portal-brand {
+  display: inline-flex;
+  align-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  max-width: 100%;
+}
+.portal-brand .brand-mark { max-width: 100%; flex-wrap: wrap; row-gap: 4px; }
+.portal-nav { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.portal-nav .tab-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 12px;
+  margin-right: 0;
+  border-bottom: none;
+  border-radius: 8px;
+}
+.portal-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+.portal-shop-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 9rem;
+}
+.portal-menu { display: none; }
+@media (max-width: 900px) {
+  .portal-brand { order: 1; }
+  .portal-menu { display: inline-flex; order: 2; }
+  .portal-account { order: 3; }
+  .portal-nav { order: 4; display: none; flex: 1 1 100%; }
+  .portal-nav.open { display: flex; flex-direction: column; align-items: stretch; width: 100%; }
+  .portal-nav.open .tab-btn { width: 100%; justify-content: flex-start; }
+  .portal-shop-name { display: none; }
+  .portal-brand .brand-tag { display: none; }
+  .portal-brand .brand-mark { font-size: 16px !important; }
+}
+.portal-app .leaflet-control-zoom a {
+  width: 44px;
+  height: 44px;
+  line-height: 44px;
+}
+@media (max-width: 480px) {
+  .portal-app .brand-tag { display: none; }
+}
+.portal-app .btn,
+.portal-app .tab-btn,
+.portal-app .input,
+.portal-app .address-suggestions button,
+.portal-app .portal-tap {
+  min-height: 44px;
+}
+.portal-app .portal-tap {
+  display: inline-flex;
+  align-items: center;
+}
+.portal-app .btn:focus-visible,
+.portal-app .tab-btn:focus-visible,
+.portal-app .portal-tap:focus-visible,
+.portal-app .address-suggestions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.portal-app label:has(input[type="checkbox"]) {
+  min-height: 44px;
+  align-items: center;
+}
+.portal-app .card-job { min-width: 0; max-width: 100%; }
+.portal-app .card-job > div { min-width: 0; flex-wrap: wrap; }
+.portal-app .leaflet-container { max-width: 100%; }
+.portal-stats { margin: 0 0 16px; }
+.portal-stats-title { font-size: 0.95rem; font-weight: 700; margin: 0 0 8px; }
+.portal-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 0;
+}
+.portal-stats-row div { min-width: 0; }
+.portal-stats-row dt {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.portal-stats-row dd {
+  margin: 2px 0 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 420px) {
+  .portal-stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.portal-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.portal-kv > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+.book-card { padding: 24px; margin-bottom: 16px; }
+.book-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.book-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.book-row > span:last-child { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 8.5rem), 1fr));
+  gap: 8px;
+}
+.slot-grid .btn { white-space: normal; min-height: 44px; }
+@media (max-width: 640px) {
+  .book-card { padding: 16px; }
+  .book-split { grid-template-columns: 1fr; }
+}
 .pac-container { z-index: 10000; }
 
 .zone-header {

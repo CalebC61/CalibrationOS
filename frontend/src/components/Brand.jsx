@@ -9,7 +9,7 @@ export default function Brand({ size = 22, subtle, tag }) {
       <span className="brand-word">CALIBRATION</span>
       <span className="brand-suffix">OS</span>
       {tag && (
-        <span style={{
+        <span className="brand-tag" style={{
           marginLeft: 12,
           fontFamily: "'DM Sans', sans-serif",
           fontSize: Math.max(12, size * 0.45),

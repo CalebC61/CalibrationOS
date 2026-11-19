@@ -76,6 +76,7 @@ export default function BookingForm({ variant = "shop", shopId = null }) {
   const [redoChecked, setRedoChecked] = useState(false);
   const [redoOf, setRedoOf] = useState("");
   const [chargeNotice, setChargeNotice] = useState(false);
+  const [slotAttempt, setSlotAttempt] = useState(0);
   const addressRef = useRef("");
   const confirmedRef = useRef("");
   const geoSeq = useRef(0);
@@ -175,6 +176,29 @@ export default function BookingForm({ variant = "shop", shopId = null }) {
     };
   }, [address, shop, http]);
 
+  const slotsReady = Boolean(zoneInfo?.in_metro);
+  useEffect(() => {
+    if (!shop || !slotsReady || !isIsoDate(date) || !address.trim()) return undefined;
+    const seq = ++slotSeq.current;
+    let cancelled = false;
+    const path = owner ? `/shops/${shopId}/availability` : "/portal/availability";
+    http.post(path, { job_address: address, date }).then(({ data }) => {
+      if (cancelled || seq !== slotSeq.current) return;
+      const nextSlots = Array.isArray(data.slots) ? data.slots : [];
+      setSlots(nextSlots);
+      setSlotsError(false);
+      if (nextSlots.length === 0) setSlotsMsg(data.message || "No slots available.");
+      else setSlotsMsg("");
+    }).catch((e) => {
+      if (cancelled || seq !== slotSeq.current) return;
+      setSlots([]);
+      setSlotsError(true);
+      const detail = e.response?.data?.detail;
+      setSlotsMsg(typeof detail === "string" && detail ? detail : "Couldn't load times, try again");
+    });
+    return () => { cancelled = true; };
+  }, [shop, slotsReady, date, address, slotAttempt, owner, shopId, http]);
+
   function atShop(value) {
     return sameAddress(value, shop?.address) || sameAddress(value, shop?.formatted_address);
   }
@@ -204,28 +228,6 @@ export default function BookingForm({ variant = "shop", shopId = null }) {
       setAddressError(typeof detail === "string" ? detail : "We couldn't find that address, please check it");
     }
   }
-  async function loadSlots(d) {
-    const seq = ++slotSeq.current;
-    setSlots([]);
-    setSlotsMsg("");
-    setSlotsError(false);
-    if (!isIsoDate(d)) return;
-    const path = owner ? `/shops/${shopId}/availability` : "/portal/availability";
-    try {
-      const { data } = await http.post(path, { job_address: address, date: d });
-      if (seq !== slotSeq.current) return;
-      const nextSlots = Array.isArray(data.slots) ? data.slots : [];
-      setSlots(nextSlots);
-      if (nextSlots.length === 0) setSlotsMsg(data.message || "No slots available.");
-      else setSlotsMsg("");
-    } catch (e) {
-      if (seq !== slotSeq.current) return;
-      setSlots([]);
-      setSlotsError(true);
-      const detail = e.response?.data?.detail;
-      setSlotsMsg(typeof detail === "string" && detail ? detail : "Couldn't load times, try again");
-    }
-  }
   function clearDate() {
     dateRef.current = "";
     slotSeq.current += 1;
@@ -242,7 +244,9 @@ export default function BookingForm({ variant = "shop", shopId = null }) {
     setSlotsError(false);
     if (owner && customTimeRef.current) setChosen({ start: phoenixInstant(next, customTimeRef.current) });
     else setChosen(null);
-    loadSlots(next);
+    setSlots([]);
+    setSlotsMsg("");
+    setSlotsError(false);
   }
   function applyDateInput(input) {
     const reading = readDateInput(input);
@@ -469,14 +473,14 @@ export default function BookingForm({ variant = "shop", shopId = null }) {
             )}
             {slotsError && slots.length === 0 && (
               <button type="button" className="btn btn-ghost" style={{ marginTop: 12 }}
-                onClick={() => loadSlots(date)} data-testid="portal-slots-retry">
+                onClick={() => setSlotAttempt((n) => n + 1)} data-testid="portal-slots-retry">
                 Try again
               </button>
             )}
             {slots.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div className="label">Available times</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 8 }}>
+                <div className="slot-grid">
                   {slots.map(s => (
                     <button key={s.start} type="button"
                       className={"btn " + (chosen?.start === s.start ? "btn-primary" : "btn-ghost")}
@@ -626,16 +630,16 @@ export default function BookingForm({ variant = "shop", shopId = null }) {
 }
 
 const Card = ({ title, sub, children }) => (
-  <div className="surface page-fade" style={{ padding: 24, marginBottom: 16 }}>
+  <div className="surface page-fade book-card">
     <h2 className="h2" style={{ marginBottom: sub ? 4 : 16 }}>{title}</h2>
     {sub && <div className="muted" style={{ fontSize: 13, marginBottom: 16 }}>{sub}</div>}
     {children}
   </div>
 );
 const F = ({ label, children }) => <div style={{ marginBottom: 14 }}><label className="label">{label}</label>{children}</div>;
-const R = ({ children }) => <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>{children}</div>;
+const R = ({ children }) => <div className="book-split">{children}</div>;
 const Row = ({ k, v, bold }) => (
-  <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+  <div className="book-row">
     <span className="muted">{k}</span><span style={{ fontWeight: bold ? 700 : 500 }}>{v}</span>
   </div>
 );

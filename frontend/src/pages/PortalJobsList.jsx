@@ -20,7 +20,7 @@ export default function PortalJobsList() {
 
   return (
     <PortalShell>
-      <h1 className="h1" style={{ marginBottom: 16 }}>My Jobs</h1>
+      <h1 className="h1" style={{ marginBottom: 16 }}>Jobs</h1>
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
         {[
           { k: "all", label: "All" },

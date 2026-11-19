@@ -1,47 +1,59 @@
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { getPortalAuth, setPortalAuth } from "../lib/portalApi";
 import Brand from "./Brand";
+
+const LINKS = [
+  { to: "/portal", label: "Today", end: true },
+  { to: "/portal/jobs", label: "Jobs" },
+  { to: "/portal/book", label: "Book" },
+  { to: "/portal/settings", label: "Account" },
+];
 
 export default function PortalShell({ children }) {
   const auth = getPortalAuth();
   const nav = useNavigate();
+  const { pathname } = useLocation();
+  const [menu, setMenu] = useState(false);
+  useEffect(() => { setMenu(false); }, [pathname]);
   function logout() { setPortalAuth(null); nav("/portal/login"); }
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)" }}>
-      <header style={{
-        borderBottom: "1px solid var(--border)", padding: "12px 24px",
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        background: "var(--bg-primary)", position: "sticky", top: 0, zIndex: 20,
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          <Link to="/portal"><Brand size={20} tag="Shop Portal" /></Link>
+    <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)" }}>
+      <header className="portal-header">
+        <div className="portal-header-bar">
+          <Link to="/portal" className="portal-brand"><Brand size={20} tag="Shop Portal" /></Link>
           {auth && (
-            <nav style={{ display: "flex", gap: 4 }}>
-              {[
-                { to: "/portal", label: "Dashboard", end: true },
-                { to: "/portal/jobs", label: "My Jobs" },
-                { to: "/portal/book", label: "Book" },
-                { to: "/portal/scorecard", label: "Scorecard" },
-                { to: "/portal/settings", label: "Settings" },
-              ].map(l => (
+            <button
+              className="btn btn-ghost portal-menu"
+              type="button"
+              onClick={() => setMenu(open => !open)}
+              aria-expanded={menu}
+              aria-controls="portal-nav"
+              data-testid="portal-menu"
+            >
+              Menu
+            </button>
+          )}
+          {auth && (
+            <nav id="portal-nav" className={"portal-nav" + (menu ? " open" : "")} data-testid="portal-nav">
+              {LINKS.map(l => (
                 <NavLink key={l.to} to={l.to} end={l.end}
-                  data-testid={`portal-nav-${l.label.toLowerCase().replace(/ /g, "-")}`}
-                  className={({ isActive }) => "tab-btn" + (isActive ? " active" : "")}
-                  style={{ padding: "8px 12px", marginRight: 4, borderBottom: "none", borderRadius: 8 }}>
+                  data-testid={`portal-nav-${l.label.toLowerCase()}`}
+                  className={({ isActive }) => "tab-btn" + (isActive ? " active" : "")}>
                   {l.label}
                 </NavLink>
               ))}
             </nav>
           )}
+          {auth ? (
+            <div className="portal-account">
+              <span className="muted portal-shop-name">{auth.shop_name}</span>
+              <button className="btn btn-ghost" type="button" onClick={logout} data-testid="portal-logout">Sign Out</button>
+            </div>
+          ) : (
+            <Link to="/portal/login" className="btn btn-primary portal-account">Sign In</Link>
+          )}
         </div>
-        {auth ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span className="muted" style={{ fontSize: 13 }}>{auth.shop_name}</span>
-            <button className="btn btn-ghost" onClick={logout} data-testid="portal-logout">Sign Out</button>
-          </div>
-        ) : (
-          <Link to="/portal/login" className="btn btn-primary">Sign In</Link>
-        )}
       </header>
       <main className="container-app page-fade">{children}</main>
     </div>

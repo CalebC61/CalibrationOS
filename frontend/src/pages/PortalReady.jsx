@@ -8,7 +8,7 @@ export default function PortalReady() {
     portalApi.get("/portal/me").then(r => setShop(r.data.shop));
   }, []);
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+    <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div className="surface" style={{ padding: 28, maxWidth: 520 }} data-testid="ready-screen">
         <h1 className="h1" style={{ marginBottom: 8 }}>You're all set{shop?.name ? `, ${shop.name}` : ""}</h1>
         <p className="muted" style={{ marginBottom: 16 }}>The agreement is signed and the card is saved. Book from the shop portal after you log in. There is no public booking link.</p>

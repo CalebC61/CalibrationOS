@@ -24,11 +24,11 @@ export default function PortalReset() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+    <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <form className="surface" style={{ padding: 28, width: "100%", maxWidth: 420 }} onSubmit={submit} data-testid="reset-form">
         <h1 className="h2" style={{ marginBottom: 12 }}>Choose a new password</h1>
         {done ? (
-          <p>Password updated. <Link to="/portal/login">Sign in</Link></p>
+          <p>Password updated. <Link className="portal-tap" to="/portal/login">Sign in</Link></p>
         ) : (
           <>
             <label className="label">New password</label>
