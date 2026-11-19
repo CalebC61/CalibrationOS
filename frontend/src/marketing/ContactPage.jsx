@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import axios from "axios";
-import BookJobLink from "./BookJobLink";
 import { SiteChrome } from "./SiteChrome";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -51,8 +50,8 @@ export default function ContactPage() {
               <p><a href="mailto:admin@thecalibrationcrew.us">admin@thecalibrationcrew.us</a></p>
             </article>
             <article className="card fact">
-              <h3>Book a job</h3>
-              <p><BookJobLink>Book a job</BookJobLink></p>
+              <h3>Shop account</h3>
+              <p><Link to="/signup">Create account</Link></p>
               <p><Link to="/portal/login">Shop login</Link></p>
             </article>
             <article className="card fact">

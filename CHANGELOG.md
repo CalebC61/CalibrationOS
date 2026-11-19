@@ -15,6 +15,20 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — public header (2026-11-19)
+The public header is Home, Pricing, Service area, Contact, Shop login, and
+Create account. Services, About, and FAQ stay at `/services`, `/about`, and
+`/faq`, linked from the footer. Staff login stays in the footer at `/login`.
+Shop login goes to `/portal/login`. Create account goes to `/signup`. There
+is no public booking link. The old Book a job shortcut, which opened signup
+or portal Book depending on who was logged in, is gone. On a narrow screen
+the header is a Menu button, the same pattern as the owner and shop bars.
+
+Public copy no longer says the shop gets ETAs or job updates by text, and it
+no longer points at an online scheduler. Booking copy points at the shop
+account. Prices are unchanged. No billing, Stripe, email, Xero, permission,
+or env change.
+
 ### Changed — owner bar is Today, Shops, Money, Settings (2026-11-19)
 The owner bar in `Shell.jsx` is four tabs. Today is the dispatch board at
 `/dashboard` (new-bookings pill and the held-email notice stay on that board).

@@ -29,7 +29,7 @@ export default function HomePage() {
                 <div className="mini-card">
                   <h3>Request a calibration</h3>
                   <strong>Vehicle, calibration type, and a time that works</strong>
-                  <p className="meta">Book online in under a minute. Add-ons the same day are welcome.</p>
+                  <p className="meta">Book from your shop account. Add-ons the same day are welcome.</p>
                 </div>
                 <div className="mini-card">
                   <h3>Today's job</h3>
@@ -63,7 +63,7 @@ export default function HomePage() {
             <article className="step">
               <div className="step-num">02</div>
               <h3>Book a calibration</h3>
-              <p>Tell us the vehicle, the calibration type, and a time that works. You can book online in under a minute.</p>
+              <p>Tell us the vehicle, the calibration type, and a time that works. Book it from your shop account.</p>
             </article>
             <article className="step">
               <div className="step-num">03</div>
@@ -129,7 +129,7 @@ export default function HomePage() {
             {[
               ["We come to you", "Mobile service at your shop or your customer's driveway. No shuttling the car across town for the calibration."],
               ["Valley-wide, East and West", "Based in Gilbert, and covering the Phoenix Valley from Buckeye to Gold Canyon, and from Black Canyon City to Casa Grande."],
-              ["Updates by text, reports the same day", "Real-time ETAs and job updates by text. Same-day reports and invoices, including pre- and post-scan documentation when the job calls for it."],
+              ["Job status in your account", "Follow the job in your shop account. Same-day reports and invoices, including pre- and post-scan documentation when the job calls for it."],
               ["Same-day add-ons welcome", "Need to add a car after the route is already set? Call or text the office. If there is a slot, there is no additional charge for the same-day add-on."],
             ].map(([title, copy]) => (
               <article className="benefit" key={title}><h3>{title}</h3><p>{copy}</p></article>

@@ -1,5 +1,4 @@
 import { Link } from "react-router-dom";
-import BookJobLink from "./BookJobLink";
 import { FaqList, SiteChrome } from "./SiteChrome";
 
 const CITIES = ["Phoenix", "Mesa", "Chandler", "Gilbert", "Tempe", "Scottsdale", "Glendale", "Peoria", "Surprise", "Buckeye", "Goodyear", "Avondale", "Queen Creek", "Apache Junction", "San Tan Valley", "Gold Canyon", "Maricopa", "Casa Grande", "Florence", "Black Canyon City"];
@@ -82,8 +81,8 @@ export function ServicesPage() {
             <p className="lede">If the car has a camera behind the mirror, a new windshield means that camera has to be recalibrated so lane-keep and auto-braking work right. We handle that last step so the job does not leave your shop unfinished.</p>
             <ul className="include">
               <li>Mobile service at your bay or the customer's driveway</li>
-              <li>Book online in under a minute</li>
-              <li>Job updates by text</li>
+              <li>Book from your shop account</li>
+              <li>Job status in your shop account</li>
               <li>Same-day reports and invoices</li>
             </ul>
           </div>
@@ -166,7 +165,7 @@ export function PricingPage() {
               <li>Same-day add-ons are welcome at no additional charge, if a slot is open. Call or text the office to check.</li>
               <li>Same-day reports and invoices</li>
               <li>Documentation for insurance, including pre- and post-scan reports when the job needs them</li>
-              <li>Online scheduling and job updates by text</li>
+              <li>Book and follow the job in your shop account</li>
             </ul>
           </div>
           <div className="card">
@@ -181,7 +180,7 @@ export function PricingPage() {
           <h2 className="display">Create a shop account to book the first job</h2>
           <div className="btn-row" style={{ justifyContent: "center" }}>
             <Link className="btn btn-primary btn-lg" to="/signup">Create your shop account</Link>
-            <BookJobLink className="btn btn-ghost btn-lg">Book a job</BookJobLink>
+            <Link className="btn btn-ghost btn-lg" to="/portal/login">Shop login</Link>
           </div>
         </div>
       </section>
@@ -242,7 +241,7 @@ export function AboutPage() {
             <h2>How we started</h2>
             <p>Caleb Cerdhe has been an ADAS calibration technician since May 2022, when he joined Complete Calibrations and began running a mobile camera calibration route in the Valley. He later founded The Calibration Crew so auto glass shops would have a dedicated mobile partner they could book without the usual back and forth.</p>
             <p>The company is based in Gilbert and is family run. Caleb is the technician in the field. His wife, Maddy, helps run the business. We work Monday through Saturday, and we speak English and Spanish.</p>
-            <p>Today shops book through CalibrationOS, our shop portal for scheduling, job tracking, and reports. You can also call, text, or use our online scheduler.</p>
+            <p>Today shops book through CalibrationOS, our shop portal for scheduling, job tracking, and reports. <Link to="/signup">Create an account</Link> or <Link to="/portal/login">log in</Link> to book. You can also call the office.</p>
           </div>
           <div>
             <div className="card" style={{ marginBottom: "1rem" }}>
