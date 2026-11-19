@@ -22,6 +22,12 @@ Read this when you (Emergent AI) resume development after Claude Code worked on 
 
 ## What changed in the latest Claude sessions
 See `CHANGELOG.md` for the full log. Current state:
+- **Session (2026-11-19): public header.** Six links: Home, Pricing, Service
+  area, Contact, Shop login (`/portal/login`), and Create account (`/signup`).
+  Services, About, FAQ, and Staff login stay in the footer and keep their
+  routes. A Menu button opens the header on a narrow screen. Public pages no
+  longer promise text updates or an online scheduler. No new env var.
+  `BILLING_ENABLED` and `SHOP_EMAILS_ENABLED` are unchanged.
 - **Session (2026-11-19): owner bar is four tabs.** Today, Shops, Money, and
   Settings. New signups and invites live on Shops. Charges and invoices live
   on Money. Days off, held email, the text log, and Growth live in Settings.

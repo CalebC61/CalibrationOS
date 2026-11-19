@@ -1,61 +1,55 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { getStoredAuth } from "../lib/api";
-import BookJobLink from "./BookJobLink";
 import "./marketing.css";
 
 const LOGO = "/marketing/logo-crew-transparent.png";
 
 const LINKS = [
   { to: "/", label: "Home", end: true },
-  { to: "/services", label: "Services" },
   { to: "/pricing", label: "Pricing" },
-  { to: "/service-area", label: "Service Area" },
-  { to: "/about", label: "About" },
-  { to: "/faq", label: "FAQ" },
+  { to: "/service-area", label: "Service area" },
   { to: "/contact", label: "Contact" },
 ];
 
 export function SiteChrome({ children }) {
   const [open, setOpen] = useState(false);
-  const loc = useLocation();
-  const staff = getStoredAuth();
+  const { pathname } = useLocation();
+  useEffect(() => { setOpen(false); }, [pathname]);
+  function close() { setOpen(false); }
   return (
-    <div className={"marketing" + (open ? " nav-open" : "")}>
+    <div className="marketing">
       <header className="site-header">
         <div className="container header-inner">
-          <Link className="brand" to="/" aria-label="The Calibration Crew home" onClick={() => setOpen(false)}>
+          <Link className="brand" to="/" aria-label="The Calibration Crew home" onClick={close}>
             <img src={LOGO} alt="The Calibration Crew" width="190" height="96" />
           </Link>
           <button
-            className="menu-toggle"
+            className="menu-toggle btn btn-ghost"
             type="button"
             aria-expanded={open}
             aria-controls="site-nav"
-            aria-label={open ? "Close menu" : "Open menu"}
-            onClick={() => setOpen(v => !v)}
+            data-testid="public-menu"
+            onClick={() => setOpen((value) => !value)}
           >
-            <span /><span /><span />
+            Menu
           </button>
-          <nav className="site-nav" id="site-nav">
+          <nav className={"site-nav" + (open ? " open" : "")} id="site-nav" data-testid="public-nav">
             <div className="nav-links">
               {LINKS.map(link => (
                 <NavLink
                   key={link.to}
                   to={link.to}
                   end={link.end}
-                  className={({ isActive }) => (isActive || (link.to === "/faq" && loc.hash === "#faq") ? "is-active" : "")}
-                  onClick={() => setOpen(false)}
+                  className={({ isActive }) => (isActive ? "is-active" : "")}
+                  onClick={close}
                 >
                   {link.label}
                 </NavLink>
               ))}
             </div>
             <div className="nav-actions">
-              <Link className="link-quiet" to={staff ? "/dashboard" : "/login"} onClick={() => setOpen(false)}>
-                {staff ? "Dispatch" : "Staff login"}
-              </Link>
-              <BookJobLink className="btn btn-primary" onClick={() => setOpen(false)}>Book a job</BookJobLink>
+              <Link className="link-quiet" to="/portal/login" onClick={close}>Shop login</Link>
+              <Link className="btn btn-primary" to="/signup" onClick={close}>Create account</Link>
             </div>
           </nav>
         </div>
@@ -89,7 +83,6 @@ export function SiteChrome({ children }) {
               <li><Link to="/signup">Create a shop account</Link></li>
               <li><Link to="/portal/login">Shop login</Link></li>
               <li><Link to="/login">Staff login</Link></li>
-              <li><BookJobLink>Book a job</BookJobLink></li>
             </ul>
           </div>
           <div>
