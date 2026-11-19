@@ -22,16 +22,62 @@
   --accent-ink: #FF7E1E;
   --accent-on-tint: #FFD0B8;
   --accent-dim: rgba(255, 95, 31, 0.14);
-  --blue: #3B82F6;
-  --blue-ink: #C5DBFF;
-  --green: #10B981;
-  --red: #EF4444;
-  --purple: #8B5CF6;
-  --yellow: #F59E0B;
+
+  /* Status paints. Light ink on a deep chip, readable on gunsteel.
+     Route is blueprint dye, pass is a bay-rag green, hold is the vest,
+     brake is dusted red, chalk is unmarked steel. Not the Tailwind set. */
+  --status-route: #C9D7EE;
+  --status-route-bg: #243044;
+  --status-route-line: #4A6284;
+  --status-pass: #D5E4C8;
+  --status-pass-bg: #243028;
+  --status-pass-line: #4C6848;
+  --status-hold: #FFD0B8;
+  --status-hold-bg: #3A2A22;
+  --status-hold-line: #8A5840;
+  --status-brake: #F3C7C0;
+  --status-brake-bg: #3A2826;
+  --status-brake-line: #8A5148;
+  --status-chalk: #D5D8E0;
+  --status-chalk-bg: #3A3E48;
+  --status-chalk-line: rgba(255, 255, 255, 0.16);
+  --blue: var(--status-route);
+  --blue-ink: var(--status-route);
+  --green: var(--status-pass);
+  --red: var(--status-brake);
+  --yellow: var(--status-hold);
 
   --text-primary: #F5F5F5;
   --text-muted: #B4B8C2;          /* #9CA0AB was 4.48:1 on #343843 */
-  --text-subtle: #6B7280;
+  --text-subtle: #B1B6C0;         /* passes 4.5:1 on the input fill */
+
+  --font-display: "Saira Stencil One", sans-serif;
+  --font-text: "DM Sans", system-ui, sans-serif;
+  --font-figure: "JetBrains Mono", ui-monospace, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: 2.75rem;
+  --leading-display: 1.05;
+  --leading-body: 1.55;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 72px;
+
+  --radius-stamp: 2px;
+  --radius-control: 4px;
+  --radius-panel: 6px;
+  --shadow-board: 0 10px 22px rgba(0, 0, 0, 0.28);
+  --shadow-pop: 0 18px 36px rgba(0, 0, 0, 0.36);
 
   /* shadcn tokens — overridden to gunsteel */
   --background: 220 13% 19%;        /* #2A2E37 */
@@ -63,18 +109,18 @@
 html, body, #root {
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: var(--font-text);
   -webkit-font-smoothing: antialiased;
   margin: 0;
   min-height: 100vh;
 }
 
-.font-display { font-family: 'Saira Stencil One', sans-serif; letter-spacing: 0.02em; }
-.font-mono   { font-family: 'JetBrains Mono', monospace; }
+.font-display { font-family: var(--font-display); letter-spacing: 0.02em; }
+.font-mono   { font-family: var(--font-figure); }
 
 /* Brand wordmark — matches the logo treatment exactly */
 .brand-mark {
-  font-family: 'Saira Stencil One', sans-serif;
+  font-family: var(--font-display);
   letter-spacing: 0.04em;
   display: inline-flex;
   align-items: baseline;
@@ -111,8 +157,8 @@ html, body, #root {
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; filter: none; }
 .btn-ghost { background: transparent; color: var(--text-primary); border-color: var(--border); }
 .btn-ghost:hover { background: var(--bg-elevated); border-color: var(--border-active); }
-.btn-danger { background: transparent; color: var(--red); border-color: rgba(239,68,68,0.3); }
-.btn-danger:hover { background: rgba(239,68,68,0.1); }
+.btn-danger { background: transparent; color: var(--status-brake); border-color: var(--status-brake-line); }
+.btn-danger:hover { background: var(--status-brake-bg); }
 
 .input {
   background: var(--bg-input); border: 1px solid var(--border);
@@ -170,20 +216,21 @@ html, body, #root {
 
 .badge {
   display: inline-flex; align-items: center; gap: 0.25rem;
-  padding: 0.125rem 0.5rem; border-radius: 999px; font-size: 0.6875rem;
-  text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+  padding: 0.15rem 0.45rem; border-radius: var(--radius-stamp); font-size: var(--text-xs);
+  letter-spacing: 0.02em; font-weight: 600;
 }
-.badge-west { background: rgba(255,95,31,0.15); color: var(--accent-on-tint); border: 1px solid rgba(255,95,31,0.3); }
-.badge-east { background: rgba(59,130,246,0.15); color: var(--blue-ink); border: 1px solid rgba(59,130,246,0.3); }
-.badge-booked { background: rgba(136,136,136,0.15); color: #c4c4c4; border: 1px solid rgba(255,255,255,0.1); }
-.badge-driving { background: rgba(59,130,246,0.15); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); }
-.badge-on_site { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
-.badge-complete { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
-.badge-cancelled { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
-.badge-requested { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
-.badge-declined { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
-.badge-pending { background: rgba(136,136,136,0.15); color: #c4c4c4; border: 1px solid rgba(255,255,255,0.1); }
-.badge-draft { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+.badge-west { background: var(--status-hold-bg); color: var(--status-hold); border: 1px solid var(--status-hold-line); }
+.badge-east { background: var(--status-route-bg); color: var(--status-route); border: 1px solid var(--status-route-line); }
+.badge-booked { background: var(--status-chalk-bg); color: var(--status-chalk); border: 1px solid var(--status-chalk-line); }
+.badge-driving { background: var(--status-route-bg); color: var(--status-route); border: 1px solid var(--status-route-line); }
+.badge-on_site { background: var(--status-hold-bg); color: var(--status-hold); border: 1px solid var(--status-hold-line); }
+.badge-complete { background: var(--status-pass-bg); color: var(--status-pass); border: 1px solid var(--status-pass-line); }
+.badge-cancelled { background: var(--status-brake-bg); color: var(--status-brake); border: 1px solid var(--status-brake-line); }
+.badge-requested { background: var(--status-hold-bg); color: var(--status-hold); border: 1px solid var(--status-hold-line); }
+.badge-declined { background: var(--status-brake-bg); color: var(--status-brake); border: 1px solid var(--status-brake-line); }
+.badge-pending { background: var(--status-chalk-bg); color: var(--status-chalk); border: 1px solid var(--status-chalk-line); }
+.badge-draft { background: var(--status-hold-bg); color: var(--status-hold); border: 1px solid var(--status-hold-line); }
+.badge-risk { background: var(--status-brake-bg); color: var(--status-brake); border: 1px solid var(--status-brake-line); }
 
 .warranty-banner {
   display: flex;
@@ -208,9 +255,9 @@ html, body, #root {
   align-items: center;
   padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(16, 185, 129, 0.18);
-  color: #6ee7b7;
-  border: 1px solid rgba(16, 185, 129, 0.45);
+  background: var(--status-pass-bg);
+  color: var(--status-pass);
+  border: 1px solid var(--status-pass-line);
   font-size: 15px;
   font-weight: 700;
   letter-spacing: 0;
@@ -282,8 +329,8 @@ html, body, #root {
   background: var(--accent-dim);
 }
 .card-job-at-risk {
-  border-color: var(--red);
-  box-shadow: 0 0 0 1px var(--red), 0 0 16px rgba(239,68,68,0.18);
+  border-color: var(--status-brake-line);
+  box-shadow: none;
 }
 .card-job[draggable="true"] { cursor: grab; }
 .card-job[draggable="true"]:active { cursor: grabbing; }
@@ -352,13 +399,14 @@ html, body, #root {
 
 /* Owner bar. Today, Shops, Money, Settings. A phone opens it from Menu. */
 .shell-header {
-  border-bottom: 1px solid var(--border);
-  padding: 12px 16px;
-  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-strong);
+  padding: 8px 16px 0;
+  background: #22262E;
   position: sticky;
   top: 0;
   z-index: 20;
 }
+.shell-header .btn { border-radius: var(--radius-control); }
 .shell-header-bar {
   display: flex;
   flex-wrap: wrap;
@@ -393,8 +441,8 @@ html, body, #root {
   min-height: 44px;
   padding: 8px 12px;
   margin-right: 0;
-  border-bottom: none;
-  border-radius: 8px;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
 }
 .nav-toggle { display: none; }
 .section-switch {
@@ -583,16 +631,18 @@ html, body, #root {
 .pac-container { z-index: 10000; }
 
 .zone-header {
-  font-family: 'Saira Stencil One', sans-serif; font-weight: 400; font-size: 0.95rem;
-  text-transform: uppercase; letter-spacing: 0.14em; padding: 0.75rem 1rem;
-  border-radius: 8px; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;
+  font-family: var(--font-display); font-weight: 400; font-size: 0.95rem;
+  letter-spacing: 0.04em; padding: 0.7rem 0.15rem;
+  border-radius: 0; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;
   justify-content: space-between;
+  border-bottom: 1px solid var(--border-strong);
+  background: transparent;
 }
-.zone-header-west { background: rgba(255,95,31,0.08); color: var(--accent-ink); border: 1px solid rgba(255,95,31,0.2); }
-.zone-header-east { background: rgba(59,130,246,0.08); color: var(--blue-ink); border: 1px solid rgba(59,130,246,0.2); }
+.zone-header-west { color: var(--accent-on-tint); border-bottom-color: var(--status-hold-line); }
+.zone-header-east { color: var(--status-route); border-bottom-color: var(--status-route-line); }
 
-.h1 { font-family: 'Saira Stencil One', sans-serif; font-weight: 400; font-size: 2rem; letter-spacing: 0.02em; }
-.h2 { font-family: 'Saira Stencil One', sans-serif; font-weight: 400; font-size: 1.5rem; letter-spacing: 0.02em; }
+.h1 { font-family: var(--font-display); font-weight: 400; font-size: var(--text-2xl); letter-spacing: 0.02em; line-height: var(--leading-display); }
+.h2 { font-family: var(--font-display); font-weight: 400; font-size: var(--text-xl); letter-spacing: 0.02em; line-height: var(--leading-display); }
 .h3 { font-family: 'DM Sans', sans-serif; font-weight: 700; font-size: 1.125rem; letter-spacing: 0; }
 
 a { color: inherit; text-decoration: none; }
@@ -609,6 +659,128 @@ a { color: inherit; text-decoration: none; }
 
 /* Tabs */
 .tab-btn { padding: 0.5rem 0; margin-right: 1.5rem; border-bottom: 2px solid transparent;
-  color: var(--text-muted); font-weight: 600; cursor: pointer; transition: all 150ms; }
+  color: var(--text-muted); font-weight: 600; cursor: pointer; transition: color 150ms ease, border-color 150ms ease; }
 .tab-btn.active { color: var(--text-primary); border-bottom-color: var(--accent); }
 .tab-btn:hover { color: var(--text-primary); }
+
+::selection { background: var(--accent); color: #0a0a0a; }
+.input, textarea, select { caret-color: var(--accent); }
+
+/* Today board. A run sheet, not another admin card. */
+.day-board .run-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+.day-board .run-head h1 { margin: 0 0 var(--space-3); }
+.day-board .run-controls { display: flex; gap: var(--space-2); margin-top: 0; flex-wrap: wrap; }
+.day-board .run-controls .btn,
+.day-board .btn { border-radius: var(--radius-control); }
+.day-board .run-totals {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-board);
+}
+.day-board .run-totals > div {
+  padding: 10px 16px;
+  min-width: 7.5rem;
+}
+.day-board .run-totals > div + div { border-left: 1px solid var(--border); }
+.day-board .run-totals dt {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.day-board .run-totals dd {
+  margin: 2px 0 0;
+  font-family: var(--font-figure);
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+.day-board .card-job {
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-board);
+}
+.day-board .card-job .font-display {
+  font-family: var(--font-figure);
+  font-weight: 600;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.day-board .booking-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--accent);
+  color: #0a0a0a;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  padding: 8px 16px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.day-board .hold-mail {
+  display: inline-block;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-stamp);
+  background: var(--status-hold-bg);
+  color: var(--status-hold);
+  border: 1px solid var(--status-hold-line);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.day-board .board-notice {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-panel);
+  background: var(--status-brake-bg);
+  color: var(--status-brake);
+  border: 1px solid var(--status-brake-line);
+  font-size: 14px;
+}
+.day-board .closed-head {
+  letter-spacing: 0.01em;
+  text-transform: none;
+  font-size: 13px;
+}
+.day-board .closed-board { border-radius: var(--radius-panel); box-shadow: var(--shadow-board); }
+.field-notice {
+  margin: 12px;
+  padding: 12px;
+  background: var(--status-brake-bg);
+  color: var(--status-brake);
+  border: 1px solid var(--status-brake-line);
+  border-radius: var(--radius-panel);
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+.field-notice p { margin: 0; font-size: 14px; line-height: 1.4; }
+.field-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+@media (max-width: 640px) {
+  .day-board .run-totals > div + div { border-left: 0; border-top: 1px solid var(--border); }
+  .day-board .run-totals > div { flex: 1 1 40%; }
+}

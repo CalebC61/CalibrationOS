@@ -1,7 +1,5 @@
 /* Public site, scoped under .marketing so the dispatch app keeps its own styles.
    Ported from the approved static mockup. */
-@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap');
-
 .marketing {
   --bg-primary: #2A2E37;
   --bg-deep: #22262E;
@@ -15,12 +13,16 @@
   --accent-ink: #FF7E1E;
   --accent-on-tint: #FFD0B8;
   --accent-dim: rgba(255, 95, 31, 0.14);
-  --blue: #3B82F6;
-  --blue-ink: #C5DBFF;
-  --green: #10B981;
+  --status-route: #C9D7EE;
+  --status-pass: #D5E4C8;
+  --status-hold: #FFD0B8;
+  --status-brake: #F3C7C0;
+  --blue: var(--status-route);
+  --blue-ink: var(--status-route);
+  --green: var(--status-pass);
   --text-primary: #F5F5F5;
   --text-muted: #B4B8C2;
-  --text-subtle: #6B7280;
+  --text-subtle: #B1B6C0;
   --ink: #0A0A0A;
   --radius: 12px;
   --header-h: 84px;
@@ -33,11 +35,11 @@
   -webkit-font-smoothing: antialiased;
   line-height: 1.6;
 }.marketing img { max-width: 100%; height: auto; display: block; }.marketing a { color: inherit; text-decoration: none; }.marketing button, .marketing input, .marketing textarea, .marketing select { font: inherit; }.marketing h1, .marketing h2, .marketing h3, .marketing h4 { margin: 0 0 0.6em; line-height: 1.15; color: var(--text-primary); }.marketing p { margin: 0 0 1em; }.marketing p:last-child { margin-bottom: 0; }.marketing .container { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }.marketing .display {
-  font-family: "Oswald", "DM Sans", sans-serif;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-weight: 400;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  line-height: 0.95;
+  line-height: 1.12;
 }.marketing .eyebrow {
   display: inline-flex;
   align-items: center;
@@ -64,9 +66,8 @@
   position: sticky;
   top: 0;
   z-index: 50;
-  background: rgba(42, 46, 55, 0.92);
-  backdrop-filter: blur(16px);
-  border-bottom: 1px solid var(--border);
+  background: #22262E;
+  border-bottom: 1px solid var(--border-strong);
 }.marketing .header-inner {
   display: flex;
   align-items: center;
@@ -167,13 +168,13 @@
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }.marketing .step, .marketing .benefit, .marketing .svc, .marketing .card { padding: 1.4rem 1.35rem; }.marketing .step-num {
-  font-family: "Oswald", sans-serif;
+  font-family: var(--font-display);
   font-size: 1.4rem;
   color: var(--accent);
   letter-spacing: 0.04em;
   margin-bottom: 0.6rem;
 }.marketing .step h3, .marketing .svc h3, .marketing .benefit h3 { font-size: 1.15rem; margin-bottom: 0.4rem; }.marketing .step p, .marketing .svc p, .marketing .benefit p, .marketing .card p { color: var(--text-muted); }.marketing .svc-grid, .marketing .benefit-grid, .marketing .price-grid, .marketing .city-grid { display: grid; gap: 1rem; margin-top: 2rem; }.marketing .svc-grid, .marketing .benefit-grid { grid-template-columns: repeat(2, 1fr); }.marketing .price-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }.marketing .svc .price-tag, .marketing .price-card .amount {
-  font-family: "Oswald", sans-serif;
+  font-family: var(--font-display);
   color: var(--accent-ink);
   font-size: 2rem;
   margin: 0.7rem 0 0.35rem;
@@ -195,7 +196,7 @@
   border-radius: 16px;
   padding: 1.8rem 1.6rem;
   box-shadow: 0 0 0 1px rgba(255,95,31,0.08);
-}.marketing .offer-card .amount { font-family: "Oswald", sans-serif; font-size: 4rem; color: var(--accent); line-height: 1; }.marketing .offer-card .amount span { font-size: 1.1rem; letter-spacing: 0.08em; color: var(--text-muted); margin-left: 0.25rem; }.marketing .band { background: var(--bg-deep); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }.marketing .quotes { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 2rem; }.marketing .quote { padding: 1.35rem 1.3rem; height: 100%; }.marketing .quote p { font-size: 1.02rem; }.marketing .quote cite { display: block; margin-top: 0.85rem; font-style: normal; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-ink); }.marketing .area-split, .marketing .about-split, .marketing .contact-grid, .marketing .two-col {
+}.marketing .offer-card .amount { font-family: var(--font-display); font-size: 4rem; color: var(--accent); line-height: 1; }.marketing .offer-card .amount span { font-size: 1.1rem; letter-spacing: 0.08em; color: var(--text-muted); margin-left: 0.25rem; }.marketing .band { background: var(--bg-deep); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }.marketing .quotes { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 2rem; }.marketing .quote { padding: 1.35rem 1.3rem; height: 100%; }.marketing .quote p { font-size: 1.02rem; }.marketing .quote cite { display: block; margin-top: 0.85rem; font-style: normal; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-ink); }.marketing .area-split, .marketing .about-split, .marketing .contact-grid, .marketing .two-col {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 2rem;
@@ -300,6 +301,193 @@
 
 @media (max-width: 980px) {.marketing .hero-grid, .marketing .offer, .marketing .area-split, .marketing .about-split, .marketing .contact-grid, .marketing .two-col { grid-template-columns: 1fr; }.marketing .steps, .marketing .svc-grid, .marketing .benefit-grid, .marketing .quotes, .marketing .price-grid { grid-template-columns: 1fr 1fr; }.marketing .app-body { grid-template-columns: 1fr; }.marketing .app-side { display: none; }.marketing .footer-grid { grid-template-columns: 1fr 1fr; }
 }
+
+.marketing .nav-links a:focus-visible,
+.marketing .link-quiet:focus-visible,
+.marketing .btn:focus-visible,
+.marketing .menu-toggle:focus-visible,
+.marketing .faq-item button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.marketing .site-header .btn,
+.marketing .menu-toggle { border-radius: 4px; }
+.marketing .home .hero { padding: 2.4rem 0 3.2rem; }
+.marketing .home .hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(260px, 0.9fr);
+  grid-template-areas:
+    "title board"
+    "copy board";
+  column-gap: 3rem;
+  row-gap: 0.4rem;
+  align-items: center;
+}
+.marketing .home .hero-grid h1 {
+  grid-area: title;
+  margin: 0;
+  font-size: clamp(2.6rem, 4.6vw, 4.25rem);
+}
+.marketing .home .hero-copy { grid-area: copy; max-width: 38rem; }
+.marketing .home .hero-copy .subhead { margin-top: 0.2rem; }
+.marketing .home .target-board {
+  grid-area: board;
+  margin: 0;
+  justify-self: end;
+  width: min(100%, 420px);
+}
+.marketing .home .target-board svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 16px 28px rgba(0, 0, 0, 0.38));
+  animation: target-settle 720ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.marketing .home .target-board figcaption {
+  margin-top: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  max-width: 28rem;
+}
+@keyframes target-settle {
+  from { transform: translateY(10px); }
+  to { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marketing .home .target-board svg { animation: none; }
+}
+.marketing .home .section h2.display { margin-bottom: 0.85rem; }
+.marketing .home .work-order,
+.marketing .home .rate-sheet,
+.marketing .home .bay-notes {
+  list-style: none;
+  margin: 2rem 0 0;
+  padding: 0;
+  background: var(--bg-surface);
+  border-top: 3px solid var(--accent);
+}
+.marketing .home .work-order li,
+.marketing .home .rate-sheet article,
+.marketing .home .bay-notes article {
+  display: grid;
+  gap: 0.35rem 1.75rem;
+  align-items: baseline;
+  padding: 1.15rem 0.2rem 1.2rem;
+  border-bottom: 1px solid var(--border-strong);
+  background: transparent;
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+}
+.marketing .home .work-order li,
+.marketing .home .bay-notes article { grid-template-columns: minmax(12rem, 18rem) minmax(0, 1fr); }
+.marketing .home .rate-sheet article { grid-template-columns: minmax(9rem, 13rem) 11rem minmax(0, 1fr); }
+.marketing .home .work-order h3,
+.marketing .home .rate-sheet h3,
+.marketing .home .bay-notes h3,
+.marketing .home .offer-sheet h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+.marketing .home .work-order p,
+.marketing .home .rate-sheet p,
+.marketing .home .bay-notes p,
+.marketing .home .offer-sheet p { color: var(--text-muted); margin: 0; }
+.marketing .home .rate {
+  font-family: var(--font-figure);
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--accent-on-tint);
+  font-variant-numeric: tabular-nums;
+}
+.marketing .home .rate span {
+  display: block;
+  margin-top: 0.15rem;
+  font-family: var(--font-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.marketing .home .offer-sheet {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  gap: 2rem 3rem;
+  margin-top: 1.5rem;
+  padding-top: 1.25rem;
+  border-top: 3px solid var(--accent);
+}
+.marketing .home .offer-sheet .amount {
+  font-family: var(--font-display);
+  font-size: clamp(4rem, 8vw, 6rem);
+  line-height: 0.9;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+  margin: 0 0 0.8rem;
+}
+.marketing .home .offer-sheet .amount span {
+  display: block;
+  margin-top: 0.35rem;
+  font-family: var(--font-text);
+  font-size: 1rem;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.marketing .home .offer-sheet article p + p { margin-top: 0.75rem; }
+.marketing .home .flyer-quotes { margin-top: 0.5rem; }
+.marketing .home .flyer-quotes blockquote {
+  margin: 0;
+  padding: 1.35rem 0;
+  border: 0;
+  border-top: 1px solid var(--border-strong);
+  background: transparent;
+  border-radius: 0;
+}
+.marketing .home .flyer-quotes p {
+  font-size: 1.28rem;
+  line-height: 1.4;
+  max-width: 40rem;
+  color: var(--text-primary);
+}
+.marketing .home .flyer-quotes blockquote:first-child p { font-size: clamp(1.45rem, 2.4vw, 1.85rem); }
+.marketing .home .flyer-quotes cite {
+  display: block;
+  margin-top: 0.65rem;
+  font-style: normal;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+}
+.marketing .home .close-band {
+  padding: 4rem 0 4.75rem;
+  border-top: 3px solid var(--accent);
+}
+.marketing .home .close-band h2 { font-size: clamp(2.4rem, 5vw, 4rem); margin-bottom: 0.7rem; }
+.marketing .home .btn { border-radius: 4px; }
+@media (max-width: 800px) {
+  .marketing .home .hero-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "title"
+      "board"
+      "copy";
+    row-gap: 1.25rem;
+  }
+  .marketing .home .hero-grid h1 { font-size: clamp(2.15rem, 9.2vw, 2.85rem); }
+  .marketing .home .target-board { justify-self: start; width: min(100%, 340px); }
+  .marketing .home .hero-line { white-space: normal; }
+  .marketing .home .work-order li,
+  .marketing .home .bay-notes article,
+  .marketing .home .rate-sheet article,
+  .marketing .home .offer-sheet { grid-template-columns: 1fr; }
+  .marketing .home .offer-sheet { gap: 1.75rem; }
+}
+
 @media (max-width: 900px) {
   .marketing .header-inner .menu-toggle { display: inline-flex; margin-left: auto; }
   .marketing .site-nav {

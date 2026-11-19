@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-19T00:00:00Z",
+  "title": "Design System: CalibrationOS",
+  "extensions": {
+    "colorMeta": {
+      "gunsteel": { "role": "neutral", "displayName": "Gunsteel", "canonical": "#2A2E37", "tonalRamp": ["#121418", "#1C1F26", "#22262E", "#2A2E37", "#343843", "#3E424F", "#6A7080", "#F5F5F5"] },
+      "orange": { "role": "primary", "displayName": "Safety orange", "canonical": "#FF5F1F", "tonalRamp": ["#3A2A22", "#6A3A22", "#A34A1A", "#FF5F1F", "#FF7E1E", "#FFB088", "#FFD0B8", "#FFF1E8"] },
+      "status-route": { "role": "info", "displayName": "Blueprint", "canonical": "#C9D7EE", "tonalRamp": ["#243044", "#31445F", "#4A6284", "#6E86A8", "#8EA6C4", "#C9D7EE", "#E4ECF6", "#F7F9FC"] },
+      "status-pass": { "role": "success", "displayName": "Bay green", "canonical": "#D5E4C8", "tonalRamp": ["#243028", "#314236", "#4C6848", "#6E8A68", "#9AAD90", "#D5E4C8", "#EAF1E4", "#F7FAF4"] },
+      "status-hold": { "role": "warning", "displayName": "Vest", "canonical": "#FFD0B8", "tonalRamp": ["#3A2A22", "#5C3E32", "#8A5840", "#C48468", "#E8B09A", "#FFD0B8", "#FFE6DA", "#FFF6F1"] },
+      "status-brake": { "role": "danger", "displayName": "Brake dust", "canonical": "#F3C7C0", "tonalRamp": ["#3A2826", "#5C3C38", "#8A5148", "#C4847C", "#E0A8A0", "#F3C7C0", "#F8E4E0", "#FDF6F4"] },
+      "status-chalk": { "role": "neutral", "displayName": "Chalk", "canonical": "#D5D8E0", "tonalRamp": ["#2A2E37", "#3A3E48", "#555A66", "#8B909C", "#B1B6C0", "#D5D8E0", "#E8EAEE", "#F5F5F5"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Stencil", "purpose": "Wordmark and headlines. The only display face." },
+      "body": { "displayName": "Text", "purpose": "Reading text, labels, and buttons." },
+      "figure": { "displayName": "Figures", "purpose": "Times, prices, and counts." }
+    },
+    "shadows": [
+      { "name": "board", "value": "0 10px 22px rgba(0, 0, 0, 0.28)", "purpose": "A clipboard lifted off the bench." },
+      { "name": "pop", "value": "0 18px 36px rgba(0, 0, 0, 0.36)", "purpose": "A dialog or a booking panel." }
+    ],
+    "motion": [
+      { "name": "settle", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "The target board settles into place. Content is visible without it." }
+    ],
+    "breakpoints": [
+      { "name": "phone", "value": "800px" },
+      { "name": "owner-menu", "value": "900px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one filled action. Orange with near-black type.",
+      "html": "<button class=\"ds-btn-primary\">Create your shop account</button>",
+      "css": ".ds-btn-primary { background: #FF5F1F; color: #0A0A0A; border: 1px solid transparent; border-radius: 4px; padding: 12px 18px; font-family: 'DM Sans', system-ui, sans-serif; font-weight: 700; font-size: 16px; } .ds-btn-primary:hover { filter: brightness(1.08); } .ds-btn-primary:focus-visible { outline: 2px solid #FF5F1F; outline-offset: 3px; }"
+    },
+    {
+      "name": "Ghost button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "A secondary action on gunsteel.",
+      "html": "<button class=\"ds-btn-ghost\">See how it works</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #F5F5F5; border: 1px solid rgba(255,255,255,0.16); border-radius: 4px; padding: 12px 18px; font-family: 'DM Sans', system-ui, sans-serif; font-weight: 700; } .ds-btn-ghost:hover { background: #3E424F; } .ds-btn-ghost:focus-visible { outline: 2px solid #FF5F1F; outline-offset: 3px; }"
+    },
+    {
+      "name": "Status stamp",
+      "kind": "chip",
+      "refersTo": "status-stamp",
+      "description": "Job status. Light ink on a deep chip, square corners.",
+      "html": "<span class=\"ds-stamp\">On site</span>",
+      "css": ".ds-stamp { display: inline-flex; background: #3A2A22; color: #FFD0B8; border: 1px solid #8A5840; border-radius: 2px; padding: 2px 7px; font-family: 'DM Sans', system-ui, sans-serif; font-size: 12px; font-weight: 600; }"
+    },
+    {
+      "name": "Owner rail",
+      "kind": "nav",
+      "refersTo": "button-ghost",
+      "description": "The owner bar. The current item is an orange underline.",
+      "html": "<nav class=\"ds-rail\"><a class=\"is-on\" href=\"#today\">Today</a><a href=\"#shops\">Shops</a><a href=\"#money\">Money</a><a href=\"#settings\">Settings</a></nav>",
+      "css": ".ds-rail { display: flex; gap: 8px; background: #22262E; padding: 8px 12px 0; font-family: 'DM Sans', system-ui, sans-serif; } .ds-rail a { color: #B4B8C2; text-decoration: none; font-weight: 600; padding: 10px 12px; border-bottom: 2px solid transparent; } .ds-rail a.is-on { color: #F5F5F5; border-bottom-color: #FF5F1F; }"
+    },
+    {
+      "name": "Run totals",
+      "kind": "card",
+      "refersTo": "button-ghost",
+      "description": "The Today counts, one strip instead of four cards.",
+      "html": "<dl class=\"ds-totals\"><div><dt>Jobs</dt><dd>3</dd></div><div><dt>Revenue</dt><dd>$485</dd></div></dl>",
+      "css": ".ds-totals { display: flex; margin: 0; background: #343843; border: 1px solid rgba(255,255,255,0.16); border-radius: 6px; box-shadow: 0 10px 22px rgba(0,0,0,0.28); } .ds-totals div { padding: 10px 16px; } .ds-totals div + div { border-left: 1px solid rgba(255,255,255,0.08); } .ds-totals dt { color: #B4B8C2; font-size: 12px; font-family: 'DM Sans', system-ui, sans-serif; } .ds-totals dd { margin: 2px 0 0; color: #F5F5F5; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 22px; font-weight: 600; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The target and the work order.",
+    "overview": "CalibrationOS is the desk and the public front of a two-person ADAS crew in Gilbert. The visitor is a shop owner or a technician in a bay, under fluorescent light, with a van outside. The page should feel like the board they set up for a camera and the sheet they write the job on. Gunsteel is the ground. Orange is the safety vest and the only fill for a primary action. Headlines are the same stencil as the wordmark. Reading text is DM Sans. Clocks and money are mono. Status is five shop colors, not a UI kit.",
+    "keyCharacteristics": [
+      "One display face, Saira Stencil One, including the CALIBRATION OS mark",
+      "Gunsteel surfaces with orange used as a fill, not as small gray-adjacent text",
+      "Ruled sheets (a rate line, a job row) instead of repeated admin cards",
+      "Status stamps with a light ink on a deep chip"
+    ],
+    "rules": [
+      { "name": "The Shop Status Rule", "body": "Status never uses Tailwind blue, emerald, amber, or red.", "section": "colors" },
+      { "name": "The One Voice Rule", "body": "Saira Stencil One is the only display face. Oswald is not loaded. DM Sans is the only text face. JetBrains Mono is for times, prices, and counts, not for labels.", "section": "typography" }
+    ],
+    "dos": [
+      "Do keep gunsteel, #FF5F1F, and the stencil wordmark.",
+      "Do draw status from the five shop colors.",
+      "Do use mono for a time, a price, or a count.",
+      "Do let a heading carry itself, without a kicker above it."
+    ],
+    "donts": [
+      "Don't load Oswald or a second display family.",
+      "Don't draw a fake product window, fake logos, or invented stats.",
+      "Don't use a Tailwind blue, green, amber, or red for status.",
+      "Don't put a colored glow on a card."
+    ]
+  }
+}

@@ -46,6 +46,7 @@ export default function Dashboard() {
   const [rescheduleTarget, setRescheduleTarget] = useState(null); // { job, mode: 'reschedule' | 'cancel' }
   const [dragOver, setDragOver] = useState(null);
   const [refreshingMap, setRefreshingMap] = useState(false);
+  const [refreshAsk, setRefreshAsk] = useState(false);
   const [refreshResult, setRefreshResult] = useState(null);
   const [refreshError, setRefreshError] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
@@ -301,9 +302,12 @@ export default function Dashboard() {
     setDate(dateStr(d));
   }
 
-  async function refreshLocations() {
-    const ok = window.confirm("Refresh map locations? This only updates coordinates and sends no messages.");
-    if (!ok) return;
+  function refreshLocations() {
+    setRefreshAsk(true);
+  }
+
+  async function runRefresh() {
+    setRefreshAsk(false);
     setRefreshingMap(true);
     setRefreshError(null);
     try {
@@ -334,13 +338,10 @@ export default function Dashboard() {
 
   return (
     <Shell>
+      <div className="day-board">
       {alerts.count > 0 && (
         <div className="page-fade" style={{ marginBottom: 16, position: "relative" }} data-testid="new-bookings-banner">
-          <button onClick={() => setAlertsOpen(o => !o)} data-testid="new-bookings-pill"
-            style={{ display: "inline-flex", alignItems: "center", gap: 10,
-              background: "var(--accent)", color: "#0a0a0a",
-              border: "1px solid var(--accent)", borderRadius: 999,
-              padding: "8px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+          <button onClick={() => setAlertsOpen(o => !o)} data-testid="new-bookings-pill" className="booking-pill" type="button">
             <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 999, background: "#0a0a0a" }} />
             <span data-testid="new-bookings-count">{alerts.count}</span> new booking{alerts.count === 1 ? "" : "s"} since you last looked
             <span style={{ fontSize: 12 }}>{alertsOpen ? "▲" : "▼"}</span>
@@ -382,31 +383,23 @@ export default function Dashboard() {
       )}
 
       {summary && summary.shop_emails_enabled === false && (
-        <Link to="/settings?section=email" data-testid="shop-emails-off" style={{
-          display: "inline-block", marginBottom: 12, padding: "4px 10px", borderRadius: 999,
-          background: "rgba(245, 158, 11, 0.16)", color: "var(--yellow)",
-          fontSize: 13, fontWeight: 600, textDecoration: "none",
-        }}>
+        <Link to="/settings?section=email" data-testid="shop-emails-off" className="hold-mail">
           Shop emails are on hold — view held emails
         </Link>
       )}
       {notice && (
-        <div role="alert" data-testid="board-notice" style={{
-          display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
-          marginBottom: 12, padding: "10px 12px", borderRadius: 10,
-          background: "rgba(239, 68, 68, 0.12)", color: "#FCA5A5", fontSize: 14,
-        }}>
+        <div role="alert" data-testid="board-notice" className="board-notice">
           <span>{notice}</span>
           <button type="button" className="btn btn-ghost" onClick={() => setNotice("")}
             data-testid="board-notice-dismiss" style={{ padding: "4px 10px", fontSize: 13 }}>Dismiss</button>
         </div>
       )}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap", gap: 16 }}>
+      <div className="run-head">
         <div>
-          <h1 className="h1" style={{ margin: "4px 0" }}>
+          <h1 className="h1">
             {new Date(date + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
           </h1>
-          <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+          <div className="run-controls">
             <button className="btn btn-ghost" onClick={() => shiftDate(-1)} data-testid="prev-day">← Prev</button>
             <button className="btn btn-ghost" onClick={() => setDate(phoenixTodayStr())} data-testid="today-btn">Today</button>
             <button className="btn btn-ghost" onClick={() => shiftDate(1)} data-testid="next-day">Next →</button>
@@ -419,12 +412,12 @@ export default function Dashboard() {
           </div>
         </div>
         {summary && (
-          <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
-            <Metric label="Jobs" value={totals.job_count} />
-            <Metric label="Revenue" value={`$${Number(totals.revenue || 0).toFixed(0)}`} />
-            <Metric label="Est. Miles" value={totals.estimated_miles} />
-            <Metric label="Done By" value={totals.done_by ? formatTime(totals.done_by) : "—"} />
-          </div>
+          <dl className="run-totals">
+            <div><dt>Jobs</dt><dd>{totals.job_count}</dd></div>
+            <div><dt>Revenue</dt><dd>${Number(totals.revenue || 0).toFixed(0)}</dd></div>
+            <div><dt>Est. Miles</dt><dd>{totals.estimated_miles}</dd></div>
+            <div><dt>Done By</dt><dd>{totals.done_by ? formatTime(totals.done_by) : "—"}</dd></div>
+          </dl>
         )}
       </div>
 
@@ -502,6 +495,36 @@ export default function Dashboard() {
         mode={rescheduleTarget?.mode}
         onClose={() => setRescheduleTarget(null)} onDone={finishScheduleChange} />
       <TomorrowStrip baseDate={date} />
+      {refreshAsk && (
+        <div
+          onClick={() => setRefreshAsk(false)}
+          onKeyDown={(e) => { if (e.key === "Escape") setRefreshAsk(false); }}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 50,
+            display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+          }}
+          data-testid="refresh-map-dialog"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="refresh-map-title"
+            onClick={(e) => e.stopPropagation()}
+            className="surface"
+            style={{ padding: 24, maxWidth: 440, width: "100%", borderRadius: "var(--radius-panel)" }}
+          >
+            <h2 id="refresh-map-title" className="h2" style={{ marginBottom: 12 }}>Refresh map locations?</h2>
+            <p style={{ margin: "0 0 16px", fontSize: 15, lineHeight: 1.45 }}>This only updates coordinates and sends no messages.</p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="btn btn-ghost" autoFocus onClick={() => setRefreshAsk(false)}
+                data-testid="refresh-map-cancel">Cancel</button>
+              <button type="button" className="btn btn-primary" onClick={runRefresh}
+                data-testid="refresh-map-confirm">Refresh locations</button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </Shell>
   );
 }
@@ -680,19 +703,6 @@ function countLine(group) {
   return `${n("updated")} updated, ${n("failed")} failed, ${n("skipped")} skipped`;
 }
 
-function Metric({ label, value, highlight }) {
-  return (
-    <div className="surface" style={{
-      padding: "10px 16px", minWidth: 100,
-      borderColor: highlight === "red" ? "var(--red)" : "var(--border)",
-      boxShadow: highlight === "red" ? "0 0 18px rgba(239,68,68,0.18)" : undefined,
-    }}>
-      <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>{label}</div>
-      <div className="font-display" style={{ fontSize: 22, fontWeight: 700, color: highlight === "red" ? "var(--red)" : undefined }}>{value}</div>
-    </div>
-  );
-}
-
 function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPayment, onCharge, onOutside, onTripFee, onRetryXero, accent, newJobIds,
                     onReschedule, onEdit, onDelete, onDecide, focusId, dragOver, setDragOver, onDrop }) {
   return (
@@ -820,12 +830,11 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
                 Paid ${paidAmount(job)}{job.charged_at ? ` · ${formatTime(job.charged_at)}` : ""}
               </span>
             )}
-            {job.payment_status === "payment_failed" && !jobIsPaid(job) && <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)" }}>Payment failed</span>}
+            {job.payment_status === "payment_failed" && !jobIsPaid(job) && <span className="badge badge-risk">Payment failed</span>}
             {job.late_fee ? <span className="badge badge-draft">Late fee ${job.late_fee}</span> : null}
             {job.is_at_risk && (
-              <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)", border: "1px solid rgba(239,68,68,0.3)" }}
-                title={job.risk_reason} data-testid={`badge-at-risk-${job.id}`}>
-                ⚠ AT RISK
+              <span className="badge badge-risk" title={job.risk_reason} data-testid={`badge-at-risk-${job.id}`}>
+                At risk
               </span>
             )}
           </div>

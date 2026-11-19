@@ -25,9 +25,13 @@ restraint. Do not turn a task screen into a marketing page.
   text is about 4.47:1 on `#2A2E37` and 3.85:1 on `#343843`.
 - Text on an orange-tinted chip uses `--accent-on-tint` (**#FFD0B8**).
   Blue text on a blue-tinted chip uses `--blue-ink` (**#C5DBFF**).
-- Keep the incumbent world: gunsteel surfaces, Saira Stencil wordmark, DM Sans
-  body, JetBrains Mono for data. Do not swap in Inter, Roboto, Geist, or a
-  purple gradient.
+- Keep the incumbent world: gunsteel surfaces, Saira Stencil as the one
+  display face (wordmark and headlines), DM Sans for text, JetBrains Mono
+  for times and money. Do not bring Oswald back, and do not swap in Inter,
+  Roboto, Geist, or a purple gradient.
+- Status ink is the shop set in `index.css` (`--status-route`, `--status-pass`,
+  `--status-hold`, `--status-brake`, `--status-chalk`). Do not use Tailwind
+  blue, emerald, amber, or red for status.
 
 ## Floor (from the skill; do not restate a redesign)
 
