@@ -15,6 +15,15 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — visual polish on Home, the shop portal, Today, and the field phone (2026-11-21)
+Same direction as the pass above. Buttons press in (scale 0.97, 140ms ease-out) and
+only lift on a fine pointer. Focus rings are orange outlines. The page is
+`color-scheme: dark`, the browser bar is gunsteel, and sticky bars pad for a
+notch. Inputs stay at 16px on a coarse pointer so a phone does not zoom.
+Shop Today uses the same steel rail and an orange rule on the 30-day counts.
+The field phone uses 48px actions and the same rail. No flow, price, billing,
+Stripe, email, Xero, permission, or env change.
+
 ### Changed — visual direction, first pass (2026-11-19)
 Home, the owner Today board (`/dashboard`), and the shared header (public site
 and owner bar) use one set of tokens in `frontend/src/index.css`: type scale,

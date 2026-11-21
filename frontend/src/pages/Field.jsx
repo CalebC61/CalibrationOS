@@ -543,7 +543,7 @@ function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace,
 
 function Phone({ children }) {
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", maxWidth: 480, margin: "0 auto" }}>
+    <div className="field-app" style={{ background: "var(--bg-primary)", maxWidth: 480, margin: "0 auto" }}>
       {children}
     </div>
   );
@@ -551,9 +551,9 @@ function Phone({ children }) {
 
 function Header({ name, onLogout, back }) {
   return (
-    <header style={{
-      display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px",
-      borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg-primary)", zIndex: 10,
+    <header className="field-bar" style={{
+      display: "flex", justifyContent: "space-between", alignItems: "center",
+      position: "sticky", top: 0, zIndex: 10,
     }}>
       {back ? (
         <button className="btn btn-ghost" onClick={back} data-testid="field-back">← Back</button>

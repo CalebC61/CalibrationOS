@@ -508,5 +508,17 @@
   .marketing .nav-actions .link-quiet, .marketing .nav-actions .btn { min-height: 44px; }
   .marketing .nav-actions .btn { width: 100%; }
 }
+.marketing .display { text-wrap: balance; }
+.marketing .btn {
+  border-radius: 4px;
+  transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1), filter 140ms cubic-bezier(0.23, 1, 0.32, 1), background-color 140ms cubic-bezier(0.23, 1, 0.32, 1), border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.marketing .btn:active:not(:disabled) { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) {
+  .marketing .btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
+}
+@media (hover: none) {
+  .marketing .btn-primary:hover { filter: none; transform: none; }
+}
 @media (max-width: 760px) {.marketing .container { width: min(1160px, calc(100% - 28px)); }.marketing .hero { padding: 2.2rem 0 3rem; }.marketing .hero h1 { font-size: clamp(2.3rem, 11vw, 3.1rem); }.marketing .hero-line { white-space: normal; }.marketing .section { padding: 3.4rem 0; }.marketing .steps, .marketing .svc-grid, .marketing .benefit-grid, .marketing .quotes, .marketing .price-grid, .marketing .city-grid, .marketing .footer-grid { grid-template-columns: 1fr; }.marketing .btn-row .btn { width: 100%; }.marketing .page-hero { padding-top: 2.2rem; }
 }
