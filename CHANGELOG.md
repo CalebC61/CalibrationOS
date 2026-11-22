@@ -15,6 +15,39 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — visual polish on Home, the shop portal, Today, and the field phone (2026-11-21)
+Same direction as the pass above. Buttons press in (scale 0.97, 140ms ease-out) and
+only lift on a fine pointer. Focus rings are orange outlines. The page is
+`color-scheme: dark`, the browser bar is gunsteel, and sticky bars pad for a
+notch. Inputs stay at 16px on a coarse pointer so a phone does not zoom.
+Shop Today uses the same steel rail and an orange rule on the 30-day counts.
+The field phone uses 48px actions and the same rail. No flow, price, billing,
+Stripe, email, Xero, permission, or env change. The job-edit tests book the
+next open day instead of tomorrow, so a Saturday run does not land on Sunday.
+
+### Changed — visual direction, first pass (2026-11-19)
+Home, the owner Today board (`/dashboard`), and the shared header (public site
+and owner bar) use one set of tokens in `frontend/src/index.css`: type scale,
+spacing, gunsteel and orange, a five-color status palette, radii, and shadows.
+Display type is Saira Stencil One. Body is DM Sans. Times and money stay
+JetBrains Mono. Oswald is gone.
+
+The Home hero no longer draws a fake shop-portal window. It shows a CSS/SVG
+calibration target. Section kickers are off on Home. The steps, prices, and
+reviews are a rate sheet and a flyer column. The public header stays the six
+shop links from the entry below: Home, Pricing, Service area, Contact, Shop
+login (`/portal/login`), and Create account (`/signup`). Services, About, FAQ,
+and staff login stay in the footer. Home does not promise text updates. The
+owner bar is a steel rail with an orange underline on the current tab. Today's
+totals are one strip, and status stamps use the new palette. Refreshing map
+locations asks in the page, not a browser confirm. The phone screen's pin and
+phone emoji are SVG icons, and its errors show in the page.
+
+`frontend/src/components/ui` was the unused shadcn kit. Nothing in the app
+imported it, so it is removed. Other owner and shop pages are not restyled.
+Shop save, charge skip, and Xero disconnect still use the browser confirm.
+No price, billing, Stripe, email, Xero, permission, or env change.
+
 ### Changed — public header (2026-11-19)
 The public header is Home, Pricing, Service area, Contact, Shop login, and
 Create account. Services, About, and FAQ stay at `/services`, `/about`, and

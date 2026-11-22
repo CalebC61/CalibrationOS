@@ -20,9 +20,14 @@ from business_time import BUSINESS_TZ, business_day_bounds, business_date  # noq
 
 TODAY = business_date()
 TODAY_START, _TODAY_END = business_day_bounds(TODAY)
-# 10:00 AM Phoenix the next day. Midnight Phoenix is TODAY_START (07:00 UTC).
-FUTURE = (TODAY_START + timedelta(days=1, hours=10)).isoformat()
-FUTURE_END = (TODAY_START + timedelta(days=1, hours=11)).isoformat()
+# 10:00 AM Phoenix on the next open day. The shop is closed Sundays, so a
+# Saturday run must not book "tomorrow".
+_OPEN = TODAY + timedelta(days=1)
+if _OPEN.weekday() == 6:
+    _OPEN = _OPEN + timedelta(days=1)
+_OPEN_START, _ = business_day_bounds(_OPEN)
+FUTURE = (_OPEN_START + timedelta(hours=10)).isoformat()
+FUTURE_END = (_OPEN_START + timedelta(hours=11)).isoformat()
 PAST = (TODAY_START - timedelta(days=2)).isoformat()
 
 
@@ -283,7 +288,7 @@ def test_owner_can_override_customer_vehicle_price_and_time(world):
                     "vehicle_vin": "1HGCM82633A004352",
                     "calibration_type": "dual",
                     "price": 210,
-                    "scheduled_start": (TODAY_START + timedelta(days=1, hours=13)).isoformat(),
+                    "scheduled_start": (_OPEN_START + timedelta(hours=13)).isoformat(),
                     "notes": "  Call on arrival  ",
                 },
             )
@@ -301,8 +306,8 @@ def test_owner_can_override_customer_vehicle_price_and_time(world):
         assert job["price"] == 210
         assert job["notes"] == "Call on arrival"
         assert job["status"] == "booked"
-        assert job["scheduled_start"] == (TODAY_START + timedelta(days=1, hours=13)).isoformat()
-        assert job["scheduled_end"] == (TODAY_START + timedelta(days=1, hours=14)).isoformat()
+        assert job["scheduled_start"] == (_OPEN_START + timedelta(hours=13)).isoformat()
+        assert job["scheduled_end"] == (_OPEN_START + timedelta(hours=14)).isoformat()
         assert world["calls"]["geo"] == []
         assert world["calls"]["sms"] == []
 

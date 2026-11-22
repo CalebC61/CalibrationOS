@@ -134,7 +134,8 @@ accurate. The companion files are `EMERGENT.md` (handoff back to Emergent) and
   routes are mounted under `APIRouter(prefix="/api")`. JWT auth (bcrypt/passlib). Python deps in
   `backend/requirements.txt`.
 - **Frontend:** React 19 SPA via **Create React App + CRACO** (`craco start|build|test`), Tailwind
-  + Radix/shadcn UI components (`frontend/src/components/ui`), React Router v7, axios. **Package
+  with hand-made `.btn`, `.surface`, `.input`, and `.badge` styles (the unused shadcn kit in
+  `frontend/src/components/ui` was removed), React Router v7, axios. **Package
   manager: yarn 1.22** (see `packageManager` in `frontend/package.json`). The "mobile field app"
   is a mobile-optimized **PWA route `/field`**, not a React Native app.
 - **Database:** MongoDB (document collections, not SQL tables). No Supabase.
@@ -207,7 +208,7 @@ kickers, side-tab borders, nested cards).
    key is configured, otherwise fall back to a mock/DB log" pattern (see Stripe at
    `backend/server.py` ~L35 and Resend ~L36, and Xero at ~L42). New accounting integrations
    (QuickBooks, if it replaces Xero) should follow the same pattern. Frontend pages live in
-   `frontend/src/pages`; reuse `components/ui` primitives. Larger, riskier initiatives (Module 9)
+   `frontend/src/pages`; reuse `.btn`, `.surface`, `.input`, and `.badge`. Larger, riskier initiatives (Module 9)
    additionally use an env-driven feature flag (`GROWTH_MODULE_ENABLED`) to ship inert scaffolding
    ahead of the UI/routes being switched on — prefer this over a long-lived unmerged branch.
 2. **Additive, not destructive.** Don't refactor whole folders or rewrite working modules unless

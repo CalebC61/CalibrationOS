@@ -18,7 +18,7 @@ export default function PortalShell({ children }) {
   useEffect(() => { setMenu(false); }, [pathname]);
   function logout() { setPortalAuth(null); nav("/portal/login"); }
   return (
-    <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)" }}>
+    <div className="portal-app" style={{ minHeight: "100dvh", background: "var(--bg-primary)" }}>
       <header className="portal-header">
         <div className="portal-header-bar">
           <Link to="/portal" className="portal-brand"><Brand size={20} tag="Shop Portal" /></Link>

@@ -14,7 +14,7 @@ export default function Shell({ children, hideNav }) {
   useEffect(() => { setMenu(false); }, [pathname]);
   function logout() { setStoredAuth(null); nav("/login"); }
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)" }}>
+    <div style={{ minHeight: "100dvh", background: "var(--bg-primary)" }}>
       {!hideNav && (
         <header className="shell-header">
           <div className="shell-header-bar">

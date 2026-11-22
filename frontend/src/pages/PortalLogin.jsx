@@ -32,7 +32,7 @@ export default function PortalLogin() {
   }
 
   return (
-    <div className="portal-app" style={{ minHeight: "100vh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+    <div className="portal-app" style={{ minHeight: "100dvh", background: "var(--bg-primary)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
       <div style={{ width: "100%", maxWidth: 420 }} className="page-fade">
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <Brand size={28} tag="Shop Portal" />
