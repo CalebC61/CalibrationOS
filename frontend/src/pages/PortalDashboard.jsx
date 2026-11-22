@@ -107,7 +107,7 @@ export default function PortalDashboard() {
               <DarkBasemap />
               {own.filter(j => j.job_lat && j.job_lng).map((j) => (
                 <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-                  icon={pinIcon(j.route_order || "Y", "#FF5F1F", false, "#0a0a0a")}>
+                  icon={pinIcon(j.route_order || "Y", "#1FE0C4", false, "#07110F")}>
                   <Tooltip>
                     <div style={{ fontSize: 12 }}>
                       <b>Your job · {windowFor(j.scheduled_start, j.scheduled_end)}</b><br />
@@ -133,7 +133,7 @@ export default function PortalDashboard() {
           </div>
           <div style={{ display: "flex", gap: 16, marginTop: 12, fontSize: 12, flexWrap: "wrap" }} className="muted" data-testid="portal-map-legend">
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 10, height: 10, borderRadius: 999, background: "#FF5F1F", display: "inline-block" }} />
+              <span style={{ width: 10, height: 10, borderRadius: 1, background: "#1FE0C4", display: "inline-block" }} />
               Your jobs
             </span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>

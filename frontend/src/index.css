@@ -4,73 +4,96 @@
 
 @import url('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css');
 
-/* ============ CalibrationOS Design Tokens — The Calibration Crew brand ============ */
+/* ============ Field Instrument tokens — Style B preview ============
+   Graphite chassis, one calibration-beam accent. Times, money, and counts
+   use JetBrains Mono. .instrument-daylight flips the field screen for sun. */
 :root {
-  /* Gunsteel grays (cool blue undertone, matches logo background) */
-  --bg-primary: #2A2E37;
-  --bg-surface: #343843;
-  --bg-elevated: #3E424F;
-  --bg-input: #404653;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --border-active: rgba(255, 95, 31, 0.45);
+  --bg-primary: #0C1014;
+  --bg-surface: #141A1F;
+  --bg-elevated: #1C242B;
+  --bg-input: #10161B;
+  --border: #2C3C43;
+  --border-strong: #4A646C;
+  --border-active: rgba(31, 224, 196, 0.7);
 
-  /* Brand orange #FF5F1F is the fill (buttons, the OS block, focus).
-     As small text on gunsteel it is about 4.47:1 on #2A2E37 and 3.85:1 on #343843,
-     so text uses a nearby ink that clears WCAG AA. Tinted chips need a lighter ink. */
-  --accent: #FF5F1F;
-  --accent-ink: #FF7E1E;
-  --accent-on-tint: #FFD0B8;
-  --accent-dim: rgba(255, 95, 31, 0.14);
-  --blue: #3B82F6;
-  --blue-ink: #C5DBFF;
-  --green: #10B981;
-  --red: #EF4444;
-  --purple: #8B5CF6;
-  --yellow: #F59E0B;
+  /* #1FE0C4 is the beam (fills, focus). Small text uses #8FF6E4, about 13.8:1
+     on #141A1F. Near-black #07110F on the beam is about 11.4:1. */
+  --accent: #1FE0C4;
+  --accent-ink: #8FF6E4;
+  --accent-on-tint: #C8FFF4;
+  --accent-dim: rgba(31, 224, 196, 0.14);
+  --ink: #07110F;
+  --blue: #8FF6E4;
+  --blue-ink: #C8FFF4;
+  --green: #7DFFC3;
+  --red: #FF8D7E;
+  --purple: #C8FFF4;
+  --yellow: #FFD27A;
 
-  --text-primary: #F5F5F5;
-  --text-muted: #B4B8C2;          /* #9CA0AB was 4.48:1 on #343843 */
-  --text-subtle: #6B7280;
+  --text-primary: #F2F6F4;
+  --text-muted: #C5D2CC;
+  --text-subtle: #A8BDB4;
 
-  /* shadcn tokens — overridden to gunsteel */
-  --background: 220 13% 19%;        /* #2A2E37 */
-  --foreground: 0 0% 96%;
-  --card: 222 12% 24%;              /* #343843 */
-  --card-foreground: 0 0% 96%;
-  --popover: 222 12% 28%;
-  --popover-foreground: 0 0% 96%;
-  --primary: 17 100% 56%;          /* #FF5F1F */
-  --primary-foreground: 0 0% 4%;   /* near-black; white on #FF5F1F is ~3:1 */
-  --secondary: 222 12% 24%;
-  --secondary-foreground: 0 0% 96%;
-  --muted: 222 12% 24%;
-  --muted-foreground: 220 8% 73%;
-  --accent-c: 17 100% 56%;
-  --accent-foreground: 0 0% 100%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 100%;
-  --border: 220 10% 28%;
-  --input: 220 10% 30%;
-  --ring: 17 100% 56%;
-  --radius: 0.75rem;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur: 160ms;
+
+  /* shadcn HSL triplets. --border stays a real color so inline borders render. */
+  --background: 200 14% 6%;
+  --foreground: 150 18% 96%;
+  --card: 204 16% 10%;
+  --card-foreground: 150 18% 96%;
+  --popover: 204 16% 12%;
+  --popover-foreground: 150 18% 96%;
+  --primary: 168 76% 50%;
+  --primary-foreground: 160 30% 5%;
+  --secondary: 204 16% 10%;
+  --secondary-foreground: 150 18% 96%;
+  --muted: 204 16% 10%;
+  --muted-foreground: 150 12% 80%;
+  --accent-c: 168 76% 50%;
+  --accent-foreground: 160 30% 5%;
+  --destructive: 6 100% 74%;
+  --destructive-foreground: 160 30% 5%;
+  --input: 200 18% 14%;
+  --ring: 168 76% 50%;
+  --radius: 2px;
 }
 
-@import url('https://fonts.googleapis.com/css2?family=Saira+Stencil+One&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;600&family=Saira+Stencil+One&family=Source+Sans+3:wght@400;500;600;700&display=swap');
 
 * { box-sizing: border-box; }
+
+html { color-scheme: dark; }
 
 html, body, #root {
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: 'Source Sans 3', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   margin: 0;
   min-height: 100vh;
 }
 
-.font-display { font-family: 'Saira Stencil One', sans-serif; letter-spacing: 0.02em; }
-.font-mono   { font-family: 'JetBrains Mono', monospace; }
+body {
+  background-image:
+    linear-gradient(rgba(31, 224, 196, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(31, 224, 196, 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-attachment: fixed;
+}
+
+::selection { background: rgba(31, 224, 196, 0.35); color: #F4FFFA; }
+
+.font-display {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.font-mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
 
 /* Brand wordmark — matches the logo treatment exactly */
 .brand-mark {
@@ -90,20 +113,24 @@ html, body, #root {
 }
 
 /* Utility classes */
-.surface { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px; }
-.elevated { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; }
+.surface { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 2px; }
+.elevated { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 2px; }
 .muted { color: var(--text-muted); }
 .subtle { color: var(--text-subtle); }
 .accent { color: var(--accent-ink); }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
-  padding: 0.625rem 1rem; border-radius: 8px; font-weight: 600; font-size: 0.875rem;
-  transition: all 150ms ease; cursor: pointer; border: 1px solid transparent;
+  padding: 0.625rem 1rem; border-radius: 2px; font-weight: 600; font-size: 0.875rem;
+  transition: transform var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out), filter var(--dur) var(--ease-out);
+  cursor: pointer; border: 1px solid transparent;
   white-space: nowrap;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
-.btn-primary { background: var(--accent); color: #0a0a0a; }
-.btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.btn:active { transform: scale(0.98); }
+.btn-primary { background: var(--accent); color: var(--ink); }
+.btn-primary:hover { filter: brightness(1.06); }
 .app-error-refresh:focus-visible {
   outline: 2px solid var(--text-primary);
   outline-offset: 3px;
@@ -114,13 +141,17 @@ html, body, #root {
 .btn-danger { background: transparent; color: var(--red); border-color: rgba(239,68,68,0.3); }
 .btn-danger:hover { background: rgba(239,68,68,0.1); }
 
+.input, .input:focus, textarea, select {
+  caret-color: var(--accent);
+}
 .input {
   background: var(--bg-input); border: 1px solid var(--border);
-  border-radius: 8px; padding: 0.625rem 0.875rem; color: var(--text-primary);
-  font-size: 0.9375rem; width: 100%; transition: border-color 150ms ease;
+  border-radius: 2px; padding: 0.625rem 0.875rem; color: var(--text-primary);
+  font-size: 0.9375rem; width: 100%;
+  transition: border-color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
   font-family: inherit;
 }
-.input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+.input:focus { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); box-shadow: none; }
 .input::placeholder { color: var(--text-subtle); }
 .address-field { width: 100%; }
 .address-places {
@@ -165,25 +196,37 @@ html, body, #root {
   outline-offset: 1px;
 }
 
-.label { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--text-muted); margin-bottom: 0.375rem; font-weight: 600; }
+.label {
+  display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--text-muted); margin-bottom: 0.375rem; font-weight: 600;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
 
 .badge {
-  display: inline-flex; align-items: center; gap: 0.25rem;
-  padding: 0.125rem 0.5rem; border-radius: 999px; font-size: 0.6875rem;
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.15rem 0.45rem; border-radius: 2px; font-size: 0.6875rem;
   text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
 }
-.badge-west { background: rgba(255,95,31,0.15); color: var(--accent-on-tint); border: 1px solid rgba(255,95,31,0.3); }
-.badge-east { background: rgba(59,130,246,0.15); color: var(--blue-ink); border: 1px solid rgba(59,130,246,0.3); }
-.badge-booked { background: rgba(136,136,136,0.15); color: #c4c4c4; border: 1px solid rgba(255,255,255,0.1); }
-.badge-driving { background: rgba(59,130,246,0.15); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); }
-.badge-on_site { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
-.badge-complete { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
-.badge-cancelled { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
-.badge-requested { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
-.badge-declined { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
-.badge-pending { background: rgba(136,136,136,0.15); color: #c4c4c4; border: 1px solid rgba(255,255,255,0.1); }
-.badge-draft { background: rgba(245,158,11,0.15); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+.badge::before {
+  content: "";
+  width: 6px; height: 6px;
+  background: currentColor;
+  box-shadow: 0 0 0 1px currentColor;
+  flex: none;
+}
+.badge-west { background: var(--accent-dim); color: var(--accent-on-tint); border: 1px solid rgba(31, 224, 196, 0.4); }
+.badge-east { background: rgba(242, 246, 244, 0.06); color: var(--text-primary); border: 1px solid var(--border-strong); }
+.badge-booked { background: rgba(242, 246, 244, 0.06); color: var(--text-muted); border: 1px solid var(--border); }
+.badge-driving { background: var(--accent-dim); color: var(--accent-ink); border: 1px solid rgba(31, 224, 196, 0.45); }
+.badge-on_site { background: rgba(255, 210, 122, 0.12); color: var(--yellow); border: 1px solid rgba(255, 210, 122, 0.4); }
+.badge-complete { background: rgba(125, 255, 195, 0.1); color: var(--green); border: 1px solid rgba(125, 255, 195, 0.4); }
+.badge-cancelled { background: rgba(255, 141, 126, 0.12); color: var(--red); border: 1px solid rgba(255, 141, 126, 0.45); }
+.badge-requested { background: rgba(255, 210, 122, 0.12); color: var(--yellow); border: 1px solid rgba(255, 210, 122, 0.4); }
+.badge-declined { background: rgba(255, 141, 126, 0.12); color: var(--red); border: 1px solid rgba(255, 141, 126, 0.45); }
+.badge-pending { background: rgba(242, 246, 244, 0.06); color: var(--text-muted); border: 1px solid var(--border); }
+.badge-draft { background: rgba(255, 210, 122, 0.12); color: var(--yellow); border: 1px solid rgba(255, 210, 122, 0.4); }
 
 .warranty-banner {
   display: flex;
@@ -192,9 +235,9 @@ html, body, #root {
   gap: 8px;
   margin-top: 8px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: 2px;
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--ink);
   font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
@@ -207,9 +250,11 @@ html, body, #root {
   display: inline-flex;
   align-items: center;
   padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(16, 185, 129, 0.18);
-  color: #6ee7b7;
+  border-radius: 2px;
+  background: rgba(125, 255, 195, 0.12);
+  color: var(--green);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
   border: 1px solid rgba(16, 185, 129, 0.45);
   font-size: 15px;
   font-weight: 700;
@@ -217,8 +262,9 @@ html, body, #root {
 }
 
 .card-job {
-  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 12px;
-  padding: 1rem; transition: all 150ms ease;
+  background: var(--bg-surface); border: 1px solid var(--border); border-radius: 2px;
+  padding: 1rem;
+  transition: border-color var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out);
 }
 .card-job:hover { border-color: var(--border-active); }
 
@@ -229,19 +275,19 @@ html, body, #root {
   scroll-margin-block: 24px;
   position: relative;
   z-index: 1;
-  outline: 3px solid #FF5F1F;
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  background-color: rgba(255, 95, 31, 0.2);
-  animation: job-focus-pulse 0.9s cubic-bezier(0.16, 1, 0.3, 1) 2;
+  background-color: var(--accent-dim);
+  animation: job-focus-pulse 0.9s var(--ease-out) 2;
 }
 @keyframes job-focus-pulse {
   0% {
-    outline-offset: 6px;
-    background-color: rgba(255, 95, 31, 0.34);
+    outline-offset: 5px;
+    background-color: rgba(31, 224, 196, 0.22);
   }
   100% {
     outline-offset: 2px;
-    background-color: rgba(255, 95, 31, 0.2);
+    background-color: var(--accent-dim);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -283,11 +329,11 @@ html, body, #root {
 }
 .card-job-at-risk {
   border-color: var(--red);
-  box-shadow: 0 0 0 1px var(--red), 0 0 16px rgba(239,68,68,0.18);
+  box-shadow: none;
 }
 .card-job[draggable="true"] { cursor: grab; }
 .card-job[draggable="true"]:active { cursor: grabbing; }
-.pulse-dot { animation: pulseDot 1.4s ease-in-out infinite; }
+.pulse-dot { animation: pulseDot 1.4s var(--ease-out) infinite; }
 @keyframes pulseDot {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
@@ -336,12 +382,11 @@ html, body, #root {
 /* Scrollbar */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: var(--bg-primary); }
-::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: #333; }
+::-webkit-scrollbar-thumb { background: #243038; border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: #3A5058; }
 
-/* Page transition */
-.page-fade { animation: fadeIn 200ms ease both; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.page-fade { animation: readoutIn 180ms var(--ease-out) both; }
+@keyframes readoutIn { from { opacity: 0.72; } to { opacity: 1; } }
 
 /* Layout helpers */
 .container-app { max-width: 1400px; margin: 0 auto; padding: 1rem 1.5rem; }
@@ -394,7 +439,7 @@ html, body, #root {
   padding: 8px 12px;
   margin-right: 0;
   border-bottom: none;
-  border-radius: 8px;
+  border-radius: 2px;
 }
 .nav-toggle { display: none; }
 .section-switch {
@@ -461,7 +506,7 @@ html, body, #root {
   padding: 8px 12px;
   margin-right: 0;
   border-bottom: none;
-  border-radius: 8px;
+  border-radius: 2px;
 }
 .portal-account {
   display: flex;
@@ -583,23 +628,25 @@ html, body, #root {
 .pac-container { z-index: 10000; }
 
 .zone-header {
-  font-family: 'Saira Stencil One', sans-serif; font-weight: 400; font-size: 0.95rem;
-  text-transform: uppercase; letter-spacing: 0.14em; padding: 0.75rem 1rem;
-  border-radius: 8px; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;
+  font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif; font-weight: 600; font-size: 1.05rem;
+  text-transform: uppercase; letter-spacing: 0.12em; padding: 0.55rem 0.8rem;
+  border-radius: 2px; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;
   justify-content: space-between;
+  background: transparent;
 }
-.zone-header-west { background: rgba(255,95,31,0.08); color: var(--accent-ink); border: 1px solid rgba(255,95,31,0.2); }
-.zone-header-east { background: rgba(59,130,246,0.08); color: var(--blue-ink); border: 1px solid rgba(59,130,246,0.2); }
+.zone-header-west { color: var(--accent-ink); border: 1px solid var(--border-active); }
+.zone-header-east { color: var(--text-primary); border: 1px solid var(--border-strong); }
 
-.h1 { font-family: 'Saira Stencil One', sans-serif; font-weight: 400; font-size: 2rem; letter-spacing: 0.02em; }
-.h2 { font-family: 'Saira Stencil One', sans-serif; font-weight: 400; font-size: 1.5rem; letter-spacing: 0.02em; }
-.h3 { font-family: 'DM Sans', sans-serif; font-weight: 700; font-size: 1.125rem; letter-spacing: 0; }
+.h1, .h2, .h3 { color: var(--text-primary); text-wrap: balance; }
+.h1 { font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif; font-weight: 600; font-size: 2rem; letter-spacing: 0.02em; }
+.h2 { font-family: 'Barlow Condensed', 'Arial Narrow', sans-serif; font-weight: 600; font-size: 1.5rem; letter-spacing: 0.02em; }
+.h3 { font-family: 'Source Sans 3', system-ui, sans-serif; font-weight: 600; font-size: 1.125rem; letter-spacing: 0; }
 
 a { color: inherit; text-decoration: none; }
 
 /* Leaflet's attribution sits on the map tiles and fails contrast. Keep it readable. */
 .leaflet-control-attribution {
-  background: rgba(42, 46, 55, 0.92) !important;
+  background: rgba(12, 16, 20, 0.92) !important;
   color: var(--text-muted) !important;
   max-width: min(280px, 70%);
   white-space: normal !important;
@@ -608,7 +655,93 @@ a { color: inherit; text-decoration: none; }
 .leaflet-control-attribution a { color: var(--accent-ink) !important; }
 
 /* Tabs */
-.tab-btn { padding: 0.5rem 0; margin-right: 1.5rem; border-bottom: 2px solid transparent;
-  color: var(--text-muted); font-weight: 600; cursor: pointer; transition: all 150ms; }
+.tab-btn { padding: 0.5rem 0; margin-right: 1.5rem; border-bottom: 1px solid transparent;
+  color: var(--text-muted); font-weight: 600; cursor: pointer;
+  transition: color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out); }
 .tab-btn.active { color: var(--text-primary); border-bottom-color: var(--accent); }
 .tab-btn:hover { color: var(--text-primary); }
+
+.shell-header,
+.portal-header {
+  background-color: rgba(12, 16, 20, 0.94);
+  backdrop-filter: blur(10px);
+}
+
+.portal-stats-row dd,
+.closed-row,
+.job-phone {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Daylight chassis for the technician, outdoors in the Valley. */
+.instrument-daylight {
+  color: var(--text-primary);
+  color-scheme: light;
+  --bg-primary: #F3F5F2;
+  --bg-surface: #FFFFFF;
+  --bg-elevated: #E7EDE8;
+  --bg-input: #FFFFFF;
+  --border: #1A2822;
+  --border-strong: #0C100E;
+  --border-active: #0B5C4E;
+  --text-primary: #10211C;
+  --text-muted: #24312B;
+  --text-subtle: #24312B;
+  --accent: #12D6B8;
+  --accent-ink: #0B5C4E;
+  --accent-on-tint: #063F36;
+  --accent-dim: rgba(11, 92, 78, 0.1);
+  --green: #0B5C4E;
+  --red: #8E2A22;
+  --yellow: #6A4A08;
+  --ink: #07110F;
+  background-image:
+    linear-gradient(rgba(16, 33, 28, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 33, 28, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+html:has(.instrument-daylight) { color-scheme: light; }
+.instrument-daylight ::selection { background: #10211C; color: #F4FFF9; }
+.instrument-daylight .btn {
+  min-height: 48px;
+  font-size: 1rem;
+}
+.instrument-daylight .btn-primary {
+  background: #10211C;
+  color: #F4FFF9;
+  border-color: #10211C;
+}
+.instrument-daylight .btn-primary:hover { filter: none; background: #000; }
+.instrument-daylight .btn-primary:disabled {
+  opacity: 1;
+  background: #D5DDD6;
+  color: #10211C;
+  border-color: #8A978F;
+}
+.instrument-daylight .btn-ghost {
+  background: #FFFFFF;
+  border-color: #10211C;
+  color: #10211C;
+}
+.instrument-daylight .badge-west,
+.instrument-daylight .badge-driving { background: #D9FFF6; color: #063F36; border-color: #0B5C4E; }
+.instrument-daylight .badge-on_site,
+.instrument-daylight .badge-requested,
+.instrument-daylight .badge-draft { background: #FFF3D0; color: #5C3E08; border-color: #8A6414; }
+.instrument-daylight .badge-complete { background: #D9FFF6; color: #063F36; border-color: #0B5C4E; }
+.instrument-daylight .badge-cancelled,
+.instrument-daylight .badge-declined { background: #FFE4DF; color: #6B1D14; border-color: #8E2A22; }
+.instrument-daylight .badge-booked,
+.instrument-daylight .badge-pending,
+.instrument-daylight .badge-east { background: #FFFFFF; color: #10211C; border-color: #10211C; }
+.instrument-daylight .paid-flag { background: #D9FFF6; color: #063F36; border-color: #0B5C4E; }
+.instrument-daylight header {
+  background: #F3F5F2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-fade,
+  .card-job-focus,
+  .pulse-dot,
+  .btn { animation: none; transition: none; }
+}

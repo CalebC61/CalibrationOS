@@ -11,7 +11,7 @@ export default function Brand({ size = 22, subtle, tag }) {
       {tag && (
         <span className="brand-tag" style={{
           marginLeft: 12,
-          fontFamily: "'DM Sans', sans-serif",
+          fontFamily: "'JetBrains Mono', ui-monospace, monospace",
           fontSize: Math.max(12, size * 0.45),
           letterSpacing: "0.18em",
           textTransform: "uppercase",
@@ -22,7 +22,7 @@ export default function Brand({ size = 22, subtle, tag }) {
       {subtle && (
         <span style={{
           marginLeft: 10,
-          fontFamily: "'DM Sans', sans-serif",
+          fontFamily: "'JetBrains Mono', ui-monospace, monospace",
           fontSize: Math.max(12, size * 0.42),
           letterSpacing: "0.18em",
           textTransform: "uppercase",

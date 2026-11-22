@@ -1,43 +1,42 @@
 /* Public site, scoped under .marketing so the dispatch app keeps its own styles.
    Ported from the approved static mockup. */
-@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap');
-
 .marketing {
-  --bg-primary: #2A2E37;
-  --bg-deep: #22262E;
-  --bg-surface: #343843;
-  --bg-elevated: #3E424F;
-  --bg-input: #404653;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --border-active: rgba(255, 95, 31, 0.45);
-  --accent: #FF5F1F;
-  --accent-ink: #FF7E1E;
-  --accent-on-tint: #FFD0B8;
-  --accent-dim: rgba(255, 95, 31, 0.14);
-  --blue: #3B82F6;
-  --blue-ink: #C5DBFF;
-  --green: #10B981;
-  --text-primary: #F5F5F5;
-  --text-muted: #B4B8C2;
-  --text-subtle: #6B7280;
-  --ink: #0A0A0A;
-  --radius: 12px;
+  --bg-primary: #0C1014;
+  --bg-deep: #090C0F;
+  --bg-surface: #141A1F;
+  --bg-elevated: #1C242B;
+  --bg-input: #10161B;
+  --border: #2C3C43;
+  --border-strong: #4A646C;
+  --border-active: rgba(31, 224, 196, 0.7);
+  --accent: #1FE0C4;
+  --accent-ink: #8FF6E4;
+  --accent-on-tint: #C8FFF4;
+  --accent-dim: rgba(31, 224, 196, 0.14);
+  --blue: #8FF6E4;
+  --blue-ink: #C8FFF4;
+  --green: #7DFFC3;
+  --text-primary: #F2F6F4;
+  --text-muted: #C5D2CC;
+  --text-subtle: #A8BDB4;
+  --ink: #07110F;
+  --radius: 2px;
   --header-h: 84px;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
 }.marketing *, .marketing *::before, .marketing *::after { box-sizing: border-box; }.marketing { scroll-behavior: smooth; }.marketing, .marketing {
   margin: 0;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: "DM Sans", system-ui, sans-serif;
+  font-family: "Source Sans 3", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   line-height: 1.6;
 }.marketing img { max-width: 100%; height: auto; display: block; }.marketing a { color: inherit; text-decoration: none; }.marketing button, .marketing input, .marketing textarea, .marketing select { font: inherit; }.marketing h1, .marketing h2, .marketing h3, .marketing h4 { margin: 0 0 0.6em; line-height: 1.15; color: var(--text-primary); }.marketing p { margin: 0 0 1em; }.marketing p:last-child { margin-bottom: 0; }.marketing .container { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }.marketing .display {
-  font-family: "Oswald", "DM Sans", sans-serif;
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  line-height: 0.95;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  line-height: 0.96;
+  text-wrap: balance;
 }.marketing .eyebrow {
   display: inline-flex;
   align-items: center;
@@ -321,4 +320,179 @@
   .marketing .nav-actions .btn { width: 100%; }
 }
 @media (max-width: 760px) {.marketing .container { width: min(1160px, calc(100% - 28px)); }.marketing .hero { padding: 2.2rem 0 3rem; }.marketing .hero h1 { font-size: clamp(2.3rem, 11vw, 3.1rem); }.marketing .hero-line { white-space: normal; }.marketing .section { padding: 3.4rem 0; }.marketing .steps, .marketing .svc-grid, .marketing .benefit-grid, .marketing .quotes, .marketing .price-grid, .marketing .city-grid, .marketing .footer-grid { grid-template-columns: 1fr; }.marketing .btn-row .btn { width: 100%; }.marketing .page-hero { padding-top: 2.2rem; }
+}
+
+/* Field Instrument — public site. Hairlines, beam, calibration target. */
+.marketing { color-scheme: dark; }
+.marketing .section,
+.marketing [id] { scroll-margin-top: 5.75rem; }
+.marketing .site-header {
+  background: rgba(12, 16, 20, 0.92);
+  border-bottom: 1px solid var(--border);
+}
+.marketing .eyebrow,
+.marketing .section-kicker {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0 0 0.35rem;
+  color: var(--accent-ink);
+  border-bottom: 1px solid var(--border-active);
+  width: fit-content;
+}
+.marketing .btn {
+  border-radius: 2px;
+  transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1), filter 140ms cubic-bezier(0.23, 1, 0.32, 1), background-color 140ms cubic-bezier(0.23, 1, 0.32, 1), border-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
+  touch-action: manipulation;
+}
+.marketing .btn:active { transform: scale(0.98); }
+.marketing .btn-primary:hover { transform: none; filter: brightness(1.06); }
+.marketing .btn-primary:hover:active { transform: scale(0.98); }
+.marketing .btn:focus-visible,
+.marketing a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.marketing .hero { position: relative; }
+.marketing .hero::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(52%, 640px);
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(31, 224, 196, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(31, 224, 196, 0.09) 1px, transparent 1px),
+    radial-gradient(circle at 50% 46%, transparent 42px, rgba(31, 224, 196, 0.55) 43px, transparent 44px),
+    linear-gradient(rgba(31, 224, 196, 0.7), rgba(31, 224, 196, 0.7));
+  background-size: 40px 40px, 40px 40px, 100% 100%, 1px 72px;
+  background-position: center, center, center, center;
+  background-repeat: repeat, repeat, no-repeat, no-repeat;
+  mask-image: linear-gradient(90deg, transparent, #000 18%);
+}
+.marketing .app-frame,
+.marketing .step,
+.marketing .card,
+.marketing .price-card,
+.marketing .faq-item,
+.marketing .quote,
+.marketing .benefit,
+.marketing .svc,
+.marketing .offer-card,
+.marketing .form,
+.marketing .map-frame,
+.marketing .city,
+.marketing .mini-card,
+.marketing .input,
+.marketing .form input,
+.marketing .form textarea,
+.marketing .form select,
+.marketing .agreement-pane,
+.marketing .form-msg {
+  border-radius: 2px;
+}
+.marketing .app-frame {
+  position: relative;
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.35);
+}
+.marketing .app-frame::before,
+.marketing .app-frame::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  z-index: 2;
+}
+.marketing .app-frame::before {
+  top: 6px;
+  left: 6px;
+  border-top: 1px solid var(--accent);
+  border-left: 1px solid var(--accent);
+}
+.marketing .app-frame::after {
+  right: 6px;
+  bottom: 6px;
+  border-right: 1px solid var(--accent);
+  border-bottom: 1px solid var(--accent);
+}
+.marketing .app-bar { background: #10161B; }
+.marketing .app-bar i {
+  width: 7px;
+  height: 7px;
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid var(--accent);
+}
+.marketing .app-bar i:first-child { background: var(--accent); }
+.marketing .app-bar span {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.16em;
+}
+.marketing .app-side { background: #10161B; }
+.marketing .app-side .nav-item { border-radius: 2px; }
+.marketing .app-main {
+  background-image:
+    linear-gradient(rgba(31, 224, 196, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(31, 224, 196, 0.06) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.marketing .step-num,
+.marketing .svc .price-tag,
+.marketing .price-card .amount,
+.marketing .offer-card .amount {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  color: var(--accent-ink);
+}
+.marketing .offer-card {
+  box-shadow: none;
+  border-color: var(--border-active);
+}
+.marketing .offer-card .amount { color: var(--accent); }
+.marketing .pill { border-radius: 2px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+.marketing .pill-ok { background: rgba(125, 255, 195, 0.12); color: var(--green); }
+.marketing .pill-wait { background: var(--accent-dim); color: var(--accent-on-tint); }
+.marketing .quote cite { font-family: "JetBrains Mono", ui-monospace, monospace; font-weight: 500; }
+.marketing .form input:focus,
+.marketing .form textarea:focus,
+.marketing .form select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-color: var(--accent);
+  box-shadow: none;
+}
+.marketing .form-msg { border-color: var(--border-active); }
+.marketing .brand img {
+  background: #1A2128;
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.5rem;
+}
+.marketing .app-bar { position: relative; }
+.marketing .app-bar::after {
+  content: "";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  transform: translateY(-50%);
+  background:
+    linear-gradient(var(--accent), var(--accent)) center / 1px 100% no-repeat,
+    linear-gradient(var(--accent), var(--accent)) center / 100% 1px no-repeat;
+  pointer-events: none;
+}
+@media (max-width: 980px) {
+  .marketing .hero::before { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marketing .btn { transition: none; }
 }
