@@ -18,6 +18,8 @@ Display is Pathway Extreme, text is Schibsted Grotesk, figures are IBM Plex
 Mono. Radius is 0. Shadows and gradients are gone. The public page uses a
 12-column hairline grid and numbered sections. The map tiles are Esri's light
 gray canvas. Not a production setting, env, Stripe, or database change.
+Shop-edit tests book the next open Phoenix day, so a Saturday run does not
+land the fixture job on Sunday.
 
 App version is **0.1.0**, the same number as `frontend/package.json`. `[0.0.3]` further
 down is the previous cut (Xero, 2026-06-16), not a second current version.
