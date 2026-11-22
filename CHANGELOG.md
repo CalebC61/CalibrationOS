@@ -10,6 +10,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/). Newest entries o
 
 ## [0.1.0] — current
 
+### Preview — Style D, Swiss Precision (do not merge)
+Visual-only preview on `cursor/swiss-precision-preview-d76c`. Behavior, routes,
+and copy are unchanged. Tokens move from gunsteel to paper `#F4F2EC`, ink
+`#111111`, and one signal orange `#FF4B00` (fill and the hero line only).
+Display is Pathway Extreme, text is Schibsted Grotesk, figures are IBM Plex
+Mono. Radius is 0. Shadows and gradients are gone. The public page uses a
+12-column hairline grid and numbered sections. The map tiles are Esri's light
+gray canvas. Not a production setting, env, Stripe, or database change.
+
 App version is **0.1.0**, the same number as `frontend/package.json`. `[0.0.3]` further
 down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package

@@ -274,11 +274,10 @@ export default function Dashboard() {
   const totals = dayBoardTotals(dayJobs);
 
   const routingTechs = techs.filter(t => t.role !== "contractor" && t.routes_jobs !== false && t.is_active !== false);
-  const colorById = Object.fromEntries(routingTechs.map(t => [t.id, t.color || "#FF5F1F"]));
   const nameById = Object.fromEntries(routingTechs.map(t => [t.id, t.name]));
   const painted = dayJobs.map(j => ({
     ...j,
-    technician_color: j.technician_color || colorById[j.technician_id] || "#FF5F1F",
+    technician_color: "#FF4B00",
     technician_name: j.technician_name || nameById[j.technician_id] || "",
   }));
   const focusId = boardJobFromSearch();
@@ -338,9 +337,9 @@ export default function Dashboard() {
         <div className="page-fade" style={{ marginBottom: 16, position: "relative" }} data-testid="new-bookings-banner">
           <button onClick={() => setAlertsOpen(o => !o)} data-testid="new-bookings-pill"
             style={{ display: "inline-flex", alignItems: "center", gap: 10,
-              background: "var(--accent)", color: "#0a0a0a",
-              border: "1px solid var(--accent)", borderRadius: 999,
-              padding: "8px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
+              background: "var(--accent)", color: "#111111",
+              border: "1px solid #111111", borderRadius: 0,
+              padding: "10px 16px", fontWeight: 650, fontSize: 14, cursor: "pointer" }}>
             <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 999, background: "#0a0a0a" }} />
             <span data-testid="new-bookings-count">{alerts.count}</span> new booking{alerts.count === 1 ? "" : "s"} since you last looked
             <span style={{ fontSize: 12 }}>{alertsOpen ? "▲" : "▼"}</span>
@@ -348,7 +347,7 @@ export default function Dashboard() {
           {alertsOpen && (
             <div className="surface page-fade" style={{
               position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 30,
-              minWidth: 360, maxWidth: 480, padding: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+              minWidth: 360, maxWidth: 480, padding: 12, boxShadow: "none",
             }} data-testid="new-bookings-panel">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                 <div className="h3">New bookings</div>
@@ -383,9 +382,9 @@ export default function Dashboard() {
 
       {summary && summary.shop_emails_enabled === false && (
         <Link to="/settings?section=email" data-testid="shop-emails-off" style={{
-          display: "inline-block", marginBottom: 12, padding: "4px 10px", borderRadius: 999,
-          background: "rgba(245, 158, 11, 0.16)", color: "var(--yellow)",
-          fontSize: 13, fontWeight: 600, textDecoration: "none",
+          display: "inline-block", marginBottom: 12, padding: "4px 0", borderRadius: 0,
+          background: "transparent", color: "#111111",
+          fontSize: 14, fontWeight: 650, textDecoration: "underline", textUnderlineOffset: "0.18em",
         }}>
           Shop emails are on hold — view held emails
         </Link>
@@ -393,8 +392,8 @@ export default function Dashboard() {
       {notice && (
         <div role="alert" data-testid="board-notice" style={{
           display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
-          marginBottom: 12, padding: "10px 12px", borderRadius: 10,
-          background: "rgba(239, 68, 68, 0.12)", color: "#FCA5A5", fontSize: 14,
+          marginBottom: 12, padding: "10px 0", borderRadius: 0,
+          borderTop: "1px solid var(--red)", background: "transparent", color: "#111111", fontSize: 14,
         }}>
           <span>{notice}</span>
           <button type="button" className="btn btn-ghost" onClick={() => setNotice("")}
@@ -460,7 +459,7 @@ export default function Dashboard() {
               <span className="muted" style={{ fontSize: 12, fontWeight: 400, display: "flex", gap: 10, flexWrap: "wrap" }}>
                 {routingTechs.map(t => (
                   <span key={t.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 99, background: t.color || "#FF5F1F" }} />
+                    <span style={{ width: 8, height: 8, borderRadius: 0, background: "#FF4B00" }} />
                     {t.name}
                   </span>
                 ))}
@@ -585,7 +584,7 @@ function ClosedJobs({ jobs, status, error, onRetry, onDelete }) {
               <div className="closed-action">
                 <button type="button" className="btn btn-danger" onClick={() => onDelete(row)}
                   data-testid={`job-delete-${row.id}`}
-                  style={{ color: "#FCA5A5", borderColor: "rgba(252, 165, 165, 0.45)" }}>
+                  >
                   Delete
                 </button>
               </div>
@@ -680,15 +679,11 @@ function countLine(group) {
   return `${n("updated")} updated, ${n("failed")} failed, ${n("skipped")} skipped`;
 }
 
-function Metric({ label, value, highlight }) {
+function Metric({ label, value }) {
   return (
-    <div className="surface" style={{
-      padding: "10px 16px", minWidth: 100,
-      borderColor: highlight === "red" ? "var(--red)" : "var(--border)",
-      boxShadow: highlight === "red" ? "0 0 18px rgba(239,68,68,0.18)" : undefined,
-    }}>
-      <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>{label}</div>
-      <div className="font-display" style={{ fontSize: 22, fontWeight: 700, color: highlight === "red" ? "var(--red)" : undefined }}>{value}</div>
+    <div className="metric">
+      <div className="metric-label">{label}</div>
+      <div className="metric-value">{value}</div>
     </div>
   );
 }
@@ -699,7 +694,7 @@ function ZonePanel({ title, subtitle, zone, jobs, onStatus, onComplete, onPaymen
     <section data-testid={`zone-panel-${zone}`}>
       <div className="zone-header">
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 99, background: accent }} />
+          <span style={{ width: 12, height: 12, borderRadius: 0, background: "#FF4B00", flex: "0 0 auto" }} />
           {title}
         </span>
         <span style={{ fontSize: 12 }}>{subtitle} · {jobs.length} jobs</span>
@@ -805,10 +800,9 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-            <span className="font-mono" style={{
-              background: "var(--bg-elevated)", padding: "2px 8px", borderRadius: 6,
-              fontSize: 12, fontWeight: 600,
-            }}>#{index}</span>
+            <span className="field-index" style={{ fontSize: 22 }}>
+              {String(index).padStart(2, "0")}
+            </span>
             <span className={`badge badge-${job.status}`}>{jobStatusLabel(job.status)}</span>
             <WarrantyBadge job={job} />
             {isNew && <span className="badge" style={{ background: "var(--accent)", color: "#0a0a0a", border: "1px solid var(--accent)" }} data-testid="badge-new">NEW</span>}
@@ -825,7 +819,7 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
             {job.is_at_risk && (
               <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)", border: "1px solid rgba(239,68,68,0.3)" }}
                 title={job.risk_reason} data-testid={`badge-at-risk-${job.id}`}>
-                ⚠ AT RISK
+                At risk
               </span>
             )}
           </div>

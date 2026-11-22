@@ -167,22 +167,22 @@ export default function Field() {
     return (
       <Phone>
         <Header name={auth?.name} onLogout={logout} back={() => setActive(null)} />
-        <div className="surface page-fade" style={{ padding: 18, margin: 12 }} data-testid="job-detail">
-          <div className="muted" style={{ fontSize: 12 }}>{formatTime(j.scheduled_start)}</div>
-          <div className="h2" style={{ marginTop: 4 }}>{j.shop_name}</div>
+        <div className="field-job page-fade" data-testid="job-detail">
+          <div className="field-time">{formatTime(j.scheduled_start)}</div>
+          <div className="h2" style={{ marginTop: 8 }}>{j.shop_name}</div>
           {auth?.role === "owner" && (
             <button className="btn btn-ghost" style={{ marginTop: 12, width: "100%" }}
               onClick={() => setEditing(true)} data-testid="job-edit">Edit</button>
           )}
-          <div className="muted" style={{ fontSize: 14, marginTop: 4 }}>
+          <div className="field-vehicle">
             {j.vehicle_year} {j.vehicle_make} {j.vehicle_model}
           </div>
-          <a className="btn btn-ghost" style={{ marginTop: 12, width: "100%" }}
+          <a className="btn btn-ghost" style={{ marginTop: 14, width: "100%" }}
             href={`https://maps.google.com/?q=${encodeURIComponent(j.job_address)}`} target="_blank" rel="noreferrer">
-            📍 {j.job_address}
+            Maps · {j.job_address}
           </a>
-          {j.notification_phone && <a className="btn btn-ghost" style={{ marginTop: 8, width: "100%" }} href={`tel:${j.notification_phone}`}>📞 Call shop</a>}
-          <div style={{ marginTop: 16, fontSize: 14, padding: 10, background: "var(--bg-elevated)", borderRadius: 8 }}>
+          {j.notification_phone && <a className="btn btn-ghost" style={{ marginTop: 8, width: "100%" }} href={`tel:${j.notification_phone}`}>Call shop</a>}
+          <div className="field-facts">
             {(j.customer_first_name || j.customer_last_name) && (
               <div><b>Customer:</b> {[j.customer_first_name, j.customer_last_name].filter(Boolean).join(" ")}</div>
             )}
@@ -196,7 +196,7 @@ export default function Field() {
               <div style={{ marginTop: 8 }} data-testid={`warranty-reason-${j.id}`}>{j.warranty_skip_reason}</div>
             )}
             {j.notes && (
-              <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }} data-testid="job-booking-notes">
+              <div className="field-note" style={{ marginTop: 8, whiteSpace: "pre-wrap" }} data-testid="job-booking-notes">
                 <b>Booking notes:</b> {j.notes}
               </div>
             )}
@@ -324,8 +324,8 @@ export default function Field() {
   return (
     <Phone>
       <Header name={auth?.name} onLogout={logout} />
-      <div style={{ padding: 12 }}>
-        <div className="muted" style={{ fontSize: 12, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4 }}>Today</div>
+        <div style={{ padding: "8px 16px 28px" }}>
+        <div className="field-time" style={{ marginBottom: 6 }}>Today</div>
         <h1 className="h1" style={{ marginBottom: 12, fontSize: 28 }}>
           {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/Phoenix" })}
         </h1>
@@ -336,13 +336,11 @@ export default function Field() {
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {jobs.filter(j => isPhoenixToday(j.scheduled_start)).map((j, idx) => (
-            <button key={j.id} className="card-job" style={{ textAlign: "left", width: "100%", cursor: "pointer", background: "var(--bg-surface)" }}
+            <button key={j.id} className="card-job" style={{ textAlign: "left", width: "100%", cursor: "pointer", background: "transparent", padding: "16px 0" }}
               onClick={() => setActive(j.id)} data-testid={`field-job-${j.id}`}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div className="font-mono" style={{ fontSize: 12, padding: "2px 8px", background: "var(--bg-elevated)", borderRadius: 6 }}>
-                  #{idx + 1}
-                </div>
-                <div className="font-display" style={{ fontSize: 18, fontWeight: 700 }}>{formatTime(j.scheduled_start)}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <div className="field-index">{String(idx + 1).padStart(2, "0")}</div>
+                <div className="font-mono" style={{ fontSize: 15 }}>{formatTime(j.scheduled_start)}</div>
               </div>
               <div className="h3" style={{ marginTop: 6 }}>{j.shop_name}</div>
               <div className="muted" style={{ fontSize: 13 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
@@ -500,7 +498,7 @@ function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace,
 
 function Phone({ children }) {
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", maxWidth: 480, margin: "0 auto" }}>
+    <div className="field-app" style={{ minHeight: "100vh", background: "#FFFFFF", maxWidth: 480, margin: "0 auto" }}>
       {children}
     </div>
   );
@@ -510,7 +508,7 @@ function Header({ name, onLogout, back }) {
   return (
     <header style={{
       display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px",
-      borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg-primary)", zIndex: 10,
+      borderBottom: "1px solid #111111", position: "sticky", top: 0, background: "#FFFFFF", zIndex: 10,
     }}>
       {back ? (
         <button className="btn btn-ghost" onClick={back} data-testid="field-back">← Back</button>

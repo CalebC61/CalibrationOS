@@ -2,7 +2,15 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import "./marketing.css";
 
-const LOGO = "/marketing/logo-crew-transparent.png";
+function CrewMark() {
+  return (
+    <span className="crew-mark">
+      <span className="crew-the">The</span>
+      <span className="crew-name">Calibration</span>
+      <span className="crew-crew">Crew</span>
+    </span>
+  );
+}
 
 const LINKS = [
   { to: "/", label: "Home", end: true },
@@ -18,10 +26,14 @@ export function SiteChrome({ children }) {
   function close() { setOpen(false); }
   return (
     <div className="marketing">
+      <a className="skip-link" href="#main">Skip to content</a>
+      <div className="sheet-grid" aria-hidden="true">
+        {Array.from({ length: 12 }, (_, i) => <span key={i} />)}
+      </div>
       <header className="site-header">
         <div className="container header-inner">
           <Link className="brand" to="/" aria-label="The Calibration Crew home" onClick={close}>
-            <img src={LOGO} alt="The Calibration Crew" width="190" height="96" />
+            <CrewMark />
           </Link>
           <button
             className="menu-toggle btn btn-ghost"
@@ -54,12 +66,12 @@ export function SiteChrome({ children }) {
           </nav>
         </div>
       </header>
-      <main>{children}</main>
+      <main id="main">{children}</main>
       <footer className="site-footer">
         <div className="container footer-grid">
           <div>
             <Link className="brand brand-footer" to="/" aria-label="The Calibration Crew home">
-              <img src={LOGO} alt="The Calibration Crew" width="180" height="91" />
+              <CrewMark />
             </Link>
             <p className="footer-lead">Mobile ADAS calibration for auto glass shops, collision shops, and the Phoenix Valley.</p>
             <p className="legal">The Calibration Crew LLC · Gilbert, AZ</p>

@@ -6,10 +6,10 @@ import DarkBasemap from "./DarkBasemap";
 import L from "leaflet";
 
 // Default marker icons break in webpack; use divIcon for numbered colored pins.
-function makeIcon(num, color, text = "#0a0a0a") {
+function makeIcon(num, color, text = "#111111") {
   return L.divIcon({
     className: "route-pin",
-    html: `<div style="background:${color};color:${text};border-radius:999px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:2px solid #111;box-shadow:0 2px 8px rgba(0,0,0,0.6);font-family:'JetBrains Mono',monospace;">${num}</div>`,
+    html: `<div style="background:${color};color:${text};border-radius:0;width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;border:1px solid #111;box-shadow:none;font-family:'IBM Plex Mono',ui-monospace,monospace;">${num}</div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
   });
@@ -27,7 +27,8 @@ function FitBounds({ points }) {
 }
 
 function pinText(color) {
-  return color.toLowerCase() === "#ff5f1f" ? "#0a0a0a" : "#fff";
+  const hex = String(color || "").toLowerCase();
+  return hex === "#111111" || hex === "#000000" ? "#F4F2EC" : "#111111";
 }
 
 export default function RouteMap({ jobs }) {
@@ -41,7 +42,7 @@ export default function RouteMap({ jobs }) {
     byTech.get(key).points.push([job.job_lat, job.job_lng]);
   });
   return (
-    <div style={{ height: 380, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }} data-testid="route-map">
+    <div style={{ height: 380, borderRadius: 0, overflow: "hidden", border: "1px solid #111111" }} data-testid="route-map">
       <MapContainer center={center} zoom={10} style={{ height: "100%", width: "100%", background: "#0d1116" }}>
         <DarkBasemap />
         {[...byTech.entries()].map(([techId, route]) => (
