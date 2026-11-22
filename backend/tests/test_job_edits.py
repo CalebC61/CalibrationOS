@@ -288,7 +288,7 @@ def test_owner_can_override_customer_vehicle_price_and_time(world):
                     "vehicle_vin": "1HGCM82633A004352",
                     "calibration_type": "dual",
                     "price": 210,
-                    "scheduled_start": (TODAY_START + timedelta(days=1, hours=13)).isoformat(),
+                    "scheduled_start": (_OPEN_START + timedelta(hours=13)).isoformat(),
                     "notes": "  Call on arrival  ",
                 },
             )
@@ -306,8 +306,8 @@ def test_owner_can_override_customer_vehicle_price_and_time(world):
         assert job["price"] == 210
         assert job["notes"] == "Call on arrival"
         assert job["status"] == "booked"
-        assert job["scheduled_start"] == (TODAY_START + timedelta(days=1, hours=13)).isoformat()
-        assert job["scheduled_end"] == (TODAY_START + timedelta(days=1, hours=14)).isoformat()
+        assert job["scheduled_start"] == (_OPEN_START + timedelta(hours=13)).isoformat()
+        assert job["scheduled_end"] == (_OPEN_START + timedelta(hours=14)).isoformat()
         assert world["calls"]["geo"] == []
         assert world["calls"]["sms"] == []
 
