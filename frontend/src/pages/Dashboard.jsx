@@ -274,11 +274,11 @@ export default function Dashboard() {
   const totals = dayBoardTotals(dayJobs);
 
   const routingTechs = techs.filter(t => t.role !== "contractor" && t.routes_jobs !== false && t.is_active !== false);
-  const colorById = Object.fromEntries(routingTechs.map(t => [t.id, t.color || "#FF5F1F"]));
+  const colorById = Object.fromEntries(routingTechs.map(t => [t.id, t.color || "#A33E1E"]));
   const nameById = Object.fromEntries(routingTechs.map(t => [t.id, t.name]));
   const painted = dayJobs.map(j => ({
     ...j,
-    technician_color: j.technician_color || colorById[j.technician_id] || "#FF5F1F",
+    technician_color: j.technician_color || colorById[j.technician_id] || "#A33E1E",
     technician_name: j.technician_name || nameById[j.technician_id] || "",
   }));
   const focusId = boardJobFromSearch();
@@ -292,7 +292,7 @@ export default function Dashboard() {
       })
       .sort((a, b) => String(a.scheduled_start).localeCompare(String(b.scheduled_start)));
   }
-  const panels = (routingTechs.length ? routingTechs : [{ id: "unassigned", name: "Today", role: "owner", color: "#FF5F1F", home_address: "" }])
+  const panels = (routingTechs.length ? routingTechs : [{ id: "unassigned", name: "Today", role: "owner", color: "#A33E1E", home_address: "" }])
     .map(tech => ({ tech, jobs: tech.id === "unassigned" ? painted.slice().sort((a, b) => String(a.scheduled_start).localeCompare(String(b.scheduled_start))) : jobsFor(tech) }));
 
   function shiftDate(days) {
@@ -338,10 +338,10 @@ export default function Dashboard() {
         <div className="page-fade" style={{ marginBottom: 16, position: "relative" }} data-testid="new-bookings-banner">
           <button onClick={() => setAlertsOpen(o => !o)} data-testid="new-bookings-pill"
             style={{ display: "inline-flex", alignItems: "center", gap: 10,
-              background: "var(--accent)", color: "#0a0a0a",
-              border: "1px solid var(--accent)", borderRadius: 999,
+              background: "var(--accent)", color: "var(--on-accent)",
+              border: "1px solid var(--accent)", borderRadius: 6,
               padding: "8px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
-            <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 999, background: "#0a0a0a" }} />
+            <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 999, background: "var(--on-accent)" }} />
             <span data-testid="new-bookings-count">{alerts.count}</span> new booking{alerts.count === 1 ? "" : "s"} since you last looked
             <span style={{ fontSize: 12 }}>{alertsOpen ? "▲" : "▼"}</span>
           </button>
@@ -394,7 +394,7 @@ export default function Dashboard() {
         <div role="alert" data-testid="board-notice" style={{
           display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
           marginBottom: 12, padding: "10px 12px", borderRadius: 10,
-          background: "rgba(239, 68, 68, 0.12)", color: "#FCA5A5", fontSize: 14,
+          background: "rgba(163, 32, 32, 0.1)", color: "var(--red)", fontSize: 14,
         }}>
           <span>{notice}</span>
           <button type="button" className="btn btn-ghost" onClick={() => setNotice("")}
@@ -441,7 +441,7 @@ export default function Dashboard() {
             zone={tech.id} jobs={techJobs} onStatus={setStatus} onComplete={completeJob}
             onPayment={setPaymentMode} onCharge={chargeNow}
             onOutside={setOutside} onTripFee={chargeTripFee} onRetryXero={retryXero}
-            accent={tech.color || "#FF5F1F"}
+            accent={tech.color || "#A33E1E"}
             newJobIds={newJobIds}
             onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
             onEdit={isOwner ? setEditTarget : null}
@@ -811,7 +811,7 @@ function JobCard({ job, index, onStatus, onComplete, onPayment, onCharge, onOuts
             }}>#{index}</span>
             <span className={`badge badge-${job.status}`}>{jobStatusLabel(job.status)}</span>
             <WarrantyBadge job={job} />
-            {isNew && <span className="badge" style={{ background: "var(--accent)", color: "#0a0a0a", border: "1px solid var(--accent)" }} data-testid="badge-new">NEW</span>}
+            {isNew && <span className="badge" style={{ background: "var(--accent)", color: "var(--on-accent)", borderColor: "var(--on-accent)" }} data-testid="badge-new">NEW</span>}
             {job.outside_service_area && !job.calibration_not_performed && <span className="badge badge-draft">Outside area +$30</span>}
             {job.calibration_not_performed && <span className="badge badge-draft">Trip fee only</span>}
             {job.payment_mode === "invoice_hold" && !jobIsPaid(job) && <span className="badge badge-draft">Invoice — hold charge</span>}

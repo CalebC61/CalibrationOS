@@ -18,6 +18,7 @@ export function SiteChrome({ children }) {
   function close() { setOpen(false); }
   return (
     <div className="marketing">
+      <a className="skip-link" href="#main">Skip to content</a>
       <header className="site-header">
         <div className="container header-inner">
           <Link className="brand" to="/" aria-label="The Calibration Crew home" onClick={close}>
@@ -54,7 +55,7 @@ export function SiteChrome({ children }) {
           </nav>
         </div>
       </header>
-      <main>{children}</main>
+      <main id="main">{children}</main>
       <footer className="site-footer">
         <div className="container footer-grid">
           <div>
@@ -97,6 +98,10 @@ export function SiteChrome({ children }) {
         </div>
         <div className="container footer-bottom">
           <p>© 2026 The Calibration Crew LLC</p>
+          <details className="photo-credit">
+            <summary>Photograph</summary>
+            <p>Saguaro National Park West, Arizona. Photo by dconvertini, CC BY-SA 2.0, via Wikimedia Commons.</p>
+          </details>
         </div>
       </footer>
     </div>

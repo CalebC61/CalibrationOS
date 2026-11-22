@@ -16,7 +16,7 @@ export default function HomePage() {
             </div>
             <p className="hero-note">Already have an account? <Link to="/portal/login">Log in to CalibrationOS</Link></p>
           </div>
-          <div className="app-frame" aria-hidden="true">
+          <div className="app-frame" aria-hidden="true" style={{ backgroundImage: "linear-gradient(180deg, rgba(19, 46, 36, 0.05), rgba(19, 46, 36, 0.38)), url(/marketing/sonoran-day.jpg)" }}>
             <div className="app-bar"><i /><i /><i /><span>CalibrationOS</span></div>
             <div className="app-body">
               <aside className="app-side">

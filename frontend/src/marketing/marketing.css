@@ -1,28 +1,27 @@
 /* Public site, scoped under .marketing so the dispatch app keeps its own styles.
    Ported from the approved static mockup. */
-@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap');
-
 .marketing {
-  --bg-primary: #2A2E37;
-  --bg-deep: #22262E;
-  --bg-surface: #343843;
-  --bg-elevated: #3E424F;
-  --bg-input: #404653;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  --border-active: rgba(255, 95, 31, 0.45);
-  --accent: #FF5F1F;
-  --accent-ink: #FF7E1E;
-  --accent-on-tint: #FFD0B8;
-  --accent-dim: rgba(255, 95, 31, 0.14);
-  --blue: #3B82F6;
-  --blue-ink: #C5DBFF;
-  --green: #10B981;
-  --text-primary: #F5F5F5;
-  --text-muted: #B4B8C2;
-  --text-subtle: #6B7280;
-  --ink: #0A0A0A;
-  --radius: 12px;
+  --bg-primary: #E8D7C0;
+  --bg-deep: #DCC9A8;
+  --bg-surface: #F7F1E6;
+  --bg-elevated: #EFE4D2;
+  --bg-input: #F7F1E6;
+  --border: #D4C2A6;
+  --border-strong: #C4AE8C;
+  --border-active: rgba(163, 62, 30, 0.55);
+  --accent: #A33E1E;
+  --accent-ink: #8C3014;
+  --accent-on-tint: #8C3014;
+  --accent-dim: rgba(163, 62, 30, 0.12);
+  --blue: #1A3A6B;
+  --blue-ink: #1A3A6B;
+  --green: #146B45;
+  --text-primary: #132E24;
+  --text-muted: #3C5348;
+  --text-subtle: #4E5C54;
+  --ink: #F7F1E6;
+  --night: #1A2E28;
+  --radius: 8px;
   --header-h: 84px;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
 }.marketing *, .marketing *::before, .marketing *::after { box-sizing: border-box; }.marketing { scroll-behavior: smooth; }.marketing, .marketing {
@@ -321,4 +320,168 @@
   .marketing .nav-actions .btn { width: 100%; }
 }
 @media (max-width: 760px) {.marketing .container { width: min(1160px, calc(100% - 28px)); }.marketing .hero { padding: 2.2rem 0 3rem; }.marketing .hero h1 { font-size: clamp(2.3rem, 11vw, 3.1rem); }.marketing .hero-line { white-space: normal; }.marketing .section { padding: 3.4rem 0; }.marketing .steps, .marketing .svc-grid, .marketing .benefit-grid, .marketing .quotes, .marketing .price-grid, .marketing .city-grid, .marketing .footer-grid { grid-template-columns: 1fr; }.marketing .btn-row .btn { width: 100%; }.marketing .page-hero { padding-top: 2.2rem; }
+}
+
+/* Desert Workshop. Same sections, a plaster page and a real valley photograph. */
+.marketing {
+  font-family: "Atkinson Hyperlegible", "Segoe UI", sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.marketing .skip-link {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 80;
+  transform: translateY(-160%);
+  background: var(--accent);
+  color: var(--ink);
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  font-weight: 700;
+}
+.marketing .skip-link:focus { transform: none; }
+.marketing .section, .marketing .cta-final { scroll-margin-top: 96px; }
+.marketing .display { text-wrap: balance; }
+.marketing .btn { touch-action: manipulation; }
+.marketing .display,
+.marketing .step-num,
+.marketing .svc .price-tag,
+.marketing .price-card .amount,
+.marketing .offer-card .amount {
+  font-family: "Zilla Slab", "Palatino Linotype", Palatino, serif;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  text-transform: none;
+}
+.marketing .eyebrow,
+.marketing .section-kicker {
+  display: inline-flex;
+  width: fit-content;
+  font-family: "Zilla Slab", Palatino, serif;
+  color: var(--accent-ink);
+  background: transparent;
+  border: 1.5px solid var(--accent-ink);
+  box-shadow: inset 0 0 0 1px var(--accent-ink);
+  border-radius: 2px;
+  letter-spacing: 0.1em;
+  padding: 0.28rem 0.5rem;
+}
+.marketing .site-header {
+  background: rgba(232, 215, 192, 0.92);
+  border-bottom: 3px solid var(--accent);
+  backdrop-filter: blur(10px);
+}
+.marketing .brand img {
+  background: #132E24;
+  padding: 8px 10px;
+  border-radius: 4px;
+  box-shadow: 0 8px 18px rgba(48, 28, 12, 0.16);
+}
+.marketing .nav-links a.is-active { border-bottom-color: var(--accent); color: var(--text-primary); }
+.marketing .btn {
+  border-radius: 6px;
+  transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1), background-color 140ms cubic-bezier(0.23, 1, 0.32, 1), border-color 140ms cubic-bezier(0.23, 1, 0.32, 1), filter 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.marketing .btn:active { transform: scale(0.98); }
+.marketing .btn-primary { color: var(--ink); }
+.marketing .btn-primary:hover { filter: none; }
+@media (hover: hover) and (pointer: fine) {
+  .marketing .btn-primary:hover { filter: brightness(1.06); }
+}
+.marketing .hero-line { white-space: normal; }
+.marketing .app-frame {
+  position: relative;
+  background-color: #C4AE8C;
+  background-position: center 40%;
+  background-size: cover;
+  background-repeat: no-repeat;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 18px 36px rgba(48, 28, 12, 0.16);
+  min-height: 560px;
+  overflow: hidden;
+}
+.marketing .app-body {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  min-height: 0;
+  grid-template-columns: 116px 1fr;
+  background: transparent;
+}
+.marketing .app-side {
+  background: rgba(247, 241, 230, 0.92);
+  border-radius: 8px;
+}
+.marketing .app-bar {
+  background: rgba(247, 241, 230, 0.94);
+  border-bottom: 1px solid var(--border);
+}
+.marketing .app-bar i {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform: rotate(45deg);
+}
+.marketing .app-bar span { color: var(--text-muted); }
+.marketing .app-side { background: rgba(247, 241, 230, 0.9); border-right-color: var(--border); }
+.marketing .app-side .nav-item.is-on { background: var(--accent-dim); color: var(--accent-ink); }
+.marketing .mini-card {
+  background: rgba(247, 241, 230, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 8px 18px rgba(28, 18, 8, 0.12);
+}
+.marketing .pill { border-radius: 2px; letter-spacing: 0.08em; border: 1.5px solid currentColor; box-shadow: inset 0 0 0 1px currentColor; }
+.marketing .pill-ok { background: #E3F0E7; color: var(--green); }
+.marketing .pill-wait { background: #F6E4D8; color: var(--accent-ink); }
+.marketing .step, .marketing .card, .marketing .price-card, .marketing .faq-item, .marketing .quote, .marketing .benefit, .marketing .svc,
+.marketing .offer-card, .marketing .form, .marketing .fact, .marketing .city {
+  box-shadow: 0 1px 0 rgba(255, 248, 236, 0.8) inset, 0 10px 22px rgba(48, 28, 12, 0.06);
+}
+.marketing .step, .marketing .card, .marketing .price-card, .marketing .faq-item, .marketing .quote, .marketing .benefit, .marketing .svc { border-radius: 8px; }
+.marketing .offer-card { border-color: var(--border-strong); box-shadow: 0 14px 28px rgba(48, 28, 12, 0.08); }
+.marketing .offer-card .amount, .marketing .price-card .amount, .marketing .svc .price-tag { color: var(--accent); }
+.marketing .quote cite { color: var(--accent-ink); }
+.marketing .site-footer {
+  background: var(--night);
+  color: #F7F1E6;
+  border-top: 3px solid var(--accent);
+}
+.marketing .site-footer h2,
+.marketing .site-footer li,
+.marketing .footer-lead,
+.marketing .legal,
+.marketing .footer-bottom { color: #E7D3B0; }
+.marketing .site-footer a:hover { color: #F7F1E6; }
+.marketing .photo-credit { margin-top: 0.35rem; }
+.marketing .photo-credit summary { cursor: pointer; color: #E7D3B0; }
+.marketing .photo-credit p { margin: 0.4rem 0 0; max-width: 40rem; }
+@media (max-width: 980px) {
+  .marketing .app-frame { min-height: 0; }
+  .marketing .app-body {
+    position: static;
+    margin-top: 168px;
+    grid-template-columns: 1fr;
+    background: transparent;
+  }
+  .marketing .mini-card { background: rgba(247, 241, 230, 0.94); }
+}
+@media (max-width: 900px) {
+  .marketing .site-nav { background: var(--bg-primary); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .marketing .app-frame { animation: workshop-in 640ms cubic-bezier(0.23, 1, 0.32, 1) both; }
+  .marketing .mini-card { animation: workshop-in 520ms cubic-bezier(0.23, 1, 0.32, 1) both; }
+  .marketing .mini-card:nth-child(2) { animation-delay: 70ms; }
+  .marketing .mini-card:nth-child(3) { animation-delay: 120ms; }
+}
+@keyframes workshop-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marketing .app-frame, .marketing .mini-card { animation: none; }
 }
