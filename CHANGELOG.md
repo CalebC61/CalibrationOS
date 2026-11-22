@@ -28,6 +28,10 @@ The Field screen (`.instrument-daylight`) flips to a high-contrast light chassis
 (`#F3F5F2` ground, `#10211C` text, black primary keys) so it stays readable in
 Arizona sun. Behavior, routes, and copy structure are unchanged.
 
+Job-edit fixtures book the next day the shop can book, skipping Sunday, so
+the suite still passes when Phoenix today is Saturday. Booking rules are
+unchanged.
+
 ### Changed — public header (2026-11-19)
 The public header is Home, Pricing, Service area, Contact, Shop login, and
 Create account. Services, About, and FAQ stay at `/services`, `/about`, and
