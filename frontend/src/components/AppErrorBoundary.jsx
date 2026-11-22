@@ -45,7 +45,7 @@ function CrashScreen() {
         <Brand size={28} />
         <h1
           style={{
-            fontFamily: "'DM Sans', sans-serif",
+            fontFamily: "var(--font-body), sans-serif",
             fontSize: "1.75rem",
             fontWeight: 600,
             letterSpacing: "-0.02em",

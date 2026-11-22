@@ -179,9 +179,9 @@ export default function Field() {
           </div>
           <a className="btn btn-ghost" style={{ marginTop: 12, width: "100%" }}
             href={`https://maps.google.com/?q=${encodeURIComponent(j.job_address)}`} target="_blank" rel="noreferrer">
-            📍 {j.job_address}
+            <FieldIcon name="pin" /> {j.job_address}
           </a>
-          {j.notification_phone && <a className="btn btn-ghost" style={{ marginTop: 8, width: "100%" }} href={`tel:${j.notification_phone}`}>📞 Call shop</a>}
+          {j.notification_phone && <a className="btn btn-ghost" style={{ marginTop: 8, width: "100%" }} href={`tel:${j.notification_phone}`}><FieldIcon name="phone" /> Call shop</a>}
           <div style={{ marginTop: 16, fontSize: 14, padding: 10, background: "var(--bg-elevated)", borderRadius: 8 }}>
             {(j.customer_first_name || j.customer_last_name) && (
               <div><b>Customer:</b> {[j.customer_first_name, j.customer_last_name].filter(Boolean).join(" ")}</div>
@@ -498,9 +498,30 @@ function XeroOutcome({ job, uploadedDoc, uploading, retrying, onFile, onReplace,
   );
 }
 
+function FieldIcon({ name }) {
+  const props = {
+    width: 18, height: 18, viewBox: "0 0 24 24", fill: "none",
+    stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round",
+    "aria-hidden": true,
+  };
+  if (name === "pin") {
+    return (
+      <svg {...props}>
+        <path d="M12 21s7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11z" />
+        <circle cx="12" cy="10" r="2.2" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...props}>
+      <path d="M7 3h3l1.2 3.2-2 1.2a12 12 0 0 0 6.4 6.4l1.2-2L20 13v3a2 2 0 0 1-2 2A15 15 0 0 1 5 5a2 2 0 0 1 2-2z" />
+    </svg>
+  );
+}
+
 function Phone({ children }) {
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)", maxWidth: 480, margin: "0 auto" }}>
+    <div className="field-app" style={{ minHeight: "100vh", background: "var(--bg-primary)", maxWidth: 480, margin: "0 auto" }}>
       {children}
     </div>
   );
@@ -508,7 +529,7 @@ function Phone({ children }) {
 
 function Header({ name, onLogout, back }) {
   return (
-    <header style={{
+    <header className="field-bar" style={{
       display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px",
       borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg-primary)", zIndex: 10,
     }}>

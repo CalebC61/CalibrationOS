@@ -37,7 +37,7 @@ export default function RouteMap({ jobs }) {
   const byTech = new Map();
   valid.forEach((job) => {
     const key = job.technician_id || "route";
-    if (!byTech.has(key)) byTech.set(key, { color: job.technician_color || "#FF5F1F", points: [] });
+    if (!byTech.has(key)) byTech.set(key, { color: job.technician_color || "#A33E1E", points: [] });
     byTech.get(key).points.push([job.job_lat, job.job_lng]);
   });
   return (
@@ -48,7 +48,7 @@ export default function RouteMap({ jobs }) {
           route.points.length > 1 && <Polyline key={techId} positions={route.points} pathOptions={{ color: route.color, weight: 3, opacity: 0.7 }} />
         ))}
         {valid.map((j, idx) => {
-          const color = j.technician_color || "#FF5F1F";
+          const color = j.technician_color || "#A33E1E";
           return (
           <Marker key={j.id} position={[j.job_lat, j.job_lng]}
             icon={makeIcon(idx + 1, color, pinText(color))}>

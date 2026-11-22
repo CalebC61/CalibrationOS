@@ -15,6 +15,22 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — Style C preview, Desert Workshop (do not merge)
+Visual only. Behavior, routes, copy, and the simplified page structure are the
+same. This branch is one of four style previews and is not the production brand
+in `CLAUDE.md`. No env, Stripe, billing, or database change.
+
+Tokens in `frontend/src/index.css` and `frontend/src/marketing/marketing.css`
+move off gunsteel and brand orange onto a sunlit shop palette: sand `#E8D7C0`,
+bone `#F7F1E6`, rust `#A33E1E` (bone text on that fill is about 5.7:1), rust ink
+`#8C3014` for small text, saguaro `#132E24`, desert night `#1A2E28`. Display is
+Zilla Slab. Body is Atkinson Hyperlegible. Corners are 8px on cards and 6px on
+controls. Status chips are stamped (double rule, square corners) instead of
+pills. A faint paper grain sits on the page. Buttons press with a 140ms
+ease-out scale. The public home hero uses a real photograph of Saguaro National
+Park West (dconvertini, CC BY-SA 2.0), credited from the footer. Field screens
+keep a light ground and 48px tap targets so they stay readable in sun.
+
 ### Changed — public header (2026-11-19)
 The public header is Home, Pricing, Service area, Contact, Shop login, and
 Create account. Services, About, and FAQ stay at `/services`, `/about`, and
