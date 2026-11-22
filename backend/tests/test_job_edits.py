@@ -17,12 +17,32 @@ os.environ.setdefault("DB_NAME", "ci")
 
 import server  # noqa: E402
 from business_time import BUSINESS_TZ, business_day_bounds, business_date  # noqa: E402
+from days_off import holiday_records  # noqa: E402
 
 TODAY = business_date()
 TODAY_START, _TODAY_END = business_day_bounds(TODAY)
-# 10:00 AM Phoenix the next day. Midnight Phoenix is TODAY_START (07:00 UTC).
-FUTURE = (TODAY_START + timedelta(days=1, hours=10)).isoformat()
-FUTURE_END = (TODAY_START + timedelta(days=1, hours=11)).isoformat()
+
+
+def _next_open_morning(start):
+    """The next 10:00 AM the shop can book. Tomorrow is Sunday on a Saturday,
+    and a Sunday or default holiday slot is rejected on a shop edit."""
+    day = start + timedelta(days=1)
+    closed = set()
+    for year in (day.year, day.year + 1):
+        for row in holiday_records(year):
+            if row.get("blocked"):
+                closed.add(date.fromisoformat(row["start"]))
+    while day.weekday() == 6 or day in closed:
+        day += timedelta(days=1)
+    start_of_day, _end = business_day_bounds(day)
+    return start_of_day + timedelta(hours=10)
+
+
+_SLOT = _next_open_morning(TODAY)
+# Midnight Phoenix is TODAY_START (07:00 UTC). The default job is the next open morning.
+FUTURE = _SLOT.isoformat()
+FUTURE_END = (_SLOT + timedelta(hours=1)).isoformat()
+OWNER_SLOT = _SLOT + timedelta(hours=3)
 PAST = (TODAY_START - timedelta(days=2)).isoformat()
 
 
@@ -283,7 +303,7 @@ def test_owner_can_override_customer_vehicle_price_and_time(world):
                     "vehicle_vin": "1HGCM82633A004352",
                     "calibration_type": "dual",
                     "price": 210,
-                    "scheduled_start": (TODAY_START + timedelta(days=1, hours=13)).isoformat(),
+                    "scheduled_start": OWNER_SLOT.isoformat(),
                     "notes": "  Call on arrival  ",
                 },
             )
@@ -301,8 +321,8 @@ def test_owner_can_override_customer_vehicle_price_and_time(world):
         assert job["price"] == 210
         assert job["notes"] == "Call on arrival"
         assert job["status"] == "booked"
-        assert job["scheduled_start"] == (TODAY_START + timedelta(days=1, hours=13)).isoformat()
-        assert job["scheduled_end"] == (TODAY_START + timedelta(days=1, hours=14)).isoformat()
+        assert job["scheduled_start"] == OWNER_SLOT.isoformat()
+        assert job["scheduled_end"] == (OWNER_SLOT + timedelta(hours=1)).isoformat()
         assert world["calls"]["geo"] == []
         assert world["calls"]["sms"] == []
 

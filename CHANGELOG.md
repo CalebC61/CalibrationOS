@@ -31,6 +31,10 @@ ease-out scale. The public home hero uses a real photograph of Saguaro National
 Park West (dconvertini, CC BY-SA 2.0), credited from the footer. Field screens
 keep a light ground and 48px tap targets so they stay readable in sun.
 
+The shop-edit tests scheduled their default job for tomorrow at 10:00. On a
+Saturday that morning is Sunday, so an edit that kept the time was rejected.
+The fixture now uses the next morning that is not a Sunday or a default holiday.
+
 ### Changed — public header (2026-11-19)
 The public header is Home, Pricing, Service area, Contact, Shop login, and
 Create account. Services, About, and FAQ stay at `/services`, `/about`, and
