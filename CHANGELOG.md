@@ -15,6 +15,19 @@ down is the previous cut (Xero, 2026-06-16), not a second current version.
 `backend/tests/test_version.py` fails if the top changelog heading and the package
 version drift apart.
 
+### Changed — Style B preview, Field Instrument (2026-11-21)
+Visual preview only. Do not merge as the production theme. No billing, Stripe,
+Xero, permission, env, or database change.
+
+Tokens, the public Home page, the shop portal, the owner Today board, and the
+Field job screen use a graphite chassis (`#0C1014` / `#141A1F` / `#1C242B`) and
+one calibration-beam accent (`#1FE0C4`, text `#8FF6E4`). Body is Source Sans 3,
+titles are Barlow Condensed, and times, money, and counts are JetBrains Mono.
+The wordmark stays Saira Stencil. Corners are 2px with hairline borders.
+The Field screen (`.instrument-daylight`) flips to a high-contrast light chassis
+(`#F3F5F2` ground, `#10211C` text, black primary keys) so it stays readable in
+Arizona sun. Behavior, routes, and copy structure are unchanged.
+
 ### Changed — public header (2026-11-19)
 The public header is Home, Pricing, Service area, Contact, Shop login, and
 Create account. Services, About, and FAQ stay at `/services`, `/about`, and

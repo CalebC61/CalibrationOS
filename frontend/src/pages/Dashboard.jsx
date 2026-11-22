@@ -274,11 +274,11 @@ export default function Dashboard() {
   const totals = dayBoardTotals(dayJobs);
 
   const routingTechs = techs.filter(t => t.role !== "contractor" && t.routes_jobs !== false && t.is_active !== false);
-  const colorById = Object.fromEntries(routingTechs.map(t => [t.id, t.color || "#FF5F1F"]));
+  const colorById = Object.fromEntries(routingTechs.map(t => [t.id, t.color || "#1FE0C4"]));
   const nameById = Object.fromEntries(routingTechs.map(t => [t.id, t.name]));
   const painted = dayJobs.map(j => ({
     ...j,
-    technician_color: j.technician_color || colorById[j.technician_id] || "#FF5F1F",
+    technician_color: j.technician_color || colorById[j.technician_id] || "#1FE0C4",
     technician_name: j.technician_name || nameById[j.technician_id] || "",
   }));
   const focusId = boardJobFromSearch();
@@ -292,7 +292,7 @@ export default function Dashboard() {
       })
       .sort((a, b) => String(a.scheduled_start).localeCompare(String(b.scheduled_start)));
   }
-  const panels = (routingTechs.length ? routingTechs : [{ id: "unassigned", name: "Today", role: "owner", color: "#FF5F1F", home_address: "" }])
+  const panels = (routingTechs.length ? routingTechs : [{ id: "unassigned", name: "Today", role: "owner", color: "#1FE0C4", home_address: "" }])
     .map(tech => ({ tech, jobs: tech.id === "unassigned" ? painted.slice().sort((a, b) => String(a.scheduled_start).localeCompare(String(b.scheduled_start))) : jobsFor(tech) }));
 
   function shiftDate(days) {
@@ -338,8 +338,9 @@ export default function Dashboard() {
         <div className="page-fade" style={{ marginBottom: 16, position: "relative" }} data-testid="new-bookings-banner">
           <button onClick={() => setAlertsOpen(o => !o)} data-testid="new-bookings-pill"
             style={{ display: "inline-flex", alignItems: "center", gap: 10,
-              background: "var(--accent)", color: "#0a0a0a",
-              border: "1px solid var(--accent)", borderRadius: 999,
+              background: "var(--accent)", color: "var(--ink)",
+              border: "1px solid var(--accent)", borderRadius: 2,
+              fontFamily: "'JetBrains Mono', ui-monospace, monospace",
               padding: "8px 16px", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>
             <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: 999, background: "#0a0a0a" }} />
             <span data-testid="new-bookings-count">{alerts.count}</span> new booking{alerts.count === 1 ? "" : "s"} since you last looked
@@ -441,7 +442,7 @@ export default function Dashboard() {
             zone={tech.id} jobs={techJobs} onStatus={setStatus} onComplete={completeJob}
             onPayment={setPaymentMode} onCharge={chargeNow}
             onOutside={setOutside} onTripFee={chargeTripFee} onRetryXero={retryXero}
-            accent={tech.color || "#FF5F1F"}
+            accent={tech.color || "#1FE0C4"}
             newJobIds={newJobIds}
             onReschedule={(job, mode) => setRescheduleTarget({ job, mode })}
             onEdit={isOwner ? setEditTarget : null}
@@ -460,7 +461,7 @@ export default function Dashboard() {
               <span className="muted" style={{ fontSize: 12, fontWeight: 400, display: "flex", gap: 10, flexWrap: "wrap" }}>
                 {routingTechs.map(t => (
                   <span key={t.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 99, background: t.color || "#FF5F1F" }} />
+                    <span style={{ width: 8, height: 8, borderRadius: 99, background: t.color || "#1FE0C4" }} />
                     {t.name}
                   </span>
                 ))}
