@@ -22,7 +22,8 @@ only lift on a fine pointer. Focus rings are orange outlines. The page is
 notch. Inputs stay at 16px on a coarse pointer so a phone does not zoom.
 Shop Today uses the same steel rail and an orange rule on the 30-day counts.
 The field phone uses 48px actions and the same rail. No flow, price, billing,
-Stripe, email, Xero, permission, or env change.
+Stripe, email, Xero, permission, or env change. The job-edit tests book the
+next open day instead of tomorrow, so a Saturday run does not land on Sunday.
 
 ### Changed — visual direction, first pass (2026-11-19)
 Home, the owner Today board (`/dashboard`), and the shared header (public site
