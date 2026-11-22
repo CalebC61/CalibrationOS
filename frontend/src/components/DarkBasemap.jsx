@@ -1,13 +1,12 @@
 import { TileLayer } from "react-leaflet";
 
-// CARTO's public raster URL
-// (https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png)
-// returns one "API KEY REQUIRED" watermark for every z/x/y. Esri's World Dark
-// Gray canvas serves a real dark map with no key. ArcGIS order is {z}/{y}/{x}.
+// Esri World Light Gray canvas. No key. ArcGIS order is {z}/{y}/{x}.
+// The export names stay so existing imports keep working. This preview
+// uses the light sheet so the map matches the paper ground.
 export const DARK_BASEMAP_URL =
-  "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
 export const DARK_LABELS_URL =
-  "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}";
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}";
 export const DARK_BASEMAP_ATTRIBUTION =
   "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS user community";
 

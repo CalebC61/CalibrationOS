@@ -89,9 +89,9 @@ export default function Assist() {
       {!open && (
         <button onClick={() => setOpen(true)} data-testid="assist-launcher" style={{
           position: "fixed", right: 20, bottom: 20, zIndex: 50,
-          width: 52, height: 52, borderRadius: 26, border: "1px solid var(--border)",
-          background: "var(--accent)", color: "#0a0a0a", fontWeight: 800, fontSize: 18,
-          cursor: "pointer", boxShadow: "0 6px 24px rgba(0,0,0,0.45)",
+          width: 52, height: 52, borderRadius: 0, border: "1px solid #111111",
+          background: "var(--accent)", color: "#111111", fontWeight: 700, fontSize: 15,
+          letterSpacing: "0.08em", cursor: "pointer", boxShadow: "none",
         }} title="CalibrationOS Assist">
           AI
         </button>
@@ -103,15 +103,15 @@ export default function Assist() {
           position: "fixed", right: 20, bottom: 20, zIndex: 50,
           width: "min(420px, calc(100vw - 40px))", height: "min(560px, calc(100vh - 80px))",
           display: "flex", flexDirection: "column",
-          background: "var(--bg-surface)", border: "1px solid var(--border)",
-          borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.55)", overflow: "hidden",
+          background: "#FFFFFF", border: "1px solid #111111",
+          borderRadius: 0, boxShadow: "none", overflow: "hidden",
         }}>
           <div style={{
             padding: "10px 14px", borderBottom: "1px solid var(--border)",
             display: "flex", justifyContent: "space-between", alignItems: "center",
             background: "var(--bg-elevated)",
           }}>
-            <div style={{ fontFamily: "'Saira Stencil One', sans-serif", letterSpacing: "0.04em" }}>
+            <div style={{ fontFamily: "var(--font-display)", fontWeight: 700, letterSpacing: "-0.04em" }}>
               <span className="accent">ASSIST</span>
             </div>
             <div style={{ display: "flex", gap: 6 }}>

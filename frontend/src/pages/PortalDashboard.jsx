@@ -12,7 +12,7 @@ function pinIcon(num, color, ghost = false, text = "#fff") {
   const opacity = ghost ? 0.55 : 1;
   return L.divIcon({
     className: "route-pin",
-    html: `<div style="background:${color};color:${text};border-radius:999px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border:2px solid #111;opacity:${opacity};font-family:'JetBrains Mono',monospace;">${num}</div>`,
+    html: `<div style="background:${color};color:${text};border-radius:0;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;border:1px solid #111;opacity:${opacity};font-family:'IBM Plex Mono',monospace;">${num}</div>`,
     iconSize: [26, 26], iconAnchor: [13, 13],
   });
 }
@@ -21,7 +21,7 @@ function FitBounds({ points }) {
   useEffect(() => {
     if (points.length === 0) return;
     if (points.length === 1) { map.setView(points[0], 11); return; }
-    map.fitBounds(L.latLngBounds(points), { padding: [40, 40] });
+    map.fitBounds(L.latLngBounds(points), { padding: [36, 36], paddingBottomRight: [24, 72] });
   }, [points, map]);
   return null;
 }
@@ -101,13 +101,13 @@ export default function PortalDashboard() {
         </div>
       ) : (
         <div className="surface" style={{ padding: 12, marginBottom: 20 }}>
-          <div style={{ height: 380, borderRadius: 8, overflow: "hidden" }} data-testid="portal-map">
+          <div style={{ height: 280, borderRadius: 0, overflow: "hidden", border: "1px solid #111" }} data-testid="portal-map">
             <MapContainer center={points[0]} zoom={10}
-              style={{ height: "100%", width: "100%", background: "#0d1116" }}>
+              style={{ height: "100%", width: "100%", background: "#F4F2EC" }}>
               <DarkBasemap />
               {own.filter(j => j.job_lat && j.job_lng).map((j) => (
                 <Marker key={j.id} position={[j.job_lat, j.job_lng]}
-                  icon={pinIcon(j.route_order || "Y", "#FF5F1F", false, "#0a0a0a")}>
+                  icon={pinIcon(j.route_order || "Y", "#FF4B00", false, "#111111")}>
                   <Tooltip>
                     <div style={{ fontSize: 12 }}>
                       <b>Your job · {windowFor(j.scheduled_start, j.scheduled_end)}</b><br />
@@ -119,7 +119,7 @@ export default function PortalDashboard() {
               ))}
               {others.filter(j => j.job_lat && j.job_lng).map((j) => (
                 <Marker key={`stop-${j.route_order}`} position={[j.job_lat, j.job_lng]}
-                  icon={pinIcon(j.route_order || "·", "#8E95A3", false, "#0a0a0a")}>
+                  icon={pinIcon(j.route_order || "·", "#111111", false, "#F4F2EC")}>
                   <Tooltip>
                     <div style={{ fontSize: 12 }} data-testid={`portal-other-stop-${j.route_order}`}>
                       <b>Stop {j.route_order}</b><br />
@@ -133,11 +133,11 @@ export default function PortalDashboard() {
           </div>
           <div style={{ display: "flex", gap: 16, marginTop: 12, fontSize: 12, flexWrap: "wrap" }} className="muted" data-testid="portal-map-legend">
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 10, height: 10, borderRadius: 999, background: "#FF5F1F", display: "inline-block" }} />
+              <span style={{ width: 10, height: 10, borderRadius: 0, background: "#FF4B00", display: "inline-block" }} />
               Your jobs
             </span>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 10, height: 10, borderRadius: 999, background: "#8E95A3", display: "inline-block" }} />
+              <span style={{ width: 10, height: 10, borderRadius: 0, background: "#111111", display: "inline-block" }} />
               Other stops on the route — time window only
             </span>
           </div>
@@ -155,9 +155,9 @@ export default function PortalDashboard() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                   <div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                      <span className="font-mono" style={{ background: "var(--bg-elevated)", padding: "2px 8px", borderRadius: 6, fontSize: 12, fontWeight: 600 }}>{j.route_order || idx + 1}</span>
+                      <span className="field-index" style={{ fontSize: 22 }}>{String(j.route_order || idx + 1).padStart(2, "0")}</span>
                       <span className={`badge badge-${j.status}`}>{jobStatusLabel(j.status)}</span>
-                      {j.is_at_risk && <span className="badge" style={{ background: "rgba(239,68,68,0.15)", color: "var(--red)" }}>⚠ AT RISK</span>}
+                      {j.is_at_risk && <span className="badge" style={{ color: "var(--red)", borderColor: "var(--red)" }}>At risk</span>}
                     </div>
                     <div className="h3" style={{ marginTop: 4 }}>{j.vehicle_year} {j.vehicle_make} {j.vehicle_model}</div>
                     <div className="muted" style={{ fontSize: 13 }}>{j.calibration_label} · {j.customer_last_name}</div>
